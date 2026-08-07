@@ -1,0 +1,24 @@
+<?php
+
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/v1/health', function () {
+    try {
+        DB::select('SELECT 1');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'BLUE API is running',
+            'database' => 'connected',
+        ]);
+    } catch (\Throwable $exception) {
+        report($exception);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'BLUE API is running, but the database is unavailable',
+            'database' => 'disconnected',
+        ], 503);
+    }
+});
