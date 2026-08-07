@@ -1,7 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Auth\RegisterController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+
+Route::post('/v1/auth/register', RegisterController::class);
 
 Route::get('/v1/health', function () {
     try {
@@ -12,7 +15,7 @@ Route::get('/v1/health', function () {
             'message' => 'BLUE API is running',
             'database' => 'connected',
         ]);
-    } catch (\Throwable $exception) {
+    } catch (Throwable $exception) {
         report($exception);
 
         return response()->json([
