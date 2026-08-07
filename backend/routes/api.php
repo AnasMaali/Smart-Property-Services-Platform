@@ -1,10 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
+use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/v1/auth/register', RegisterController::class);
+Route::post('/v1/auth/verify-phone', VerifyPhoneController::class);
 
 Route::get('/v1/health', function () {
     try {
