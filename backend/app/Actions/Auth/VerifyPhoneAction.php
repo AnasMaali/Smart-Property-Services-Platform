@@ -16,9 +16,14 @@ class VerifyPhoneAction
     /**
      * Verify a PHONE_VERIFICATION OTP and activate the account atomically.
      *
-     * The OTP (and its owning user) row are locked for update inside the
-     * transaction to prevent two concurrent requests from verifying, or
-     * spending attempts against, the same OTP at once.
+     * Lock order is fixed as: user row, then referenced OTP row - the same
+     * order ResendPhoneOtpAction uses. The user row is always locked first,
+     * before any OTP row, so that a verify-phone request and a resend-otp
+     * request racing for the same user can only ever serialize on that one
+     * shared lock. Locking the OTP row first here (while resend locks the
+     * user row first) would let the two actions deadlock on each other:
+     * verify holding the OTP lock while waiting for the user lock, and
+     * resend holding the user lock while waiting for the OTP lock.
      *
      * @param  array{otp_verification_uuid: string, otp_code: string}  $data
      * @return array{success: bool, message: string, data: array|null}
@@ -26,27 +31,34 @@ class VerifyPhoneAction
     public function handle(array $data): array
     {
         return DB::transaction(function () use ($data) {
-            $otp = OtpVerification::where('id', UuidBinary::toBinary($data['otp_verification_uuid']))
+            $otpId = UuidBinary::toBinary($data['otp_verification_uuid']);
+
+            // Unlocked read, used only to discover which user this flow
+            // belongs to so the user row can be locked first. Never trusted
+            // for validation decisions - it is re-fetched under lock below.
+            $initialOtp = OtpVerification::where('id', $otpId)->first();
+
+            if ($initialOtp === null) {
+                return $this->failure(self::GENERIC_INVALID_MESSAGE);
+            }
+
+            $user = User::where('id', UuidBinary::toBinary($initialOtp->user_id))
                 ->lockForUpdate()
                 ->first();
 
-            if ($otp === null) {
-                return $this->failure(self::GENERIC_INVALID_MESSAGE);
-            }
+            // Re-fetch and re-validate the referenced OTP now that the user
+            // row is locked; the unlocked read above cannot be trusted.
+            $otp = OtpVerification::where('id', $otpId)->lockForUpdate()->first();
 
             $phoneVerificationPurposeId = $this->lookupId('otp_verification_purposes', 'PHONE_VERIFICATION');
 
-            if ($otp->purpose_id !== $phoneVerificationPurposeId) {
+            if ($otp === null || $user === null || $otp->user_id !== $user->id || $otp->purpose_id !== $phoneVerificationPurposeId) {
                 return $this->failure(self::GENERIC_INVALID_MESSAGE);
             }
 
-            $user = User::where('id', UuidBinary::toBinary($otp->user_id))
-                ->lockForUpdate()
-                ->first();
-
             $pendingAccountStatusId = $this->lookupId('user_account_statuses', 'PENDING_VERIFICATION');
 
-            if ($user === null || $user->account_status_id !== $pendingAccountStatusId) {
+            if ($user->account_status_id !== $pendingAccountStatusId) {
                 return $this->failure(self::GENERIC_INVALID_MESSAGE);
             }
 

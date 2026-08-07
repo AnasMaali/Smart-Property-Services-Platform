@@ -395,4 +395,47 @@ class VerifyPhoneTest extends TestCase
 
         $this->assertGreaterThanOrEqual(2, $lockingQueries->count());
     }
+
+    /**
+     * Deterministic cross-endpoint lock-order regression test.
+     *
+     * ResendPhoneOtpAction locks the user row before any OTP row. To avoid
+     * a cross-endpoint deadlock when verify-phone and resend-otp race for
+     * the same user, VerifyPhoneAction must use the same order: user row
+     * first, then the OTP row. True concurrent integration testing of two
+     * overlapping transactions across the two endpoints isn't practical in
+     * this single-threaded PHPUnit/Laravel setup (see the equivalent note
+     * in ResendOtpTest), so this test deterministically verifies the
+     * property that prevents the deadlock via the query log.
+     */
+    public function test_user_row_is_locked_for_update_before_otp_row(): void
+    {
+        $fixture = $this->createPendingUserWithOtp('123456');
+
+        DB::enableQueryLog();
+
+        $this->postJson('/api/v1/auth/verify-phone', [
+            'otp_verification_uuid' => $fixture['otp_uuid'],
+            'otp_code' => '123456',
+        ])->assertStatus(200);
+
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+
+        $lockingQueries = collect($queries)
+            ->filter(fn (array $entry) => str_contains(strtolower($entry['query']), 'for update'))
+            ->values();
+
+        $this->assertGreaterThanOrEqual(2, $lockingQueries->count());
+
+        $this->assertStringContainsString(
+            'from `users`',
+            strtolower($lockingQueries->first()['query']),
+            'The users row must be the first FOR UPDATE lock acquired in a verify-phone transaction.'
+        );
+
+        $lockingQueries->skip(1)->each(function (array $entry) {
+            $this->assertStringContainsString('from `otp_verifications`', strtolower($entry['query']));
+        });
+    }
 }
