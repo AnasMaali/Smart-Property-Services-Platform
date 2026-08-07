@@ -12,7 +12,7 @@ A Customer must verify the phone number using OTP before the account becomes act
 
 ### BR-02
 
-OTP is required for account registration and phone number changes only, not for every normal login.
+OTP is required for account registration, password reset, and phone number changes only, not for every normal login.
 
 ### BR-03
 
@@ -92,7 +92,7 @@ Admin permissions must be enforced by the Backend and not only by hiding Admin s
 
 ### BR-22
 
-Passwords, readable OTP codes, and complete payment card information must not be stored.
+Passwords and OTP codes must only be stored as secure hashes; the raw password or raw OTP code must never be stored. Complete payment card information must not be stored.
 
 ### BR-23
 
@@ -101,3 +101,15 @@ The mobile application, Admin Management Interface, and portfolio website must a
 ### BR-24
 
 Property information is entered during Booking only and is not saved as a managed Customer property in Version 1.
+
+### BR-25
+
+Full name, phone number, email address, password, city, area, customer relationship to the property, and at least one preferred service interest are all required to register a Customer account in Version 1. None of these fields are optional at registration.
+
+### BR-26
+
+Property Type Interest is not collected during registration. Property type is collected only during the Booking process.
+
+### BR-27
+
+Password recovery (forgot password) is included in Version 1. A Customer may request a password reset, must verify an OTP sent to their registered phone number, and may then set a new password that meets the Version 1 password policy.

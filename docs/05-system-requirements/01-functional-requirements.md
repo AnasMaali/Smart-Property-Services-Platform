@@ -40,6 +40,7 @@ The registration form shall collect:
 
 * Full name
 * Phone number
+* Email address
 * Password
 * City
 * Area
@@ -48,7 +49,7 @@ The registration form shall collect:
 
 ### FR-AU-03
 
-The email address shall be optional.
+The email address shall be required, shall be validated for a correct format, and shall be unique across customer accounts.
 
 ### FR-AU-04
 
@@ -63,6 +64,18 @@ Customer classification options shall include:
 * Property Manager
 * Company / Office Representative
 * Other
+
+### FR-AU-06
+
+The customer shall select at least one preferred service interest during registration.
+
+### FR-AU-07
+
+The system shall validate that the submitted area belongs to the submitted city before creating the account.
+
+### FR-AU-08
+
+Property Type Interest shall not be collected during registration. Property type shall be collected only during the booking process.
 
 ---
 
@@ -91,6 +104,26 @@ The system shall prevent unverified accounts from fully accessing the applicatio
 ### FR-OTP-06
 
 OTP verification shall not be required during every normal login.
+
+### FR-OTP-07
+
+The OTP code shall consist of 6 numeric digits.
+
+### FR-OTP-08
+
+The OTP code shall expire 5 minutes after it is issued.
+
+### FR-OTP-09
+
+The system shall reject OTP verification after 5 failed attempts for the same OTP code.
+
+### FR-OTP-10
+
+The customer shall wait at least 60 seconds before requesting another OTP code for the same phone number and purpose.
+
+### FR-OTP-11
+
+Issuing a new OTP code shall invalidate the previous active OTP code for the same customer and purpose.
 
 ---
 
@@ -121,6 +154,22 @@ Changing the phone number shall require OTP verification of the new number.
 ### FR-PF-05
 
 The system shall prevent the customer from using a phone number already connected to another account.
+
+### FR-PF-06
+
+The system shall allow a customer to request a password reset (forgot password) using their registered phone number.
+
+### FR-PF-07
+
+The system shall send an OTP code to the customer's registered phone number as part of the password reset request.
+
+### FR-PF-08
+
+The system shall require successful OTP verification before allowing the customer to set a new password.
+
+### FR-PF-09
+
+The new password set during password reset shall meet the same password policy required at registration.
 
 ---
 

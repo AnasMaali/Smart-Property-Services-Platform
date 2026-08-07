@@ -18,6 +18,7 @@ In Version 1, this module includes:
 * Customer logout
 * Profile information update
 * Basic password management
+* Password recovery (forgot password) using OTP
 
 ---
 
@@ -46,11 +47,12 @@ The main required fields are:
 
 * Full Name
 * Phone Number
+* Email Address
 * Password
 * City
 * Area
 * Customer Type
-* Preferred Service Interest
+* Preferred Service Interest (at least one)
 
 ---
 
@@ -59,6 +61,15 @@ The main required fields are:
 Phone number verification is required during registration.
 
 The customer cannot fully use the account before verifying the phone number using OTP.
+
+Version 1 OTP policy:
+
+* The OTP code is 6 numeric digits.
+* The OTP code expires 5 minutes after it is issued.
+* The customer has a maximum of 5 failed verification attempts before the code is invalidated.
+* The customer must wait 60 seconds before requesting another OTP for the same purpose.
+* Issuing a new OTP invalidates the previous active OTP for the same customer and purpose.
+* The OTP is stored only as a secure hash; the raw code is never stored, logged, or returned in an API response.
 
 Possible OTP cases:
 
@@ -94,7 +105,7 @@ The customer can update basic personal information, such as:
 * Full Name
 * City
 * Area
-* Email Address, if added
+* Email Address
 * Preferred Service Interest
 
 The phone number should not be changed directly without OTP verification.
@@ -103,12 +114,26 @@ The phone number should not be changed directly without OTP verification.
 
 ## Password Management
 
-In Version 1, the system should support basic password protection.
+In Version 1, the system requires passwords to meet the following minimum policy:
+
+* Minimum 8 characters
+* At least one letter
+* At least one number
+* Common or previously compromised passwords are rejected
+* Only a secure password hash is stored; the plaintext password is never stored or logged
+
+### Password Recovery (Forgot Password)
+
+Password recovery is included in Version 1. The customer can regain access to their account using an OTP-based password reset flow:
+
+1. The customer requests a password reset for their phone number.
+2. The system sends an OTP code to the customer's registered phone number.
+3. The customer enters the OTP code to verify the password-reset request.
+4. After successful OTP verification, the customer sets a new password.
+5. The new password must meet the same password policy as registration.
 
 Future versions may include:
 
-* Forgot password
-* Reset password using OTP
 * Change password from profile settings
 
 ---
@@ -121,6 +146,7 @@ Future versions may include:
 * The system should keep registration simple.
 * Property details should not be collected during registration.
 * Property details will be entered during the booking process only.
+* Password recovery uses OTP verification and is included in Version 1.
 
 ---
 
@@ -128,6 +154,6 @@ Future versions may include:
 
 * This module is included in Version 1.
 * OTP is required for account activation.
-* Email is optional.
+* Email is required at registration and must be unique.
 * Phone number is the main customer contact method.
 * More advanced account security can be added in future versions.

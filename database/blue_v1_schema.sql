@@ -2376,7 +2376,7 @@ DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
   `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
   `phone_number` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `email` varchar(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `email` varchar(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `password_hash` varchar(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `account_status_id` smallint unsigned NOT NULL,
   `phone_verified_at` datetime(6) DEFAULT NULL,
@@ -2389,7 +2389,7 @@ CREATE TABLE `users` (
   KEY `idx_users_account_status_id` (`account_status_id`),
   KEY `idx_users_created_at` (`created_at`),
   CONSTRAINT `fk_users_account_status` FOREIGN KEY (`account_status_id`) REFERENCES `user_account_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_users_email_not_blank` CHECK (((`email` is null) or (char_length(trim(`email`)) > 0))),
+  CONSTRAINT `chk_users_email_not_blank` CHECK ((char_length(trim(`email`)) > 0)),
   CONSTRAINT `chk_users_phone_number_not_blank` CHECK ((char_length(trim(`phone_number`)) between 8 and 20))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;

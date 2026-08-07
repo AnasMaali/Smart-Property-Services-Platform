@@ -51,10 +51,12 @@ The system shall store the following required customer data:
 * Customer ID
 * Full name
 * Phone number
+* Email address
 * Password hash
 * City
 * Area
 * Customer relationship to the property
+* Preferred service interests (at least one)
 * Account verification status
 * Account status
 * Registration date
@@ -71,14 +73,11 @@ Customer relationship to the property may include:
 
 ### DR-CUS-03
 
-The system may store the following optional customer data:
-
-* Email address
-* Preferred service interests
+Version 1 registration has no optional customer data fields. All customer data listed in DR-CUS-01 is required.
 
 ### DR-CUS-04
 
-The phone number shall be unique for each customer account.
+The phone number and the email address shall each be unique for each customer account.
 
 ### DR-CUS-05
 
@@ -155,15 +154,20 @@ OTP verification data may include:
 Possible OTP purposes may include:
 
 * Account registration
+* Password reset
 * Phone number change
 
 ### DR-OTP-04
 
-The system shall not store readable OTP codes longer than necessary.
+The system shall never store the readable OTP code. Only a secure hash of the OTP code shall be stored.
 
 ### DR-OTP-05
 
 Expired or successfully used OTP records shall not be accepted again.
+
+### DR-OTP-06
+
+The OTP code shall consist of 6 numeric digits, shall expire 5 minutes after issuance, shall allow a maximum of 5 failed verification attempts, and shall require a 60-second cooldown before another OTP can be requested for the same phone number and purpose.
 
 ---
 

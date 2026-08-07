@@ -391,6 +391,7 @@ The OTP / SMS Gateway delivers verification codes to customer phone numbers.
 OTP verification is used in Version 1 for:
 
 * New customer account registration
+* Customer password reset (forgot password)
 * Customer phone number change
 
 OTP is not required during every normal login after the phone number has been verified.
@@ -423,7 +424,7 @@ The system shall prevent excessive OTP requests for the same phone number.
 
 ### EIR-OTP-05
 
-The system shall apply a waiting period before allowing another OTP request.
+The system shall require a 60-second cooldown before allowing another OTP request for the same phone number and purpose.
 
 ### EIR-OTP-06
 
@@ -466,7 +467,7 @@ The system shall store only the information needed to track the verification pro
 
 ### EIR-OTP-12
 
-Readable OTP codes shall not appear in Admin screens or technical logs.
+The raw OTP code shall never be stored, and shall not appear in Admin screens, API responses, or technical logs.
 
 ---
 
@@ -484,7 +485,8 @@ The Backend shall verify the OTP code or provider verification result.
 
 Each OTP code shall:
 
-* Have a limited validity period
+* Consist of 6 numeric digits
+* Be valid for 5 minutes after issuance
 * Be usable once only
 * Be connected to one phone number
 * Be connected to one verification purpose
@@ -501,7 +503,7 @@ The system shall reject:
 
 ### EIR-OTP-17
 
-The system shall limit the number of incorrect OTP verification attempts.
+The system shall reject verification after a maximum of 5 incorrect OTP attempts for the same OTP code.
 
 ### EIR-OTP-18
 
@@ -520,6 +522,15 @@ After successful phone number change verification, the system shall:
 2. Replace the previous account phone number.
 3. Preserve the Customer account and historical Booking data.
 4. Prevent reuse of the OTP.
+
+### EIR-OTP-19A
+
+After successful password-reset OTP verification, the system shall:
+
+1. Allow the customer to set a new password.
+2. Store only the new password hash.
+3. Prevent reuse of the OTP.
+4. Not change the customer's phone number, email address, or any other account data.
 
 ---
 
@@ -552,7 +563,7 @@ The system shall handle temporary OTP / SMS Gateway unavailability without damag
 
 ### EIR-OTP-24
 
-OTP codes shall not be stored as readable plain text when temporary storage is required.
+OTP codes shall be stored only as a secure hash. The raw OTP code shall never be stored, regardless of whether storage is temporary.
 
 ### EIR-OTP-25
 
@@ -591,7 +602,7 @@ OTP verification data may include:
 * Phone number
 * Verification purpose
 * Provider reference
-* OTP hash when managed internally
+* OTP hash
 * Expiration date and time
 * Verification status
 * Failed attempt count
@@ -707,7 +718,7 @@ Critical external integration issues shall be resolved before the Version 1 prod
 * One successful payment shall create one paid Booking only.
 * Failed, cancelled, or Pending payments shall not create active paid Bookings.
 * The platform shall not store complete payment card information.
-* OTP shall be required for account registration and phone number changes.
+* OTP shall be required for account registration, password reset, and phone number changes.
 * OTP shall not be required during every normal login.
 * An account shall not be activated before successful OTP verification.
 * External integration failures shall not corrupt system data.

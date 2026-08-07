@@ -34,6 +34,10 @@ The system shall not require OTP during every normal login after the phone numbe
 
 The system shall require OTP verification when the customer changes the account phone number.
 
+### SEC-AUTH-04A
+
+The system shall require OTP verification of the customer's registered phone number before allowing a password reset (forgot password).
+
 ### SEC-AUTH-05
 
 The system shall prevent an unverified customer account from fully accessing protected application functions.
@@ -68,12 +72,12 @@ The system shall require passwords to meet minimum security rules.
 
 ### SEC-PWD-04
 
-Password requirements should include:
+Password requirements shall include:
 
-* A minimum accepted length
+* A minimum length of 8 characters
 * At least one letter
 * At least one number
-* Rejection of commonly used weak passwords
+* Rejection of commonly used or previously compromised passwords
 
 ### SEC-PWD-05
 
@@ -93,7 +97,7 @@ The system shall not send customer passwords through SMS, email, or support mess
 
 ### SEC-OTP-01
 
-Each OTP code shall be valid for a limited period.
+Each OTP code shall consist of 6 numeric digits and shall be valid for 5 minutes after it is issued.
 
 ### SEC-OTP-02
 
@@ -105,23 +109,23 @@ A successfully verified or expired OTP code shall not be accepted again.
 
 ### SEC-OTP-04
 
-The system shall limit the number of incorrect OTP attempts.
+The system shall reject OTP verification after a maximum of 5 incorrect attempts for the same OTP code.
 
 ### SEC-OTP-05
 
-The system shall limit how frequently a customer can request a new OTP code.
+The system shall require the customer to wait at least 60 seconds before requesting another OTP code for the same phone number and verification purpose.
 
 ### SEC-OTP-06
 
-Requesting a new OTP shall invalidate the previous active OTP when appropriate.
+Requesting a new OTP shall invalidate the previous active OTP for the same customer and verification purpose.
 
 ### SEC-OTP-07
 
-OTP codes shall not be stored as readable plain text when temporary storage is required.
+OTP codes shall be stored only as a secure hash. The raw OTP code shall never be stored in the database, regardless of whether storage is temporary.
 
 ### SEC-OTP-08
 
-OTP codes shall not appear in technical logs or Admin Management Interface screens.
+OTP codes shall not appear in technical logs, API responses, or Admin Management Interface screens.
 
 ### SEC-OTP-09
 
@@ -522,7 +526,7 @@ The customer shall be informed about required and optional registration fields.
 
 ### SEC-PRV-04
 
-The email address shall remain optional for Customer accounts in Version 1.
+The email address is a required field for Customer accounts in Version 1 and shall be validated and stored uniquely per account.
 
 ### SEC-PRV-05
 

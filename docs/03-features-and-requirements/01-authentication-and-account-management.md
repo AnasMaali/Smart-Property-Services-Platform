@@ -14,11 +14,14 @@ The customer should provide the following information when creating a new accoun
 
 * Full Name
 * Phone Number
+* Email Address
 * Password
 * City
 * Area
 * Customer Type
-* Preferred Service Interest
+* Preferred Service Interest (at least one)
+
+All fields listed above are required. Version 1 registration has no optional data fields.
 
 ---
 
@@ -29,15 +32,6 @@ The phone number must be verified using OTP.
 The customer receives a verification code on the entered phone number and must enter the correct code to activate the account.
 
 This helps confirm that the phone number is valid and belongs to the customer.
-
----
-
-## Optional Registration Data
-
-The following data can be optional:
-
-* Email Address
-* Property Type Interest
 
 ---
 
@@ -70,6 +64,8 @@ The customer can choose one or more services they may be interested in:
 ## Property Details Rule
 
 The customer should not enter full property details during registration.
+
+Property Type Interest is not part of Version 1 registration. Property type is collected only during the booking process, as part of Property Information.
 
 Property details will be entered during the booking process only.
 
