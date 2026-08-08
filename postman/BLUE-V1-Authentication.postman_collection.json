@@ -991,6 +991,128 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "09 - Service Catalog",
+      "item": [
+        {
+          "name": "List Service Categories",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/service-categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "service-categories"
+              ]
+            },
+            "description": "Public, unauthenticated. Returns only active service categories, ordered by display_order, for the customer Home screen. See docs/api-contracts/service-catalog-v1.md."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List Services in Category",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/service-categories/{{service_category_id}}/services",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "service-categories",
+                "{{service_category_id}}",
+                "services"
+              ]
+            },
+            "description": "Public, unauthenticated. {{service_category_id}} is an integer service_categories.id. Returns only active services in that active category, each with its primary active image and currently effective base price (if any), ordered by display_order. Unknown or inactive category id returns 404. See docs/api-contracts/service-catalog-v1.md."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get Service Details",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/services/{{service_slug}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "services",
+                "{{service_slug}}"
+              ]
+            },
+            "description": "Public, unauthenticated. {{service_slug}} is services.slug. Returns full service details: category summary, active media, currently effective base price, and every active option with its currently effective pricing rules and active choices. Unknown or inactive slug returns 404. Price data here is configuration only, used for a UX preview - it is never authoritative and must be recalculated server-side by future Cart/Checkout endpoints. See docs/api-contracts/service-catalog-v1.md."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
     }
   ]
 }

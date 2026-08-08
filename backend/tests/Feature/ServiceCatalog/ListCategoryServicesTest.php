@@ -1,0 +1,264 @@
+<?php
+
+namespace Tests\Feature\ServiceCatalog;
+
+use App\Support\Uuid\UuidBinary;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+class ListCategoryServicesTest extends TestCase
+{
+    use DatabaseTransactions;
+
+    private static int $sequence = 0;
+
+    private int $aedCurrencyId;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->aedCurrencyId = (int) DB::table('currencies')->where('code', 'AED')->value('id');
+    }
+
+    private function createCategory(array $overrides = []): int
+    {
+        self::$sequence++;
+        $now = now();
+
+        return DB::table('service_categories')->insertGetId([
+            'code' => $overrides['code'] ?? 'QA_TEST_CAT_'.self::$sequence,
+            'name' => $overrides['name'] ?? 'QA Test Category '.self::$sequence,
+            'description' => 'QA test fixture category, not real catalog content.',
+            'display_order' => 900 + self::$sequence,
+            'is_active' => $overrides['is_active'] ?? 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    private function createService(int $categoryId, array $overrides = []): string
+    {
+        self::$sequence++;
+        $uuid = UuidBinary::generate();
+        $now = now();
+
+        DB::table('services')->insert([
+            'id' => UuidBinary::toBinary($uuid),
+            'category_id' => $categoryId,
+            'code' => $overrides['code'] ?? 'QA_TEST_SERVICE_'.self::$sequence,
+            'slug' => $overrides['slug'] ?? 'qa-test-service-'.self::$sequence,
+            'name' => $overrides['name'] ?? 'QA Test Service '.self::$sequence,
+            'short_description' => $overrides['short_description'] ?? 'QA fixture short description.',
+            'description' => 'QA fixture description, not real catalog content.',
+            'display_order' => $overrides['display_order'] ?? self::$sequence,
+            'is_active' => $overrides['is_active'] ?? 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        return $uuid;
+    }
+
+    private function createMedia(string $serviceUuid, array $overrides = []): void
+    {
+        $now = now();
+
+        DB::table('service_media')->insert([
+            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+            'service_id' => UuidBinary::toBinary($serviceUuid),
+            'storage_key' => $overrides['storage_key'] ?? 'qa/fixtures/'.UuidBinary::generate().'.jpg',
+            'mime_type' => 'image/jpeg',
+            'alt_text' => $overrides['alt_text'] ?? 'QA fixture image',
+            'caption' => null,
+            'is_primary' => $overrides['is_primary'] ?? 1,
+            'display_order' => $overrides['display_order'] ?? 0,
+            'is_active' => $overrides['is_active'] ?? 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    private function createPrice(string $serviceUuid, array $overrides = []): void
+    {
+        $now = now();
+
+        DB::table('service_prices')->insert([
+            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+            'service_id' => UuidBinary::toBinary($serviceUuid),
+            'currency_id' => $this->aedCurrencyId,
+            'base_amount' => $overrides['base_amount'] ?? '100.000000',
+            'effective_from' => $overrides['effective_from'] ?? $now->copy()->subDay(),
+            'effective_to' => array_key_exists('effective_to', $overrides) ? $overrides['effective_to'] : null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    public function test_active_category_returns_only_its_active_services(): void
+    {
+        $categoryId = $this->createCategory();
+        $activeService = $this->createService($categoryId, ['display_order' => 1]);
+        $inactiveService = $this->createService($categoryId, ['display_order' => 2, 'is_active' => 0]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $response->assertStatus(200);
+        $uuids = collect($response->json('data.services'))->pluck('uuid')->all();
+
+        $this->assertContains($activeService, $uuids);
+        $this->assertNotContains($inactiveService, $uuids);
+    }
+
+    public function test_services_from_another_category_never_leak(): void
+    {
+        $categoryA = $this->createCategory();
+        $categoryB = $this->createCategory();
+
+        $serviceA = $this->createService($categoryA);
+        $serviceB = $this->createService($categoryB);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryA}/services");
+
+        $uuids = collect($response->json('data.services'))->pluck('uuid')->all();
+
+        $this->assertContains($serviceA, $uuids);
+        $this->assertNotContains($serviceB, $uuids);
+    }
+
+    public function test_inactive_category_returns_404(): void
+    {
+        $categoryId = $this->createCategory(['is_active' => 0]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $response->assertStatus(404);
+        $this->assertFalse($response->json('success'));
+    }
+
+    public function test_unknown_category_returns_404(): void
+    {
+        $response = $this->getJson('/api/v1/service-categories/999999999/services');
+
+        $response->assertStatus(404);
+        $this->assertFalse($response->json('success'));
+    }
+
+    public function test_non_numeric_category_returns_404(): void
+    {
+        $response = $this->getJson('/api/v1/service-categories/not-a-number/services');
+
+        $response->assertStatus(404);
+    }
+
+    public function test_services_are_ordered_by_display_order(): void
+    {
+        $categoryId = $this->createCategory();
+
+        $second = $this->createService($categoryId, ['display_order' => 2]);
+        $first = $this->createService($categoryId, ['display_order' => 1]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $uuids = collect($response->json('data.services'))->pluck('uuid')->values();
+
+        $this->assertSame($first, $uuids[0]);
+        $this->assertSame($second, $uuids[1]);
+    }
+
+    public function test_primary_active_media_is_returned(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $this->createMedia($serviceUuid, ['storage_key' => 'qa/fixtures/primary.jpg', 'is_primary' => 1, 'is_active' => 1]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNotNull($entry['primary_image']);
+        $this->assertSame('qa/fixtures/primary.jpg', $entry['primary_image']['storage_key']);
+    }
+
+    public function test_inactive_media_is_not_exposed_as_primary_image(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $this->createMedia($serviceUuid, ['storage_key' => 'qa/fixtures/inactive.jpg', 'is_primary' => 1, 'is_active' => 0]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNull($entry['primary_image']);
+    }
+
+    public function test_currently_effective_price_is_selected(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $this->createPrice($serviceUuid, ['base_amount' => '123.456000', 'effective_to' => null]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNotNull($entry['current_price']);
+        $this->assertSame('123.456000', $entry['current_price']['amount']);
+        $this->assertSame('AED', $entry['current_price']['currency']['code']);
+    }
+
+    public function test_expired_price_is_excluded(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $this->createPrice($serviceUuid, [
+            'base_amount' => '50.000000',
+            'effective_from' => now()->copy()->subDays(10),
+            'effective_to' => now()->copy()->subDays(5),
+        ]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNull($entry['current_price']);
+    }
+
+    public function test_future_price_is_excluded(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $this->createPrice($serviceUuid, [
+            'base_amount' => '75.000000',
+            'effective_from' => now()->copy()->addDays(5),
+            'effective_to' => null,
+        ]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNull($entry['current_price']);
+    }
+
+    public function test_no_current_price_is_handled_safely(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+
+        $response->assertStatus(200);
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertArrayHasKey('current_price', $entry);
+        $this->assertNull($entry['current_price']);
+    }
+}

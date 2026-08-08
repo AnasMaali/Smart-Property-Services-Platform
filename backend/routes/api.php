@@ -17,6 +17,9 @@ use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Profile\GetProfileController;
 use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
 use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
+use App\Http\Controllers\Api\V1\ServiceCatalog\GetServiceDetailsController;
+use App\Http\Controllers\Api\V1\ServiceCatalog\ListCategoryServicesController;
+use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -42,6 +45,10 @@ Route::middleware('auth.customer')->group(function () {
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);
+
+Route::get('/v1/service-categories', ListServiceCategoriesController::class);
+Route::get('/v1/service-categories/{category}/services', ListCategoryServicesController::class);
+Route::get('/v1/services/{service}', GetServiceDetailsController::class);
 
 Route::get('/v1/health', function () {
     try {
