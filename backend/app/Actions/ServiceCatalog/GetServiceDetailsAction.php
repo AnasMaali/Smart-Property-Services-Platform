@@ -2,7 +2,8 @@
 
 namespace App\Actions\ServiceCatalog;
 
-use App\Support\ServiceCatalog\EffectivePricing;
+use App\Support\Pricing\DefaultCurrency;
+use App\Support\Pricing\PricingEngine;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -10,11 +11,18 @@ use Illuminate\Support\Facades\DB;
 
 class GetServiceDetailsAction
 {
+    public function __construct(private readonly PricingEngine $pricingEngine = new PricingEngine) {}
+
     /**
      * Full service-details payload for the customer service-details screen:
-     * identity, category summary, active media, currently effective base
-     * price, and every active service option with its currently effective
-     * pricing rules and active choices.
+     * identity, category summary, active media, generic option/input
+     * metadata (for Flutter to render TEXT/NUMBER/BOOLEAN/SINGLE_SELECT/
+     * MULTI_SELECT controls generically), and a pricing preview computed by
+     * the flexible PricingEngine with no customer selections yet.
+     *
+     * The pricing preview is never authoritative - it is the same
+     * PricingEngine that Cart/Checkout will call again once real selections
+     * exist, so there is only ever one pricing calculation in the system.
      *
      * Returns null when the slug does not resolve to an active service, so
      * the controller can answer with a 404.
@@ -65,21 +73,16 @@ class GetServiceDetailsAction
             ->values()
             ->all();
 
-        $basePrice = EffectivePricing::scope(
-            DB::table('service_prices')
-                ->join('currencies', 'currencies.id', '=', 'service_prices.currency_id')
-                ->where('service_prices.service_id', $service->id),
-            'service_prices.effective_from',
-            'service_prices.effective_to',
-            $now,
-        )
-            ->select([
-                'service_prices.base_amount',
-                'currencies.code as currency_code',
-                'currencies.symbol as currency_symbol',
-                'currencies.minor_unit as currency_minor_unit',
-            ])
-            ->first();
+        $currencyCode = DefaultCurrency::code();
+
+        $pricingPreview = $this->pricingEngine->evaluate(
+            serviceIdUuid: UuidBinary::toString($service->id),
+            selections: [],
+            quantity: 1,
+            currencyCode: $currencyCode,
+            context: [],
+            at: $now,
+        );
 
         return [
             'uuid' => UuidBinary::toString($service->id),
@@ -95,14 +98,7 @@ class GetServiceDetailsAction
                 'description' => $service->category_description,
             ],
             'media' => $media,
-            'base_price' => $basePrice === null ? null : [
-                'amount' => $basePrice->base_amount,
-                'currency' => [
-                    'code' => $basePrice->currency_code,
-                    'symbol' => $basePrice->currency_symbol,
-                    'minor_unit' => $basePrice->currency_minor_unit,
-                ],
-            ],
+            'pricing_preview' => $pricingPreview->toArray(),
             'options' => $this->loadOptions($service->id, $now),
         ];
     }
@@ -163,65 +159,8 @@ class GetServiceDetailsAction
             ->get(['id', 'service_option_id', 'code', 'name', 'description'])
             ->groupBy(fn ($row) => bin2hex($row->service_option_id));
 
-        $choiceIds = $choicesByOptionId->flatten(1)->pluck('id')->all();
-
-        $choicePricesByChoiceId = empty($choiceIds) ? collect() : EffectivePricing::scope(
-            DB::table('service_option_choice_prices')
-                ->join('currencies', 'currencies.id', '=', 'service_option_choice_prices.currency_id')
-                ->whereIn('service_option_choice_prices.service_option_choice_id', $choiceIds),
-            'service_option_choice_prices.effective_from',
-            'service_option_choice_prices.effective_to',
-            $now,
-        )
-            ->select([
-                'service_option_choice_prices.service_option_choice_id',
-                'service_option_choice_prices.additional_amount',
-                'currencies.code as currency_code',
-                'currencies.symbol as currency_symbol',
-                'currencies.minor_unit as currency_minor_unit',
-            ])
-            ->get()
-            ->keyBy(fn ($row) => bin2hex($row->service_option_choice_id));
-
-        $numericPricingRulesByOptionId = EffectivePricing::scope(
-            DB::table('service_option_numeric_pricing_rules')
-                ->join('currencies', 'currencies.id', '=', 'service_option_numeric_pricing_rules.currency_id')
-                ->whereIn('service_option_numeric_pricing_rules.service_option_id', $optionIds),
-            'service_option_numeric_pricing_rules.effective_from',
-            'service_option_numeric_pricing_rules.effective_to',
-            $now,
-        )
-            ->select([
-                'service_option_numeric_pricing_rules.service_option_id',
-                'service_option_numeric_pricing_rules.included_value',
-                'service_option_numeric_pricing_rules.charge_unit_size',
-                'service_option_numeric_pricing_rules.amount_per_unit',
-                'service_option_numeric_pricing_rules.minimum_additional_amount',
-                'service_option_numeric_pricing_rules.maximum_additional_amount',
-                'currencies.code as currency_code',
-                'currencies.symbol as currency_symbol',
-                'currencies.minor_unit as currency_minor_unit',
-            ])
-            ->get()
-            ->keyBy(fn ($row) => bin2hex($row->service_option_id));
-
         return $options
-            ->map(function ($option) use (
-                $numericRulesByOptionId,
-                $selectionRulesByOptionId,
-                $choicesByOptionId,
-                $choicePricesByChoiceId,
-                $numericPricingRulesByOptionId,
-            ) {
-                return $this->mapOption(
-                    $option,
-                    $numericRulesByOptionId,
-                    $selectionRulesByOptionId,
-                    $choicesByOptionId,
-                    $choicePricesByChoiceId,
-                    $numericPricingRulesByOptionId,
-                );
-            })
+            ->map(fn ($option) => $this->mapOption($option, $numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId))
             ->values()
             ->all();
     }
@@ -234,8 +173,6 @@ class GetServiceDetailsAction
         Collection $numericRulesByOptionId,
         Collection $selectionRulesByOptionId,
         Collection $choicesByOptionId,
-        Collection $choicePricesByChoiceId,
-        Collection $numericPricingRulesByOptionId,
     ): array {
         $key = bin2hex($option->id);
 
@@ -264,21 +201,6 @@ class GetServiceDetailsAction
                     'symbol' => $rule->measurement_unit_symbol,
                 ],
             ];
-
-            $pricingRule = $numericPricingRulesByOptionId->get($key);
-
-            $payload['numeric_pricing_rule'] = $pricingRule === null ? null : [
-                'currency' => [
-                    'code' => $pricingRule->currency_code,
-                    'symbol' => $pricingRule->currency_symbol,
-                    'minor_unit' => $pricingRule->currency_minor_unit,
-                ],
-                'included_value' => $pricingRule->included_value,
-                'charge_unit_size' => $pricingRule->charge_unit_size,
-                'amount_per_unit' => $pricingRule->amount_per_unit,
-                'minimum_additional_amount' => $pricingRule->minimum_additional_amount,
-                'maximum_additional_amount' => $pricingRule->maximum_additional_amount,
-            ];
         }
 
         if (in_array($option->type_code, ['SINGLE_SELECT', 'MULTI_SELECT'], true)) {
@@ -290,24 +212,12 @@ class GetServiceDetailsAction
             ];
 
             $payload['choices'] = ($choicesByOptionId->get($key) ?? collect())
-                ->map(function ($choice) use ($choicePricesByChoiceId) {
-                    $price = $choicePricesByChoiceId->get(bin2hex($choice->id));
-
-                    return [
-                        'uuid' => UuidBinary::toString($choice->id),
-                        'code' => $choice->code,
-                        'name' => $choice->name,
-                        'description' => $choice->description,
-                        'current_additional_price' => $price === null ? null : [
-                            'amount' => $price->additional_amount,
-                            'currency' => [
-                                'code' => $price->currency_code,
-                                'symbol' => $price->currency_symbol,
-                                'minor_unit' => $price->currency_minor_unit,
-                            ],
-                        ],
-                    ];
-                })
+                ->map(fn ($choice) => [
+                    'uuid' => UuidBinary::toString($choice->id),
+                    'code' => $choice->code,
+                    'name' => $choice->name,
+                    'description' => $choice->description,
+                ])
                 ->values()
                 ->all();
         }

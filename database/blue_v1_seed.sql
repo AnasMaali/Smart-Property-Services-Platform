@@ -1724,6 +1724,88 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 28. PRICING CONTEXT ATTRIBUTES
+-- Generic engine lookup only - see backend/app/Support/Pricing.
+-- Not tied to any specific service; new attributes require a
+-- reviewed backend resolver, not new business-specific columns.
+-- =============================================================
+
+INSERT INTO pricing_context_attributes (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'SERVICE_ZONE',
+    'Service Zone',
+    'The zone/area actually serving the cart or booking location. Never derived from the customer profile address.',
+    TRUE
+),
+(
+    'TIME_WINDOW',
+    'Time Window',
+    'The scheduling window (e.g. standard hours vs after-hours) of the confirmed appointment slot.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 29. SERVICE CAPABILITY TYPES
+-- Generic classification/capability lookup that future business
+-- rules query by code instead of adding dedicated boolean columns
+-- (e.g. no emergency/subscription columns on services).
+-- =============================================================
+
+INSERT INTO service_capability_types (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'CART_ELIGIBLE',
+    'Cart Eligible',
+    'The service may be added to a regular cart-based booking.',
+    TRUE
+),
+(
+    'QUOTE_ONLY',
+    'Quote Only',
+    'The service always requires a custom quote and never resolves to an authoritative price.',
+    TRUE
+),
+(
+    'EMERGENCY',
+    'Emergency',
+    'The service represents an emergency or dangerous service request.',
+    TRUE
+),
+(
+    'SUBSCRIPTION',
+    'Subscription',
+    'The service is only available under an annual subscription or maintenance contract.',
+    TRUE
+),
+(
+    'REQUIRES_SITE_VISIT',
+    'Requires Site Visit',
+    'The service requires an in-person site visit before it can be priced or scheduled.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- COMPLETE SEED TRANSACTION
 -- =============================================================
 

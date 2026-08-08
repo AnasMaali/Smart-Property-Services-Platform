@@ -2,16 +2,21 @@
 
 namespace App\Actions\ServiceCatalog;
 
-use App\Support\ServiceCatalog\EffectivePricing;
+use App\Support\Pricing\DefaultCurrency;
+use App\Support\Pricing\PricingEngine;
+use App\Support\Pricing\PricingStatus;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 
 class ListCategoryServicesAction
 {
+    public function __construct(private readonly PricingEngine $pricingEngine = new PricingEngine) {}
+
     /**
      * Active services inside one active category, ordered by display_order,
-     * each carrying its primary active image and currently effective base
-     * price (if any) for the customer's category → services screen.
+     * each carrying its primary active image and a generic pricing preview
+     * (from the flexible pricing engine, evaluated with no selections) for
+     * the customer's category → services screen.
      *
      * Returns null when the category does not exist or is inactive, so the
      * controller can answer with a 404.
@@ -54,31 +59,17 @@ class ListCategoryServicesAction
             ->get(['service_id', 'storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels'])
             ->keyBy(fn ($row) => bin2hex($row->service_id));
 
-        $now = now();
+        $currencyCode = DefaultCurrency::code();
+        $currency = DB::table('currencies')->where('code', $currencyCode)->first(['code', 'symbol', 'minor_unit']);
 
-        $currentPricesByServiceId = EffectivePricing::scope(
-            DB::table('service_prices')
-                ->join('currencies', 'currencies.id', '=', 'service_prices.currency_id')
-                ->whereIn('service_prices.service_id', $serviceIds),
-            'service_prices.effective_from',
-            'service_prices.effective_to',
-            $now,
-        )
-            ->select([
-                'service_prices.service_id',
-                'service_prices.base_amount',
-                'currencies.code as currency_code',
-                'currencies.symbol as currency_symbol',
-                'currencies.minor_unit as currency_minor_unit',
-            ])
-            ->get()
-            ->keyBy(fn ($row) => bin2hex($row->service_id));
+        $serviceUuids = $services->map(fn ($service) => UuidBinary::toString($service->id))->all();
+        $pricingPreviewsByServiceUuid = $this->pricingEngine->previewMany($serviceUuids, $currencyCode);
 
         $servicePayloads = $services
-            ->map(function ($service) use ($primaryImagesByServiceId, $currentPricesByServiceId) {
+            ->map(function ($service) use ($primaryImagesByServiceId, $pricingPreviewsByServiceUuid, $currency) {
                 $key = bin2hex($service->id);
                 $primaryImage = $primaryImagesByServiceId->get($key);
-                $currentPrice = $currentPricesByServiceId->get($key);
+                $pricingPreview = $pricingPreviewsByServiceUuid[UuidBinary::toString($service->id)];
 
                 return [
                     'uuid' => UuidBinary::toString($service->id),
@@ -94,12 +85,13 @@ class ListCategoryServicesAction
                         'width_pixels' => $primaryImage->width_pixels,
                         'height_pixels' => $primaryImage->height_pixels,
                     ],
-                    'current_price' => $currentPrice === null ? null : [
-                        'amount' => $currentPrice->base_amount,
-                        'currency' => [
-                            'code' => $currentPrice->currency_code,
-                            'symbol' => $currentPrice->currency_symbol,
-                            'minor_unit' => $currentPrice->currency_minor_unit,
+                    'pricing_preview' => [
+                        'pricing_status' => $pricingPreview->status->value,
+                        'unit_total' => $pricingPreview->unitTotal,
+                        'currency' => $pricingPreview->status === PricingStatus::UNAVAILABLE ? null : [
+                            'code' => $currency->code,
+                            'symbol' => $currency->symbol,
+                            'minor_unit' => $currency->minor_unit,
                         ],
                     ],
                 ];

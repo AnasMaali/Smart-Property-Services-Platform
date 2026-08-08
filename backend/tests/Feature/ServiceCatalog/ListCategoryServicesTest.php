@@ -80,17 +80,36 @@ class ListCategoryServicesTest extends TestCase
         ]);
     }
 
+    /**
+     * Inserts a PUBLISHED pricing_scheme_versions row plus one unconditional
+     * SET_PRICE rule, so the service's pricing_preview resolves to PRICED.
+     */
     private function createPrice(string $serviceUuid, array $overrides = []): void
     {
         $now = now();
+        $schemeUuid = UuidBinary::generate();
 
-        DB::table('service_prices')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+        DB::table('pricing_scheme_versions')->insert([
+            'id' => UuidBinary::toBinary($schemeUuid),
             'service_id' => UuidBinary::toBinary($serviceUuid),
             'currency_id' => $this->aedCurrencyId,
-            'base_amount' => $overrides['base_amount'] ?? '100.000000',
+            'status' => 'PUBLISHED',
             'effective_from' => $overrides['effective_from'] ?? $now->copy()->subDay(),
             'effective_to' => array_key_exists('effective_to', $overrides) ? $overrides['effective_to'] : null,
+            'published_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        DB::table('pricing_rules')->insert([
+            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+            'pricing_scheme_version_id' => UuidBinary::toBinary($schemeUuid),
+            'rule_code' => 'BASE_'.$schemeUuid,
+            'label' => 'Base price',
+            'priority' => 100,
+            'effect_type' => 'SET_PRICE',
+            'effect_amount' => $overrides['base_amount'] ?? '100.000000',
+            'stop_processing' => 0,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
@@ -207,9 +226,9 @@ class ListCategoryServicesTest extends TestCase
 
         $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
 
-        $this->assertNotNull($entry['current_price']);
-        $this->assertSame('123.456000', $entry['current_price']['amount']);
-        $this->assertSame('AED', $entry['current_price']['currency']['code']);
+        $this->assertSame('PRICED', $entry['pricing_preview']['pricing_status']);
+        $this->assertSame('123.456000', $entry['pricing_preview']['unit_total']);
+        $this->assertSame('AED', $entry['pricing_preview']['currency']['code']);
     }
 
     public function test_expired_price_is_excluded(): void
@@ -227,7 +246,8 @@ class ListCategoryServicesTest extends TestCase
 
         $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
 
-        $this->assertNull($entry['current_price']);
+        $this->assertSame('UNAVAILABLE', $entry['pricing_preview']['pricing_status']);
+        $this->assertNull($entry['pricing_preview']['unit_total']);
     }
 
     public function test_future_price_is_excluded(): void
@@ -245,7 +265,8 @@ class ListCategoryServicesTest extends TestCase
 
         $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
 
-        $this->assertNull($entry['current_price']);
+        $this->assertSame('UNAVAILABLE', $entry['pricing_preview']['pricing_status']);
+        $this->assertNull($entry['pricing_preview']['unit_total']);
     }
 
     public function test_no_current_price_is_handled_safely(): void
@@ -258,7 +279,7 @@ class ListCategoryServicesTest extends TestCase
         $response->assertStatus(200);
         $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
 
-        $this->assertArrayHasKey('current_price', $entry);
-        $this->assertNull($entry['current_price']);
+        $this->assertArrayHasKey('pricing_preview', $entry);
+        $this->assertSame('UNAVAILABLE', $entry['pricing_preview']['pricing_status']);
     }
 }

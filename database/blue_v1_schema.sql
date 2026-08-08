@@ -433,12 +433,14 @@ CREATE TABLE `booking_items` (
   `booking_id` binary(16) NOT NULL,
   `source_cart_item_id` binary(16) NOT NULL,
   `service_id` binary(16) NOT NULL,
+  `pricing_scheme_version_id` binary(16) NOT NULL,
   `status_id` tinyint unsigned NOT NULL,
   `service_code_snapshot` varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `service_name_snapshot` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `quantity` int unsigned NOT NULL DEFAULT '1',
-  `base_unit_amount` decimal(19,6) NOT NULL,
-  `option_additional_unit_amount` decimal(19,6) NOT NULL DEFAULT '0.000000',
+  `pricing_status_snapshot` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `base_amount_snapshot` decimal(19,6) DEFAULT NULL,
+  `pricing_breakdown` json NOT NULL,
   `unit_total_amount` decimal(19,6) NOT NULL,
   `line_total_amount` decimal(19,6) NOT NULL,
   `display_order` smallint unsigned NOT NULL DEFAULT '0',
@@ -453,21 +455,22 @@ CREATE TABLE `booking_items` (
   KEY `idx_booking_items_booking_status` (`booking_id`,`status_id`),
   KEY `idx_booking_items_service` (`service_id`),
   KEY `idx_booking_items_status` (`status_id`),
+  KEY `idx_booking_items_scheme_version` (`pricing_scheme_version_id`),
   CONSTRAINT `fk_booking_items_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_booking_items_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_booking_items_source_cart_item` FOREIGN KEY (`source_cart_item_id`) REFERENCES `cart_items` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_booking_items_status` FOREIGN KEY (`status_id`) REFERENCES `booking_item_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_booking_items_base_amount` CHECK ((`base_unit_amount` >= 0)),
+  CONSTRAINT `fk_booking_items_scheme_version` FOREIGN KEY (`pricing_scheme_version_id`) REFERENCES `pricing_scheme_versions` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_booking_items_base_amount` CHECK (((`base_amount_snapshot` is null) or (`base_amount_snapshot` >= 0))),
   CONSTRAINT `chk_booking_items_cancelled_at` CHECK (((`cancelled_at` is null) or (`cancelled_at` >= `created_at`))),
   CONSTRAINT `chk_booking_items_completed_at` CHECK (((`completed_at` is null) or (`completed_at` >= `created_at`))),
   CONSTRAINT `chk_booking_items_line_total` CHECK ((`line_total_amount` = (`unit_total_amount` * `quantity`))),
-  CONSTRAINT `chk_booking_items_option_amount` CHECK ((`option_additional_unit_amount` >= 0)),
+  CONSTRAINT `chk_booking_items_pricing_status` CHECK ((`pricing_status_snapshot` in (_utf8mb4'PRICED',_utf8mb4'QUOTE_REQUIRED'))),
   CONSTRAINT `chk_booking_items_quantity` CHECK ((`quantity` between 1 and 1000)),
   CONSTRAINT `chk_booking_items_service_code` CHECK ((char_length(trim(`service_code_snapshot`)) between 2 and 80)),
   CONSTRAINT `chk_booking_items_service_name` CHECK ((char_length(trim(`service_name_snapshot`)) between 2 and 160)),
   CONSTRAINT `chk_booking_items_single_final_state` CHECK (((`completed_at` is null) or (`cancelled_at` is null))),
-  CONSTRAINT `chk_booking_items_status_changed` CHECK ((`status_changed_at` >= `created_at`)),
-  CONSTRAINT `chk_booking_items_unit_total` CHECK ((`unit_total_amount` = (`base_unit_amount` + `option_additional_unit_amount`)))
+  CONSTRAINT `chk_booking_items_status_changed` CHECK ((`status_changed_at` >= `created_at`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1341,6 +1344,271 @@ LOCK TABLES `payment_statuses` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `pricing_context_attributes`
+--
+
+DROP TABLE IF EXISTS `pricing_context_attributes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_context_attributes` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_context_attributes_code` (`code`),
+  KEY `idx_pricing_context_attributes_active` (`is_active`),
+  CONSTRAINT `chk_pricing_context_attributes_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_pricing_context_attributes_code` CHECK ((char_length(trim(`code`)) between 2 and 60)),
+  CONSTRAINT `chk_pricing_context_attributes_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_pricing_context_attributes_name` CHECK ((char_length(trim(`name`)) between 2 and 120))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_context_attributes`
+--
+
+LOCK TABLES `pricing_context_attributes` WRITE;
+/*!40000 ALTER TABLE `pricing_context_attributes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_context_attributes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_scheme_versions`
+--
+
+DROP TABLE IF EXISTS `pricing_scheme_versions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_scheme_versions` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_id` binary(16) NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `status` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'DRAFT',
+  `effective_from` datetime(6) DEFAULT NULL,
+  `effective_to` datetime(6) DEFAULT NULL,
+  `open_ended_marker` tinyint unsigned GENERATED ALWAYS AS ((case when ((`status` = _utf8mb4'PUBLISHED') and (`effective_to` is null)) then 1 else NULL end)) STORED,
+  `published_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_scheme_versions_open_ended` (`service_id`,`currency_id`,`open_ended_marker`),
+  KEY `idx_pricing_scheme_versions_lookup` (`service_id`,`currency_id`,`effective_from`,`effective_to`),
+  KEY `idx_pricing_scheme_versions_currency` (`currency_id`),
+  KEY `idx_pricing_scheme_versions_status` (`status`),
+  CONSTRAINT `fk_pricing_scheme_versions_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_scheme_versions_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pricing_scheme_versions_status` CHECK ((`status` in (_utf8mb4'DRAFT',_utf8mb4'PUBLISHED',_utf8mb4'RETIRED'))),
+  CONSTRAINT `chk_pricing_scheme_versions_period` CHECK (((`effective_to` is null) or ((`effective_from` is not null) and (`effective_to` > `effective_from`)))),
+  CONSTRAINT `chk_pricing_scheme_versions_requires_from` CHECK (((`status` = _utf8mb4'DRAFT') or (`effective_from` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_scheme_versions`
+--
+
+LOCK TABLES `pricing_scheme_versions` WRITE;
+/*!40000 ALTER TABLE `pricing_scheme_versions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_scheme_versions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_rules`
+--
+
+DROP TABLE IF EXISTS `pricing_rules`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_rules` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `pricing_scheme_version_id` binary(16) NOT NULL,
+  `rule_code` varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `label` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `priority` smallint unsigned NOT NULL,
+  `effect_type` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `effect_amount` decimal(19,6) DEFAULT NULL,
+  `effect_subject_type` varchar(24) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `effect_subject_service_option_id` binary(16) DEFAULT NULL,
+  `tier_calculation_mode` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stop_processing` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_rules_scheme_code` (`pricing_scheme_version_id`,`rule_code`),
+  UNIQUE KEY `uq_pricing_rules_scheme_priority` (`pricing_scheme_version_id`,`priority`),
+  KEY `idx_pricing_rules_subject_option` (`effect_subject_service_option_id`),
+  CONSTRAINT `fk_pricing_rules_scheme_version` FOREIGN KEY (`pricing_scheme_version_id`) REFERENCES `pricing_scheme_versions` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_rules_subject_option` FOREIGN KEY (`effect_subject_service_option_id`) REFERENCES `service_options` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pricing_rules_code` CHECK ((char_length(trim(`rule_code`)) between 2 and 80)),
+  CONSTRAINT `chk_pricing_rules_label` CHECK ((char_length(trim(`label`)) between 2 and 160)),
+  CONSTRAINT `chk_pricing_rules_effect_type` CHECK ((`effect_type` in (_utf8mb4'SET_PRICE',_utf8mb4'ADD_FIXED',_utf8mb4'ADD_PER_UNIT',_utf8mb4'MULTIPLY',_utf8mb4'MIN_TOTAL',_utf8mb4'MAX_TOTAL',_utf8mb4'QUOTE_REQUIRED'))),
+  CONSTRAINT `chk_pricing_rules_subject_type` CHECK (((`effect_subject_type` is null) or (`effect_subject_type` = _utf8mb4'OPTION_NUMERIC_VALUE'))),
+  CONSTRAINT `chk_pricing_rules_tier_mode` CHECK (((`tier_calculation_mode` is null) or (`tier_calculation_mode` in (_utf8mb4'VOLUME',_utf8mb4'GRADUATED')))),
+  CONSTRAINT `chk_pricing_rules_tier_mode_scope` CHECK (((`tier_calculation_mode` is null) or (`effect_type` = _utf8mb4'ADD_PER_UNIT'))),
+  CONSTRAINT `chk_pricing_rules_per_unit_requires_tier_mode` CHECK (((`effect_type` <> _utf8mb4'ADD_PER_UNIT') or (`tier_calculation_mode` is not null))),
+  CONSTRAINT `chk_pricing_rules_per_unit_subject` CHECK (((`effect_type` <> _utf8mb4'ADD_PER_UNIT') or ((`effect_subject_type` is not null) and (`effect_subject_service_option_id` is not null)))),
+  CONSTRAINT `chk_pricing_rules_amount_required` CHECK ((((`effect_type` in (_utf8mb4'SET_PRICE',_utf8mb4'ADD_FIXED',_utf8mb4'MULTIPLY',_utf8mb4'MIN_TOTAL',_utf8mb4'MAX_TOTAL')) and (`effect_amount` is not null)) or ((`effect_type` in (_utf8mb4'ADD_PER_UNIT',_utf8mb4'QUOTE_REQUIRED')) and (`effect_amount` is null)))),
+  CONSTRAINT `chk_pricing_rules_quote_required_stop` CHECK (((`effect_type` <> _utf8mb4'QUOTE_REQUIRED') or (`stop_processing` = 1))),
+  CONSTRAINT `chk_pricing_rules_stop_processing` CHECK ((`stop_processing` in (0,1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_rules`
+--
+
+LOCK TABLES `pricing_rules` WRITE;
+/*!40000 ALTER TABLE `pricing_rules` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_rules` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_rule_condition_groups`
+--
+
+DROP TABLE IF EXISTS `pricing_rule_condition_groups`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_rule_condition_groups` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `pricing_rule_id` binary(16) NOT NULL,
+  `group_order` smallint unsigned NOT NULL DEFAULT '0',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_rule_condition_groups_order` (`pricing_rule_id`,`group_order`),
+  CONSTRAINT `fk_pricing_rule_condition_groups_rule` FOREIGN KEY (`pricing_rule_id`) REFERENCES `pricing_rules` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_rule_condition_groups`
+--
+
+LOCK TABLES `pricing_rule_condition_groups` WRITE;
+/*!40000 ALTER TABLE `pricing_rule_condition_groups` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_rule_condition_groups` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_rule_conditions`
+--
+
+DROP TABLE IF EXISTS `pricing_rule_conditions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_rule_conditions` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `pricing_rule_condition_group_id` binary(16) NOT NULL,
+  `subject_type` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `service_option_id` binary(16) DEFAULT NULL,
+  `context_attribute_id` smallint unsigned DEFAULT NULL,
+  `operator` varchar(10) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `value_number` decimal(19,6) DEFAULT NULL,
+  `value_number_high` decimal(19,6) DEFAULT NULL,
+  `value_boolean` tinyint(1) DEFAULT NULL,
+  `value_choice_id` binary(16) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_pricing_rule_conditions_group` (`pricing_rule_condition_group_id`),
+  KEY `idx_pricing_rule_conditions_option` (`service_option_id`),
+  KEY `idx_pricing_rule_conditions_context` (`context_attribute_id`),
+  KEY `idx_pricing_rule_conditions_choice` (`value_choice_id`),
+  CONSTRAINT `fk_pricing_rule_conditions_group` FOREIGN KEY (`pricing_rule_condition_group_id`) REFERENCES `pricing_rule_condition_groups` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_rule_conditions_option` FOREIGN KEY (`service_option_id`) REFERENCES `service_options` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_rule_conditions_context` FOREIGN KEY (`context_attribute_id`) REFERENCES `pricing_context_attributes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_rule_conditions_choice` FOREIGN KEY (`value_choice_id`) REFERENCES `service_option_choices` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pricing_rule_conditions_subject_type` CHECK ((`subject_type` in (_utf8mb4'OPTION_CHOICE',_utf8mb4'OPTION_NUMERIC_VALUE',_utf8mb4'OPTION_BOOLEAN_VALUE',_utf8mb4'ITEM_QUANTITY',_utf8mb4'CONTEXT_ATTRIBUTE'))),
+  CONSTRAINT `chk_pricing_rule_conditions_operator` CHECK ((`operator` in (_utf8mb4'EQ',_utf8mb4'NEQ',_utf8mb4'GT',_utf8mb4'GTE',_utf8mb4'LT',_utf8mb4'LTE',_utf8mb4'IN',_utf8mb4'NOT_IN',_utf8mb4'BETWEEN'))),
+  CONSTRAINT `chk_pricing_rule_conditions_option_subject` CHECK (((`subject_type` in (_utf8mb4'OPTION_CHOICE',_utf8mb4'OPTION_NUMERIC_VALUE',_utf8mb4'OPTION_BOOLEAN_VALUE')) = (`service_option_id` is not null))),
+  CONSTRAINT `chk_pricing_rule_conditions_context_subject` CHECK (((`subject_type` = _utf8mb4'CONTEXT_ATTRIBUTE') = (`context_attribute_id` is not null))),
+  CONSTRAINT `chk_pricing_rule_conditions_between` CHECK (((`operator` <> _utf8mb4'BETWEEN') or ((`value_number` is not null) and (`value_number_high` is not null) and (`value_number_high` > `value_number`)))),
+  CONSTRAINT `chk_pricing_rule_conditions_boolean_operator` CHECK (((`subject_type` <> _utf8mb4'OPTION_BOOLEAN_VALUE') or (`operator` in (_utf8mb4'EQ',_utf8mb4'NEQ')))),
+  CONSTRAINT `chk_pricing_rule_conditions_choice_operator` CHECK (((`subject_type` <> _utf8mb4'OPTION_CHOICE') or (`operator` in (_utf8mb4'EQ',_utf8mb4'NEQ',_utf8mb4'IN',_utf8mb4'NOT_IN')))),
+  CONSTRAINT `chk_pricing_rule_conditions_choice_value` CHECK (((`value_choice_id` is null) or (`subject_type` = _utf8mb4'OPTION_CHOICE')))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_rule_conditions`
+--
+
+LOCK TABLES `pricing_rule_conditions` WRITE;
+/*!40000 ALTER TABLE `pricing_rule_conditions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_rule_conditions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_rule_condition_values`
+--
+
+DROP TABLE IF EXISTS `pricing_rule_condition_values`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_rule_condition_values` (
+  `pricing_rule_condition_id` binary(16) NOT NULL,
+  `sort_order` smallint unsigned NOT NULL DEFAULT '0',
+  `value_number` decimal(19,6) DEFAULT NULL,
+  `value_choice_id` binary(16) DEFAULT NULL,
+  PRIMARY KEY (`pricing_rule_condition_id`,`sort_order`),
+  KEY `idx_pricing_rule_condition_values_choice` (`value_choice_id`),
+  CONSTRAINT `fk_pricing_rule_condition_values_condition` FOREIGN KEY (`pricing_rule_condition_id`) REFERENCES `pricing_rule_conditions` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pricing_rule_condition_values_choice` FOREIGN KEY (`value_choice_id`) REFERENCES `service_option_choices` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pricing_rule_condition_values_one_value` CHECK ((((`value_number` is not null) and (`value_choice_id` is null)) or ((`value_number` is null) and (`value_choice_id` is not null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_rule_condition_values`
+--
+
+LOCK TABLES `pricing_rule_condition_values` WRITE;
+/*!40000 ALTER TABLE `pricing_rule_condition_values` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_rule_condition_values` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `pricing_rule_tiers`
+--
+
+DROP TABLE IF EXISTS `pricing_rule_tiers`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `pricing_rule_tiers` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `pricing_rule_id` binary(16) NOT NULL,
+  `tier_order` smallint unsigned NOT NULL,
+  `from_unit` decimal(19,6) NOT NULL,
+  `to_unit` decimal(19,6) DEFAULT NULL,
+  `charge_unit_size` decimal(19,6) NOT NULL DEFAULT '1.000000',
+  `rate_amount` decimal(19,6) NOT NULL,
+  `tier_pricing_mode` varchar(10) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_rule_tiers_order` (`pricing_rule_id`,`tier_order`),
+  CONSTRAINT `fk_pricing_rule_tiers_rule` FOREIGN KEY (`pricing_rule_id`) REFERENCES `pricing_rules` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pricing_rule_tiers_mode` CHECK ((`tier_pricing_mode` in (_utf8mb4'FLAT',_utf8mb4'PER_UNIT'))),
+  CONSTRAINT `chk_pricing_rule_tiers_range` CHECK (((`to_unit` is null) or (`to_unit` > `from_unit`))),
+  CONSTRAINT `chk_pricing_rule_tiers_from` CHECK ((`from_unit` >= 0)),
+  CONSTRAINT `chk_pricing_rule_tiers_rate` CHECK ((`rate_amount` >= 0)),
+  CONSTRAINT `chk_pricing_rule_tiers_charge_unit` CHECK ((`charge_unit_size` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `pricing_rule_tiers`
+--
+
+LOCK TABLES `pricing_rule_tiers` WRITE;
+/*!40000 ALTER TABLE `pricing_rule_tiers` DISABLE KEYS */;
+/*!40000 ALTER TABLE `pricing_rule_tiers` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `property_relationship_types`
 --
 
@@ -1471,6 +1739,67 @@ LOCK TABLES `roles` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `service_capabilities`
+--
+
+DROP TABLE IF EXISTS `service_capabilities`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_capabilities` (
+  `service_id` binary(16) NOT NULL,
+  `capability_type_id` smallint unsigned NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`service_id`,`capability_type_id`),
+  KEY `idx_service_capabilities_type` (`capability_type_id`),
+  CONSTRAINT `fk_service_capabilities_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_capabilities_type` FOREIGN KEY (`capability_type_id`) REFERENCES `service_capability_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_capabilities`
+--
+
+LOCK TABLES `service_capabilities` WRITE;
+/*!40000 ALTER TABLE `service_capabilities` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_capabilities` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_capability_types`
+--
+
+DROP TABLE IF EXISTS `service_capability_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_capability_types` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_capability_types_code` (`code`),
+  KEY `idx_service_capability_types_active` (`is_active`),
+  CONSTRAINT `chk_service_capability_types_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_service_capability_types_code` CHECK ((char_length(trim(`code`)) between 2 and 60)),
+  CONSTRAINT `chk_service_capability_types_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_service_capability_types_name` CHECK ((char_length(trim(`name`)) between 2 and 120))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_capability_types`
+--
+
+LOCK TABLES `service_capability_types` WRITE;
+/*!40000 ALTER TABLE `service_capability_types` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_capability_types` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `service_categories`
 --
 
@@ -1558,44 +1887,6 @@ LOCK TABLES `service_media` WRITE;
 UNLOCK TABLES;
 
 --
--- Table structure for table `service_option_choice_prices`
---
-
-DROP TABLE IF EXISTS `service_option_choice_prices`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `service_option_choice_prices` (
-  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
-  `service_option_choice_id` binary(16) NOT NULL,
-  `currency_id` smallint unsigned NOT NULL,
-  `additional_amount` decimal(19,6) NOT NULL DEFAULT '0.000000',
-  `effective_from` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `effective_to` datetime(6) DEFAULT NULL,
-  `open_ended_marker` tinyint unsigned GENERATED ALWAYS AS ((case when (`effective_to` is null) then 1 else NULL end)) STORED,
-  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_choice_prices_effective_start` (`service_option_choice_id`,`currency_id`,`effective_from`),
-  UNIQUE KEY `uq_choice_prices_open_ended` (`service_option_choice_id`,`currency_id`,`open_ended_marker`),
-  KEY `idx_choice_prices_current_lookup` (`service_option_choice_id`,`currency_id`,`effective_from`,`effective_to`),
-  KEY `idx_choice_prices_currency_id` (`currency_id`),
-  CONSTRAINT `fk_choice_prices_choice` FOREIGN KEY (`service_option_choice_id`) REFERENCES `service_option_choices` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_choice_prices_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_choice_prices_amount` CHECK ((`additional_amount` >= 0)),
-  CONSTRAINT `chk_choice_prices_period` CHECK (((`effective_to` is null) or (`effective_to` > `effective_from`)))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `service_option_choice_prices`
---
-
-LOCK TABLES `service_option_choice_prices` WRITE;
-/*!40000 ALTER TABLE `service_option_choice_prices` DISABLE KEYS */;
-/*!40000 ALTER TABLE `service_option_choice_prices` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `service_option_choices`
 --
 
@@ -1631,52 +1922,6 @@ CREATE TABLE `service_option_choices` (
 LOCK TABLES `service_option_choices` WRITE;
 /*!40000 ALTER TABLE `service_option_choices` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_option_choices` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `service_option_numeric_pricing_rules`
---
-
-DROP TABLE IF EXISTS `service_option_numeric_pricing_rules`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `service_option_numeric_pricing_rules` (
-  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
-  `service_option_id` binary(16) NOT NULL,
-  `currency_id` smallint unsigned NOT NULL,
-  `included_value` decimal(19,6) NOT NULL DEFAULT '0.000000',
-  `charge_unit_size` decimal(19,6) NOT NULL DEFAULT '1.000000',
-  `amount_per_unit` decimal(19,6) NOT NULL,
-  `minimum_additional_amount` decimal(19,6) NOT NULL DEFAULT '0.000000',
-  `maximum_additional_amount` decimal(19,6) DEFAULT NULL,
-  `effective_from` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `effective_to` datetime(6) DEFAULT NULL,
-  `open_ended_marker` tinyint unsigned GENERATED ALWAYS AS ((case when (`effective_to` is null) then 1 else NULL end)) STORED,
-  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_numeric_pricing_rules_start` (`service_option_id`,`currency_id`,`effective_from`),
-  UNIQUE KEY `uq_numeric_pricing_rules_open_ended` (`service_option_id`,`currency_id`,`open_ended_marker`),
-  KEY `idx_numeric_pricing_current_lookup` (`service_option_id`,`currency_id`,`effective_from`,`effective_to`),
-  KEY `idx_numeric_pricing_currency_id` (`currency_id`),
-  CONSTRAINT `fk_numeric_pricing_rules_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_numeric_pricing_rules_option` FOREIGN KEY (`service_option_id`) REFERENCES `service_options` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_numeric_pricing_amount_per_unit` CHECK ((`amount_per_unit` >= 0)),
-  CONSTRAINT `chk_numeric_pricing_charge_unit` CHECK ((`charge_unit_size` > 0)),
-  CONSTRAINT `chk_numeric_pricing_included_value` CHECK ((`included_value` >= 0)),
-  CONSTRAINT `chk_numeric_pricing_maximum` CHECK (((`maximum_additional_amount` is null) or (`maximum_additional_amount` >= `minimum_additional_amount`))),
-  CONSTRAINT `chk_numeric_pricing_minimum` CHECK ((`minimum_additional_amount` >= 0)),
-  CONSTRAINT `chk_numeric_pricing_period` CHECK (((`effective_to` is null) or (`effective_to` > `effective_from`)))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `service_option_numeric_pricing_rules`
---
-
-LOCK TABLES `service_option_numeric_pricing_rules` WRITE;
-/*!40000 ALTER TABLE `service_option_numeric_pricing_rules` DISABLE KEYS */;
-/*!40000 ALTER TABLE `service_option_numeric_pricing_rules` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1805,6 +2050,7 @@ CREATE TABLE `service_options` (
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_service_options_service_code` (`service_id`,`code`),
+  UNIQUE KEY `uq_service_options_id_service` (`id`,`service_id`),
   KEY `idx_service_options_service_active_order` (`service_id`,`is_active`,`display_order`),
   KEY `idx_service_options_type_id` (`option_type_id`),
   CONSTRAINT `fk_service_options_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -1824,44 +2070,6 @@ CREATE TABLE `service_options` (
 LOCK TABLES `service_options` WRITE;
 /*!40000 ALTER TABLE `service_options` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_options` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `service_prices`
---
-
-DROP TABLE IF EXISTS `service_prices`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `service_prices` (
-  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
-  `service_id` binary(16) NOT NULL,
-  `currency_id` smallint unsigned NOT NULL,
-  `base_amount` decimal(19,6) NOT NULL,
-  `effective_from` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `effective_to` datetime(6) DEFAULT NULL,
-  `open_ended_marker` tinyint unsigned GENERATED ALWAYS AS ((case when (`effective_to` is null) then 1 else NULL end)) STORED,
-  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_service_prices_start` (`service_id`,`currency_id`,`effective_from`),
-  UNIQUE KEY `uq_service_prices_open_ended` (`service_id`,`currency_id`,`open_ended_marker`),
-  KEY `idx_service_prices_lookup` (`service_id`,`currency_id`,`effective_from`,`effective_to`),
-  KEY `idx_service_prices_currency_id` (`currency_id`),
-  CONSTRAINT `fk_service_prices_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_service_prices_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_service_prices_amount` CHECK ((`base_amount` >= 0)),
-  CONSTRAINT `chk_service_prices_period` CHECK (((`effective_to` is null) or (`effective_to` > `effective_from`)))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `service_prices`
---
-
-LOCK TABLES `service_prices` WRITE;
-/*!40000 ALTER TABLE `service_prices` DISABLE KEYS */;
-/*!40000 ALTER TABLE `service_prices` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

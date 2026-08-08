@@ -96,20 +96,55 @@ class GetServiceDetailsTest extends TestCase
         return $uuid;
     }
 
-    private function createBasePrice(string $serviceUuid, array $overrides = []): void
+    /**
+     * Inserts one PUBLISHED pricing_scheme_versions row directly (bypassing
+     * SchemePublishValidator, matching the direct-fixture-insert convention
+     * already used throughout this file for every other reference row).
+     */
+    private function createPricingScheme(string $serviceUuid, array $overrides = []): string
     {
+        $uuid = UuidBinary::generate();
         $now = now();
 
-        DB::table('service_prices')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+        DB::table('pricing_scheme_versions')->insert([
+            'id' => UuidBinary::toBinary($uuid),
             'service_id' => UuidBinary::toBinary($serviceUuid),
             'currency_id' => $this->aedCurrencyId,
-            'base_amount' => $overrides['base_amount'] ?? '100.000000',
-            'effective_from' => $overrides['effective_from'] ?? $now->copy()->subDay(),
+            'status' => $overrides['status'] ?? 'PUBLISHED',
+            'effective_from' => array_key_exists('effective_from', $overrides) ? $overrides['effective_from'] : $now->copy()->subDay(),
             'effective_to' => array_key_exists('effective_to', $overrides) ? $overrides['effective_to'] : null,
+            'published_at' => $now,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+
+        return $uuid;
+    }
+
+    private function createPricingRule(string $schemeVersionUuid, array $overrides = []): string
+    {
+        $uuid = UuidBinary::generate();
+        $now = now();
+
+        DB::table('pricing_rules')->insert([
+            'id' => UuidBinary::toBinary($uuid),
+            'pricing_scheme_version_id' => UuidBinary::toBinary($schemeVersionUuid),
+            'rule_code' => $overrides['rule_code'] ?? 'BASE_'.$uuid,
+            'label' => $overrides['label'] ?? 'Base price',
+            'priority' => $overrides['priority'] ?? 100,
+            'effect_type' => $overrides['effect_type'] ?? 'SET_PRICE',
+            'effect_amount' => array_key_exists('effect_amount', $overrides) ? $overrides['effect_amount'] : '100.000000',
+            'effect_subject_type' => $overrides['effect_subject_type'] ?? null,
+            'effect_subject_service_option_id' => isset($overrides['effect_subject_service_option_id'])
+                ? UuidBinary::toBinary($overrides['effect_subject_service_option_id'])
+                : null,
+            'tier_calculation_mode' => $overrides['tier_calculation_mode'] ?? null,
+            'stop_processing' => $overrides['stop_processing'] ?? 0,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        return $uuid;
     }
 
     private function createOption(string $serviceUuid, int $typeId, array $overrides = []): string
@@ -151,26 +186,6 @@ class GetServiceDetailsTest extends TestCase
         ]);
     }
 
-    private function createNumericPricingRule(string $optionUuid, array $overrides = []): void
-    {
-        $now = now();
-
-        DB::table('service_option_numeric_pricing_rules')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
-            'service_option_id' => UuidBinary::toBinary($optionUuid),
-            'currency_id' => $this->aedCurrencyId,
-            'included_value' => $overrides['included_value'] ?? '1.000000',
-            'charge_unit_size' => $overrides['charge_unit_size'] ?? '1.000000',
-            'amount_per_unit' => $overrides['amount_per_unit'] ?? '20.000000',
-            'minimum_additional_amount' => $overrides['minimum_additional_amount'] ?? '0.000000',
-            'maximum_additional_amount' => array_key_exists('maximum_additional_amount', $overrides) ? $overrides['maximum_additional_amount'] : null,
-            'effective_from' => $overrides['effective_from'] ?? $now->copy()->subDay(),
-            'effective_to' => array_key_exists('effective_to', $overrides) ? $overrides['effective_to'] : null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
-    }
-
     private function createSelectionRule(string $optionUuid, array $overrides = []): void
     {
         $now = now();
@@ -202,22 +217,6 @@ class GetServiceDetailsTest extends TestCase
         ]);
 
         return $uuid;
-    }
-
-    private function createChoicePrice(string $choiceUuid, array $overrides = []): void
-    {
-        $now = now();
-
-        DB::table('service_option_choice_prices')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
-            'service_option_choice_id' => UuidBinary::toBinary($choiceUuid),
-            'currency_id' => $this->aedCurrencyId,
-            'additional_amount' => $overrides['additional_amount'] ?? '15.000000',
-            'effective_from' => $overrides['effective_from'] ?? $now->copy()->subDay(),
-            'effective_to' => array_key_exists('effective_to', $overrides) ? $overrides['effective_to'] : null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
     }
 
     public function test_active_service_by_slug_succeeds(): void
@@ -254,18 +253,18 @@ class GetServiceDetailsTest extends TestCase
         $categoryId = $this->createCategory();
         $service = $this->createService($categoryId);
         $this->createMedia($service['uuid'], ['is_primary' => 1]);
-        $this->createBasePrice($service['uuid']);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_amount' => '100.000000']);
 
         $textOption = $this->createOption($service['uuid'], $this->textTypeId, ['display_order' => 1]);
 
         $numberOption = $this->createOption($service['uuid'], $this->numberTypeId, ['display_order' => 2]);
         $this->createNumericRule($numberOption);
-        $this->createNumericPricingRule($numberOption);
 
         $selectOption = $this->createOption($service['uuid'], $this->singleSelectTypeId, ['display_order' => 3]);
         $this->createSelectionRule($selectOption);
-        $choice = $this->createChoice($selectOption, ['display_order' => 1]);
-        $this->createChoicePrice($choice);
+        $this->createChoice($selectOption, ['display_order' => 1]);
 
         $response = $this->getJson("/api/v1/services/{$service['slug']}");
 
@@ -276,19 +275,24 @@ class GetServiceDetailsTest extends TestCase
                 'uuid', 'code', 'slug', 'name', 'short_description', 'description',
                 'category' => ['id', 'code', 'name', 'description'],
                 'media' => [['uuid', 'storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels', 'is_primary']],
-                'base_price' => ['amount', 'currency' => ['code', 'symbol', 'minor_unit']],
+                'pricing_preview' => [
+                    'pricing_status', 'currency', 'pricing_scheme_version', 'base_amount',
+                    'adjustments', 'unit_total', 'quantity', 'line_total', 'required_context',
+                ],
                 'options' => [
                     '*' => ['uuid', 'code', 'name', 'description', 'type', 'is_required'],
                 ],
             ],
         ]);
 
+        $this->assertSame('PRICED', $response->json('data.pricing_preview.pricing_status'));
+        $this->assertSame('100.000000', $response->json('data.pricing_preview.unit_total'));
+
         $options = $response->json('data.options');
         $numberPayload = collect($options)->firstWhere('uuid', $numberOption);
         $selectPayload = collect($options)->firstWhere('uuid', $selectOption);
 
         $this->assertArrayHasKey('numeric_rule', $numberPayload);
-        $this->assertArrayHasKey('numeric_pricing_rule', $numberPayload);
         $this->assertArrayHasKey('selection_rule', $selectPayload);
         $this->assertArrayHasKey('choices', $selectPayload);
     }
@@ -304,7 +308,6 @@ class GetServiceDetailsTest extends TestCase
         $payload = collect($response->json('data.options'))->firstWhere('uuid', $textOption);
 
         $this->assertArrayNotHasKey('numeric_rule', $payload);
-        $this->assertArrayNotHasKey('numeric_pricing_rule', $payload);
         $this->assertArrayNotHasKey('selection_rule', $payload);
         $this->assertArrayNotHasKey('choices', $payload);
     }
@@ -448,86 +451,58 @@ class GetServiceDetailsTest extends TestCase
         $this->assertSame(3, $payload['selection_rule']['maximum_selections']);
     }
 
-    public function test_current_choice_additional_price_is_correct(): void
+    public function test_pricing_preview_is_unavailable_when_no_scheme_exists(): void
     {
         $categoryId = $this->createCategory();
         $service = $this->createService($categoryId);
-        $option = $this->createOption($service['uuid'], $this->singleSelectTypeId);
-        $this->createSelectionRule($option);
-        $choice = $this->createChoice($option);
-        $this->createChoicePrice($choice, ['additional_amount' => '42.500000']);
 
         $response = $this->getJson("/api/v1/services/{$service['slug']}");
 
-        $payload = collect($response->json('data.options'))->firstWhere('uuid', $option);
-        $choicePayload = collect($payload['choices'])->firstWhere('uuid', $choice);
-
-        $this->assertSame('42.500000', $choicePayload['current_additional_price']['amount']);
-        $this->assertSame('AED', $choicePayload['current_additional_price']['currency']['code']);
+        $this->assertSame('UNAVAILABLE', $response->json('data.pricing_preview.pricing_status'));
+        $this->assertNull($response->json('data.pricing_preview.unit_total'));
     }
 
-    public function test_choice_without_current_price_returns_null(): void
+    public function test_pricing_preview_excludes_future_scheme_version(): void
     {
         $categoryId = $this->createCategory();
         $service = $this->createService($categoryId);
-        $option = $this->createOption($service['uuid'], $this->singleSelectTypeId);
-        $this->createSelectionRule($option);
-        $choice = $this->createChoice($option);
+
+        $scheme = $this->createPricingScheme($service['uuid'], ['effective_from' => now()->copy()->addDays(5)]);
+        $this->createPricingRule($scheme);
 
         $response = $this->getJson("/api/v1/services/{$service['slug']}");
 
-        $payload = collect($response->json('data.options'))->firstWhere('uuid', $option);
-        $choicePayload = collect($payload['choices'])->firstWhere('uuid', $choice);
-
-        $this->assertNull($choicePayload['current_additional_price']);
+        $this->assertSame('UNAVAILABLE', $response->json('data.pricing_preview.pricing_status'));
     }
 
-    public function test_current_numeric_pricing_rule_is_correct(): void
-    {
-        $categoryId = $this->createCategory();
-        $service = $this->createService($categoryId);
-        $option = $this->createOption($service['uuid'], $this->numberTypeId);
-        $this->createNumericPricingRule($option, [
-            'included_value' => '2.000000',
-            'charge_unit_size' => '1.000000',
-            'amount_per_unit' => '30.000000',
-            'minimum_additional_amount' => '0.000000',
-            'maximum_additional_amount' => '300.000000',
-        ]);
-
-        $response = $this->getJson("/api/v1/services/{$service['slug']}");
-
-        $payload = collect($response->json('data.options'))->firstWhere('uuid', $option);
-        $rule = $payload['numeric_pricing_rule'];
-
-        $this->assertSame('2.000000', $rule['included_value']);
-        $this->assertSame('30.000000', $rule['amount_per_unit']);
-        $this->assertSame('300.000000', $rule['maximum_additional_amount']);
-        $this->assertSame('AED', $rule['currency']['code']);
-    }
-
-    public function test_historical_and_future_pricing_are_not_exposed(): void
+    public function test_pricing_preview_excludes_expired_scheme_version(): void
     {
         $categoryId = $this->createCategory();
         $service = $this->createService($categoryId);
 
-        $this->createBasePrice($service['uuid'], [
+        $scheme = $this->createPricingScheme($service['uuid'], [
             'effective_from' => now()->copy()->subDays(10),
             'effective_to' => now()->copy()->subDays(5),
         ]);
-
-        $numericOption = $this->createOption($service['uuid'], $this->numberTypeId);
-        $this->createNumericPricingRule($numericOption, [
-            'effective_from' => now()->copy()->addDays(5),
-            'effective_to' => null,
-        ]);
+        $this->createPricingRule($scheme);
 
         $response = $this->getJson("/api/v1/services/{$service['slug']}");
 
-        $this->assertNull($response->json('data.base_price'));
+        $this->assertSame('UNAVAILABLE', $response->json('data.pricing_preview.pricing_status'));
+    }
 
-        $payload = collect($response->json('data.options'))->firstWhere('uuid', $numericOption);
-        $this->assertNull($payload['numeric_pricing_rule']);
+    public function test_pricing_preview_reports_quote_required(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_type' => 'QUOTE_REQUIRED', 'effect_amount' => null, 'stop_processing' => 1]);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+
+        $this->assertSame('QUOTE_REQUIRED', $response->json('data.pricing_preview.pricing_status'));
+        $this->assertNull($response->json('data.pricing_preview.unit_total'));
     }
 
     public function test_all_identifiers_are_returned_as_uuid_strings_with_no_binary_leak(): void
