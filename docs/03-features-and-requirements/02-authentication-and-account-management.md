@@ -88,7 +88,17 @@ The customer can log in using:
 * Phone Number
 * Password
 
-The system should allow login only for verified accounts.
+The system should allow login only for verified, active accounts.
+
+A successful login creates a session for the requesting mobile client (iOS or Android) and
+returns a short-lived access token plus a refresh token. The customer stays signed in across
+app restarts: the application renews the access token automatically in the background using
+the refresh token, so the customer is not asked to log in again or complete OTP on every app
+open. Re-authentication with phone number and password is only required once the underlying
+session has expired or been revoked (for example, by logout).
+
+The full technical design — token types, lifetimes, and renewal/revocation rules — is defined
+in `docs/06-technical-system-design/02-authentication-session-and-token-design.md`.
 
 ---
 

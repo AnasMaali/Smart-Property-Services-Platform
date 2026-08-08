@@ -133,6 +133,14 @@ Issuing a new OTP code shall invalidate the previous active OTP code for the sam
 
 The customer shall be able to log in using a verified phone number and password.
 
+### FR-PF-01A
+
+Once logged in, the customer shall remain signed in across app restarts. The mobile
+application shall automatically renew access in the background using the refresh token,
+without requiring the customer to re-enter phone number and password or complete OTP again,
+until the underlying session expires or is revoked. See
+`docs/06-technical-system-design/02-authentication-session-and-token-design.md`.
+
 ### FR-PF-02
 
 The customer shall be able to log out.

@@ -196,7 +196,11 @@ Authentication tokens shall be generated securely and shall not contain readable
 
 ### SEC-SES-03
 
-Authentication tokens shall have a limited validity period.
+Authentication tokens shall have a limited validity period. For customers in Version 1, the
+access token (JWT, HS256) is valid for 15 minutes, and the backing session
+(`auth_sessions`) has an absolute lifetime of 30 days from login that refreshing does not
+extend. See `docs/06-technical-system-design/02-authentication-session-and-token-design.md`
+for the full design.
 
 ### SEC-SES-04
 
@@ -208,7 +212,10 @@ The system shall invalidate the active session when the customer logs out.
 
 ### SEC-SES-06
 
-The system shall reject expired, invalid, or modified authentication tokens.
+The system shall reject expired, invalid, or modified authentication tokens. Rejection shall
+also occur when the access token's signature and expiry are valid but its backing session
+(`auth_sessions`) has been revoked or has passed its absolute expiry — signature and expiry
+checks alone are not sufficient (see SEC-SES-09).
 
 ### SEC-SES-07
 
@@ -217,6 +224,17 @@ Admin sessions should use shorter inactivity periods or stronger session control
 ### SEC-SES-08
 
 The system shall not expose authentication tokens in URLs, public logs, or error messages.
+
+### SEC-SES-09
+
+Every protected request shall confirm the session record referenced by the access token exists,
+is not revoked, and has not passed its absolute expiry, so that logout or revocation takes
+effect immediately even if the access token itself has not yet expired.
+
+### SEC-SES-10
+
+The refresh token shall be rotated on every successful renewal, and the previous refresh token
+shall become invalid immediately upon rotation.
 
 ---
 
