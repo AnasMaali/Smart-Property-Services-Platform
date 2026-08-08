@@ -4,8 +4,10 @@ namespace App\Services\Auth;
 
 use Carbon\CarbonImmutable;
 use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 class JwtTokenService
 {
@@ -40,5 +42,34 @@ class JwtTokenService
             'token' => JWT::encode($payload, $secret, 'HS256'),
             'expires_at' => $expiresAt,
         ];
+    }
+
+    /**
+     * Verify a customer access token's HS256 signature and expiry, and
+     * return its decoded claims. Returns null for any malformed, expired,
+     * not-yet-valid, or invalid-signature token, or one missing the `sub`
+     * or `sid` claims this service relies on - the caller is expected to
+     * turn that into a single generic rejection rather than distinguish
+     * between these cases.
+     */
+    public function decodeAccessToken(string $jwt): ?object
+    {
+        $secret = config('jwt.secret');
+
+        if (! is_string($secret) || $secret === '') {
+            throw new RuntimeException('AUTH_JWT_SECRET is not configured.');
+        }
+
+        try {
+            $decoded = JWT::decode($jwt, new Key($secret, 'HS256'));
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! isset($decoded->sub, $decoded->sid) || ! is_string($decoded->sub) || ! is_string($decoded->sid)) {
+            return null;
+        }
+
+        return $decoded;
     }
 }
