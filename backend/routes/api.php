@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
@@ -17,6 +18,7 @@ Route::post('/v1/auth/login', LoginController::class);
 Route::post('/v1/auth/refresh', RefreshController::class);
 Route::post('/v1/auth/logout', LogoutController::class);
 Route::post('/v1/auth/logout-all', LogoutAllController::class);
+Route::post('/v1/auth/forgot-password', ForgotPasswordController::class);
 
 Route::get('/v1/health', function () {
     try {
