@@ -3,12 +3,13 @@
 namespace App\Http\Requests\Auth;
 
 use App\Http\Requests\ApiFormRequest;
-use Illuminate\Support\Facades\App;
+use App\Http\Requests\Auth\Concerns\HasPasswordPolicy;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\Password;
 
 class RegisterCustomerRequest extends ApiFormRequest
 {
+    use HasPasswordPolicy;
+
     public function authorize(): bool
     {
         return true;
@@ -83,12 +84,5 @@ class RegisterCustomerRequest extends ApiFormRequest
             'service_interests.*.exists' => 'One or more selected service interests are invalid or inactive.',
             'service_interests.*.distinct' => 'Service interests must not contain duplicate values.',
         ];
-    }
-
-    private function passwordRule(): Password
-    {
-        $rule = Password::min(8)->letters()->numbers();
-
-        return App::environment('testing') ? $rule : $rule->uncompromised();
     }
 }
