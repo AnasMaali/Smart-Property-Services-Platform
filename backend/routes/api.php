@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\LoginController;
+use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\RefreshController;
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
@@ -15,6 +16,7 @@ Route::post('/v1/auth/resend-otp', ResendOtpController::class);
 Route::post('/v1/auth/login', LoginController::class);
 Route::post('/v1/auth/refresh', RefreshController::class);
 Route::post('/v1/auth/logout', LogoutController::class);
+Route::post('/v1/auth/logout-all', LogoutAllController::class);
 
 Route::get('/v1/health', function () {
     try {
