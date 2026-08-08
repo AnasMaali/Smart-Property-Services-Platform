@@ -49,15 +49,12 @@ The customer can choose one of the following:
 
 ## Preferred Service Interest Options
 
-The customer can choose one or more services they may be interested in:
+The customer can choose one or more service categories they may be interested in.
 
-* Maintenance
-* Repair
-* Cleaning
-* Renovation
-* Inspection
-* Emergency Services
-* Other
+The authoritative list of selectable service categories is the active rows of the
+`service_categories` reference table (seeded in `database/blue_v1_seed.sql` and exposed to
+clients via `GET /api/v1/reference-data/registration`), not a fixed list in this document. This
+avoids two lists drifting out of sync as categories are added, renamed, or retired.
 
 ---
 

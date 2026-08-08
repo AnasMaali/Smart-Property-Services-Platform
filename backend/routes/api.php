@@ -14,6 +14,9 @@ use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
+use App\Http\Controllers\Api\V1\Profile\GetProfileController;
+use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
+use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -33,7 +36,12 @@ Route::middleware('auth.customer')->group(function () {
     Route::post('/v1/auth/change-phone-number', RequestPhoneNumberChangeController::class);
     Route::post('/v1/auth/verify-phone-number-change-otp', VerifyPhoneNumberChangeOtpController::class);
     Route::post('/v1/auth/resend-phone-number-change-otp', ResendPhoneNumberChangeOtpController::class);
+
+    Route::get('/v1/profile', GetProfileController::class);
+    Route::patch('/v1/profile', UpdateProfileController::class);
 });
+
+Route::get('/v1/reference-data/registration', ReferenceDataController::class);
 
 Route::get('/v1/health', function () {
     try {
