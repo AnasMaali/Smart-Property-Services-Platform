@@ -291,6 +291,12 @@ Cart data may include:
 * Creation date
 * Last update date
 
+> **Implementation note (BLUE V1 Phase 4):** "Total amount" here describes data the cart
+> conceptually *has*, not a stored column. The implemented `carts` table has no total/amount
+> column at all — the total is computed live on every request by the flexible `PricingEngine`
+> from the cart's current items and their selections, never read from or written to storage. See
+> `docs/api-contracts/cart-v1.md` §2 and §7 for the authoritative behavior.
+
 ### DR-CART-03
 
 Possible cart statuses may include:
@@ -306,6 +312,11 @@ The cart shall not become a Booking before successful payment.
 ### DR-CART-05
 
 The cart total shall equal the sum of all active Cart Item prices.
+
+> **Implementation note (BLUE V1 Phase 4):** enforced structurally, not as a reconciliation rule —
+> the cart total is *defined* as the live sum of each item's current `PricingEngine` line total,
+> so it cannot drift from that sum. It is only returned when every item is fully priced; see
+> `docs/api-contracts/cart-v1.md` §2.
 
 ---
 
@@ -327,6 +338,12 @@ Cart Item data shall include:
 * Item price
 * Creation date
 * Last update date
+
+> **Implementation note (BLUE V1 Phase 4):** the implemented `cart_items` table has no price
+> column — "Item price" is the item's live `PricingEngine` line total in the Cart API response,
+> recomputed on every request from the service and selected options above, never stored. A
+> Booking Item created later from a paid cart is expected to store an immutable pricing snapshot
+> at booking time; that snapshot is out of scope for Cart. See `docs/api-contracts/cart-v1.md` §7.
 
 ### DR-CI-03
 
@@ -788,6 +805,9 @@ Audit records shall not include readable passwords, OTP codes, authentication to
 ### DR-CON-01
 
 A Cart total shall equal the sum of its Cart Item prices.
+
+> **Implementation note (BLUE V1 Phase 4):** see the note under DR-CART-05 — this is structural,
+> since neither the cart total nor an item price is ever stored independently of the other.
 
 ### DR-CON-02
 

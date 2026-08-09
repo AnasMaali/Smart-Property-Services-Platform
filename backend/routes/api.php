@@ -14,6 +14,11 @@ use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
+use App\Http\Controllers\Api\V1\Cart\AddCartItemController;
+use App\Http\Controllers\Api\V1\Cart\ClearCartController;
+use App\Http\Controllers\Api\V1\Cart\GetCartController;
+use App\Http\Controllers\Api\V1\Cart\RemoveCartItemController;
+use App\Http\Controllers\Api\V1\Cart\UpdateCartItemController;
 use App\Http\Controllers\Api\V1\Profile\GetProfileController;
 use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
 use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
@@ -42,6 +47,12 @@ Route::middleware('auth.customer')->group(function () {
 
     Route::get('/v1/profile', GetProfileController::class);
     Route::patch('/v1/profile', UpdateProfileController::class);
+
+    Route::get('/v1/cart', GetCartController::class);
+    Route::post('/v1/cart/items', AddCartItemController::class);
+    Route::patch('/v1/cart/items/{item}', UpdateCartItemController::class);
+    Route::delete('/v1/cart/items/{item}', RemoveCartItemController::class);
+    Route::delete('/v1/cart', ClearCartController::class);
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

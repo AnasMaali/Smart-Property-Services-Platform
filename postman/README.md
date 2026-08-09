@@ -3,6 +3,16 @@
 Companion Postman assets for `docs/api-contracts/authentication-v1.md`. Import both files below
 into Postman to exercise every implemented BLUE V1 customer authentication endpoint.
 
+## Cart collection
+
+`BLUE-V1-Cart.postman_collection.json` is a separate collection covering the Phase 4 Cart endpoints
+(companion to `docs/api-contracts/cart-v1.md`): Get Cart, Add Cart Item, Update Cart Item, Remove
+Cart Item, Clear Cart. Import it alongside the two files below and the same `BLUE V1 Local`
+environment. Every Cart request requires `access_token` (run Login from this collection first).
+`service_uuid` must be set manually to a real, active, `CART_ELIGIBLE` service uuid seeded in the
+target environment — it is not provided by the environment file since it is seed-specific, not a
+Cart concept. `cart_item_uuid` is captured automatically by the Add Cart Item request's test script.
+
 ## 1. Start the backend
 
 ```

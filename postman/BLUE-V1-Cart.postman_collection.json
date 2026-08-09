@@ -1,0 +1,225 @@
+{
+  "info": {
+    "_postman_id": "d3f7b6a2-9c1e-4c7a-9e3a-2a6b8f1c7d4e",
+    "name": "BLUE V1 - Cart",
+    "description": "BLUE V1 Phase 4 Cart endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Cart, backend/app/Actions/Cart, and verified against backend/tests/Feature/Cart. See docs/api-contracts/cart-v1.md for the full written contract.\n\nEvery request requires a valid access_token (run the Authentication collection's Login request first, or set access_token manually). service_uuid must be a real, active, CART_ELIGIBLE service uuid seeded in the target environment - this collection never invents catalog data. cart_item_uuid is captured automatically from the Add Cart Item response.\n\nEvery price in every response is computed live by PricingEngine::evaluate() - carts and cart_items store no monetary snapshot, so there is nothing here to fake.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Cart",
+      "item": [
+        {
+          "name": "Get Cart",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/cart",
+              "host": ["{{base_url}}"],
+              "path": ["cart"]
+            },
+            "description": "Returns the customer's ACTIVE cart, fully repriced live via PricingEngine. Never creates a cart as a side effect - with no ACTIVE cart, returns a safe empty-cart representation (data.cart.uuid: null, items: [])."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Add Cart Item",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_uuid\": \"{{service_uuid}}\",\n  \"quantity\": 1,\n  \"options\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/cart/items",
+              "host": ["{{base_url}}"],
+              "path": ["cart", "items"]
+            },
+            "description": "Adds one line item to the customer's ACTIVE cart, creating it on first add. service_uuid must be an active, CART_ELIGIBLE service; options must use the value field matching each option's type (numeric_value / boolean_value / text_value / choice_uuids). price/subtotal/total fields are never accepted - pricing is always PricingEngine::evaluate()'s live output. Rejected with 422 when the resulting pricing is UNAVAILABLE."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data && json.data.cart && json.data.cart.items && json.data.cart.items.length) {",
+                  "    var lastItem = json.data.cart.items[json.data.cart.items.length - 1];",
+                  "    pm.environment.set('cart_item_uuid', lastItem.uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update Cart Item",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/cart/items/{{cart_item_uuid}}",
+              "host": ["{{base_url}}"],
+              "path": ["cart", "items", "{{cart_item_uuid}}"]
+            },
+            "description": "Updates quantity and/or fully replaces the option selections (when options is supplied) of one owned cart item. Always fully revalidates and reprices, even when only quantity changes. A cart_item_uuid owned by another customer, or unknown, returns 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Remove Cart Item",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/cart/items/{{cart_item_uuid}}",
+              "host": ["{{base_url}}"],
+              "path": ["cart", "items", "{{cart_item_uuid}}"]
+            },
+            "description": "Removes one owned cart item. Selection rows cascade at the database layer; the cart row itself is never deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Clear Cart",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/cart",
+              "host": ["{{base_url}}"],
+              "path": ["cart"]
+            },
+            "description": "Removes every item from the ACTIVE cart but keeps the cart row. Safe no-op (still 200) when the cart is already empty or does not exist."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('cart items is empty', function () {",
+                  "    pm.expect(pm.response.json().data.cart.items).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}
