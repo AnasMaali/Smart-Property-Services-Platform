@@ -13,6 +13,18 @@ environment. Every Cart request requires `access_token` (run Login from this col
 target environment — it is not provided by the environment file since it is seed-specific, not a
 Cart concept. `cart_item_uuid` is captured automatically by the Add Cart Item request's test script.
 
+## Checkout collection
+
+`BLUE-V1-Checkout.postman_collection.json` covers the Phase 5 Checkout & Scheduling endpoints
+(companion to `docs/api-contracts/checkout-v1.md`): Get Checkout, Save Checkout Location, List
+Appointment Slots, Create Appointment Hold, Release Appointment Hold. Import it alongside the Cart
+collection and the same `BLUE V1 Local` environment — every request needs `access_token` plus an
+ACTIVE cart with at least one item (run Cart's Add Cart Item first). `area_id` must be set manually
+to a real, active area id (see `GET /v1/reference-data/registration`); `appointment_slot_uuid` is
+captured automatically by List Appointment Slots (or set manually to a real, active, future
+`appointment_slots` row); `appointment_hold_uuid` is captured automatically by Create Appointment
+Hold. Payment is out of scope for this collection — there is no payment/booking request here.
+
 ## 1. Start the backend
 
 ```

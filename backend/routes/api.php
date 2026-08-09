@@ -19,6 +19,11 @@ use App\Http\Controllers\Api\V1\Cart\ClearCartController;
 use App\Http\Controllers\Api\V1\Cart\GetCartController;
 use App\Http\Controllers\Api\V1\Cart\RemoveCartItemController;
 use App\Http\Controllers\Api\V1\Cart\UpdateCartItemController;
+use App\Http\Controllers\Api\V1\Checkout\CreateAppointmentHoldController;
+use App\Http\Controllers\Api\V1\Checkout\GetAppointmentSlotsController;
+use App\Http\Controllers\Api\V1\Checkout\GetCheckoutController;
+use App\Http\Controllers\Api\V1\Checkout\ReleaseAppointmentHoldController;
+use App\Http\Controllers\Api\V1\Checkout\SaveCheckoutLocationController;
 use App\Http\Controllers\Api\V1\Profile\GetProfileController;
 use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
 use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
@@ -53,6 +58,12 @@ Route::middleware('auth.customer')->group(function () {
     Route::patch('/v1/cart/items/{item}', UpdateCartItemController::class);
     Route::delete('/v1/cart/items/{item}', RemoveCartItemController::class);
     Route::delete('/v1/cart', ClearCartController::class);
+
+    Route::get('/v1/checkout', GetCheckoutController::class);
+    Route::put('/v1/checkout/location', SaveCheckoutLocationController::class);
+    Route::get('/v1/checkout/appointment-slots', GetAppointmentSlotsController::class);
+    Route::post('/v1/checkout/appointment-hold', CreateAppointmentHoldController::class);
+    Route::delete('/v1/checkout/appointment-hold', ReleaseAppointmentHoldController::class);
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

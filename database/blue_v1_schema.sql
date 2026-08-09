@@ -66,6 +66,80 @@ LOCK TABLES `admin_audit_logs` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `appointment_time_windows`
+--
+
+DROP TABLE IF EXISTS `appointment_time_windows`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `appointment_time_windows` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_appointment_time_windows_code` (`code`),
+  KEY `idx_appointment_time_windows_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_appointment_time_windows_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_appointment_time_windows_code` CHECK ((char_length(trim(`code`)) between 2 and 60)),
+  CONSTRAINT `chk_appointment_time_windows_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_appointment_time_windows_name` CHECK ((char_length(trim(`name`)) between 2 and 120))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `appointment_time_windows`
+--
+
+LOCK TABLES `appointment_time_windows` WRITE;
+/*!40000 ALTER TABLE `appointment_time_windows` DISABLE KEYS */;
+/*!40000 ALTER TABLE `appointment_time_windows` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `appointment_slots`
+--
+
+DROP TABLE IF EXISTS `appointment_slots`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `appointment_slots` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `starts_at` datetime(6) NOT NULL,
+  `ends_at` datetime(6) NOT NULL,
+  `booking_capacity` smallint unsigned NOT NULL DEFAULT '1',
+  `time_window_id` smallint unsigned NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `internal_note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_appointment_slots_period` (`starts_at`,`ends_at`),
+  KEY `idx_appointment_slots_active_start` (`is_active`,`starts_at`),
+  KEY `idx_appointment_slots_start_end` (`starts_at`,`ends_at`),
+  KEY `idx_appointment_slots_time_window` (`time_window_id`),
+  CONSTRAINT `fk_appointment_slots_time_window` FOREIGN KEY (`time_window_id`) REFERENCES `appointment_time_windows` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_appointment_slots_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_appointment_slots_capacity` CHECK ((`booking_capacity` between 1 and 10000)),
+  CONSTRAINT `chk_appointment_slots_internal_note` CHECK (((`internal_note` is null) or (char_length(trim(`internal_note`)) between 2 and 500))),
+  CONSTRAINT `chk_appointment_slots_period` CHECK ((`ends_at` > `starts_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `appointment_slots`
+--
+
+LOCK TABLES `appointment_slots` WRITE;
+/*!40000 ALTER TABLE `appointment_slots` DISABLE KEYS */;
+/*!40000 ALTER TABLE `appointment_slots` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `appointment_holds`
 --
 
@@ -104,42 +178,6 @@ CREATE TABLE `appointment_holds` (
 LOCK TABLES `appointment_holds` WRITE;
 /*!40000 ALTER TABLE `appointment_holds` DISABLE KEYS */;
 /*!40000 ALTER TABLE `appointment_holds` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `appointment_slots`
---
-
-DROP TABLE IF EXISTS `appointment_slots`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `appointment_slots` (
-  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
-  `starts_at` datetime(6) NOT NULL,
-  `ends_at` datetime(6) NOT NULL,
-  `booking_capacity` smallint unsigned NOT NULL DEFAULT '1',
-  `is_active` tinyint(1) NOT NULL DEFAULT '1',
-  `internal_note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
-  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_appointment_slots_period` (`starts_at`,`ends_at`),
-  KEY `idx_appointment_slots_active_start` (`is_active`,`starts_at`),
-  KEY `idx_appointment_slots_start_end` (`starts_at`,`ends_at`),
-  CONSTRAINT `chk_appointment_slots_active` CHECK ((`is_active` in (0,1))),
-  CONSTRAINT `chk_appointment_slots_capacity` CHECK ((`booking_capacity` between 1 and 10000)),
-  CONSTRAINT `chk_appointment_slots_internal_note` CHECK (((`internal_note` is null) or (char_length(trim(`internal_note`)) between 2 and 500))),
-  CONSTRAINT `chk_appointment_slots_period` CHECK ((`ends_at` > `starts_at`))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `appointment_slots`
---
-
-LOCK TABLES `appointment_slots` WRITE;
-/*!40000 ALTER TABLE `appointment_slots` DISABLE KEYS */;
-/*!40000 ALTER TABLE `appointment_slots` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -2107,6 +2145,69 @@ CREATE TABLE `service_specializations` (
 LOCK TABLES `service_specializations` WRITE;
 /*!40000 ALTER TABLE `service_specializations` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_specializations` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_zones`
+--
+
+DROP TABLE IF EXISTS `service_zones`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_zones` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_zones_code` (`code`),
+  KEY `idx_service_zones_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_service_zones_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_service_zones_code` CHECK ((char_length(trim(`code`)) between 2 and 60)),
+  CONSTRAINT `chk_service_zones_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_service_zones_name` CHECK ((char_length(trim(`name`)) between 2 and 120))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_zones`
+--
+
+LOCK TABLES `service_zones` WRITE;
+/*!40000 ALTER TABLE `service_zones` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_zones` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_zone_areas`
+--
+
+DROP TABLE IF EXISTS `service_zone_areas`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_zone_areas` (
+  `area_id` int unsigned NOT NULL,
+  `service_zone_id` smallint unsigned NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`area_id`),
+  KEY `idx_service_zone_areas_zone` (`service_zone_id`),
+  CONSTRAINT `fk_service_zone_areas_area` FOREIGN KEY (`area_id`) REFERENCES `areas` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_zone_areas_zone` FOREIGN KEY (`service_zone_id`) REFERENCES `service_zones` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_zone_areas`
+--
+
+LOCK TABLES `service_zone_areas` WRITE;
+/*!40000 ALTER TABLE `service_zone_areas` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_zone_areas` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

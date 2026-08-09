@@ -6,7 +6,9 @@ use App\Models\Cart;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingResult;
+use App\Support\Pricing\PricingResultAggregator;
 use App\Support\Pricing\PricingStatus;
+use App\Support\ServiceCatalog\ServiceSummaryPresenter;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 
@@ -53,7 +55,7 @@ final class CartPresenter
 
             $itemPayloads[] = [
                 'uuid' => UuidBinary::toString($item->id),
-                'service' => $this->serviceSummary($item->service_id),
+                'service' => ServiceSummaryPresenter::present($item->service_id),
                 'quantity' => (int) $item->quantity,
                 'options' => $optionsInput,
                 'pricing' => $pricingResult->toArray(),
@@ -101,83 +103,17 @@ final class CartPresenter
     }
 
     /**
-     * @return array<string, mixed>
-     */
-    private function serviceSummary(string $serviceIdBinary): array
-    {
-        $service = DB::table('services')->where('id', $serviceIdBinary)->first(['id', 'slug', 'name']);
-
-        $primaryImage = DB::table('service_media')
-            ->where('service_id', $serviceIdBinary)
-            ->where('is_primary', 1)
-            ->where('is_active', 1)
-            ->first(['id', 'storage_key', 'mime_type', 'alt_text']);
-
-        return [
-            'uuid' => UuidBinary::toString($service->id),
-            'slug' => $service->slug,
-            'name' => $service->name,
-            'primary_image' => $primaryImage === null ? null : [
-                'uuid' => UuidBinary::toString($primaryImage->id),
-                'storage_key' => $primaryImage->storage_key,
-                'mime_type' => $primaryImage->mime_type,
-                'alt_text' => $primaryImage->alt_text,
-            ],
-        ];
-    }
-
-    /**
      * Cart-aggregate pricing status per BLUE V1 Phase 4 §8: QUOTE_REQUIRED
      * beats MISSING_CONTEXT beats UNAVAILABLE beats PRICED. An empty cart is
-     * trivially PRICED with a zero total.
+     * trivially PRICED with a zero total. Delegates to the shared
+     * PricingResultAggregator so Checkout (Phase 5) reuses the exact same
+     * roll-up instead of a second copy of it.
      *
      * @param  array<int, PricingResult>  $pricingResults
      * @return array{status: PricingStatus, required_context: array<int, string>, requires_quote: bool, total: ?string}
      */
     private function aggregate(array $pricingResults): array
     {
-        $requiredContext = [];
-        $requiresQuote = false;
-        $hasQuoteRequired = false;
-        $hasMissingContext = false;
-        $hasUnavailable = false;
-
-        foreach ($pricingResults as $result) {
-            $requiredContext = array_merge($requiredContext, $result->requiredContext);
-
-            match ($result->status) {
-                PricingStatus::QUOTE_REQUIRED => $hasQuoteRequired = $requiresQuote = true,
-                PricingStatus::MISSING_CONTEXT => $hasMissingContext = true,
-                PricingStatus::UNAVAILABLE => $hasUnavailable = true,
-                PricingStatus::PRICED => null,
-            };
-        }
-
-        $requiredContext = array_values(array_unique($requiredContext));
-        sort($requiredContext);
-
-        $status = match (true) {
-            $hasQuoteRequired => PricingStatus::QUOTE_REQUIRED,
-            $hasMissingContext => PricingStatus::MISSING_CONTEXT,
-            $hasUnavailable => PricingStatus::UNAVAILABLE,
-            default => PricingStatus::PRICED,
-        };
-
-        $total = null;
-
-        if ($status === PricingStatus::PRICED) {
-            $total = '0.000000';
-
-            foreach ($pricingResults as $result) {
-                $total = bcadd($total, $result->lineTotal ?? '0', 6);
-            }
-        }
-
-        return [
-            'status' => $status,
-            'required_context' => $requiredContext,
-            'requires_quote' => $requiresQuote,
-            'total' => $total,
-        ];
+        return PricingResultAggregator::aggregate($pricingResults);
     }
 }

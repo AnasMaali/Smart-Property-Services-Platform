@@ -1,0 +1,226 @@
+{
+  "info": {
+    "_postman_id": "6e2f8a1d-4b9c-4e7a-9d3f-7c1a2b5e9f60",
+    "name": "BLUE V1 - Checkout",
+    "description": "BLUE V1 Phase 5 Checkout & Scheduling endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Checkout, backend/app/Actions/Checkout, and verified against backend/tests/Feature/Checkout. See docs/api-contracts/checkout-v1.md for the full written contract.\n\nEvery request requires a valid access_token (run the Authentication collection's Login request first, or set access_token manually) and an ACTIVE cart with at least one item (run the Cart collection's Add Cart Item request first). Payment is explicitly out of scope for this collection - there is no payment/booking request here, only checkout summary, location, appointment availability, and appointment holds.\n\narea_id/property_type_id used in Save Checkout Location must be real, active reference ids seeded in the target environment (see GET /v1/reference-data/registration) - this collection never invents catalog/reference data. appointment_slot_uuid must be a real, active, future appointment_slots row seeded in the target environment; it is not provided by the environment file since it is seed-specific. appointment_hold_uuid is captured automatically from the Create Appointment Hold response's data.checkout.appointment.hold_uuid.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Checkout",
+      "item": [
+        {
+          "name": "Get Checkout",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/checkout",
+              "host": ["{{base_url}}"],
+              "path": ["checkout"]
+            },
+            "description": "Returns the customer's ACTIVE cart as a checkout summary - location, current appointment hold, live-repriced items, pricing_status, and ready_for_payment. Never creates a cart as a side effect; with no ACTIVE cart returns a safe empty representation (data.checkout.cart_uuid: null)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Save Checkout Location",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"property_type_id\": 1,\n  \"other_property_type_name\": null,\n  \"area_id\": {{area_id}},\n  \"street_name\": \"Sheikh Zayed Road\",\n  \"address_line\": \"Marina Tower, near the metro station\",\n  \"building_name_or_number\": \"Marina Tower\",\n  \"floor_number\": \"12\",\n  \"unit_number\": \"1201\",\n  \"nearby_landmark\": \"Near Dubai Marina Metro Station\",\n  \"additional_location_notes\": null,\n  \"visit_contact_phone\": \"+971500001234\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/checkout/location",
+              "host": ["{{base_url}}"],
+              "path": ["checkout", "location"]
+            },
+            "description": "Saves the ACTUAL service location for the ACTIVE cart - never the customer's profile address. cart_locations.cart_id is a 1:1 primary key, so this always upserts exactly one row. property_type_id/area_id must be active reference ids. other_property_type_name is required only when property_type_id resolves to the OTHER code. The saved area_id is later mapped to a SERVICE_ZONE through service_zone_areas for pricing - there is no service_zone_id field here, it is never client-supplied. Requires an ACTIVE cart (404 otherwise)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List Appointment Slots",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/checkout/appointment-slots",
+              "host": ["{{base_url}}"],
+              "path": ["checkout", "appointment-slots"]
+            },
+            "description": "Read-only list of currently bookable appointment slots: active, with an active appointment_time_windows mapping, still in the future, and with remaining capacity (booking_capacity minus every unreleased hold that is either converted or unexpired). Only safe customer-facing fields are returned (uuid, starts_at, ends_at, remaining_capacity, time_window: {code, name}) - internal_note and the internal time_window_id are never exposed. Requires an ACTIVE cart (404 otherwise)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data && json.data.appointment_slots && json.data.appointment_slots.length) {",
+                  "    pm.environment.set('appointment_slot_uuid', json.data.appointment_slots[0].uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create Appointment Hold",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_slot_uuid\": \"{{appointment_slot_uuid}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/checkout/appointment-hold",
+              "host": ["{{base_url}}"],
+              "path": ["checkout", "appointment-hold"]
+            },
+            "description": "Holds one appointment slot for the ACTIVE cart, preventing another customer from oversubscribing it. Slot identity only is accepted - the backend derives TIME_WINDOW itself from the held slot's appointment_time_windows row (and SERVICE_ZONE from the cart's saved location via service_zone_areas), never from a client-submitted value. Selecting a new slot replaces the cart's previous open hold only after the new slot's capacity is confirmed. 404 for an unknown/inactive slot, a slot whose time window is inactive, or no ACTIVE cart; 422 for a past or fully-booked slot."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data && json.data.checkout && json.data.checkout.appointment) {",
+                  "    pm.environment.set('appointment_hold_uuid', json.data.checkout.appointment.hold_uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Release Appointment Hold",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/checkout/appointment-hold",
+              "host": ["{{base_url}}"],
+              "path": ["checkout", "appointment-hold"]
+            },
+            "description": "Releases the ACTIVE cart's current open appointment hold, if any. There is no hold_uuid parameter - the hold released is always resolved from the caller's own ACTIVE cart, so another customer's hold can never be targeted. A safe no-op (200) when there is no open hold."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}
