@@ -1,5 +1,10 @@
 # BLUE V1 — Phase 6A Payment Core API Contract
 
+> Updated for Phase 6B (production-ready Stripe adapter hardening): `publishable_key` added to the
+> client initiation contract, "Stripe error classification" added below, and the adapter is now
+> covered by `tests/Feature/Payment/StripeAdapterTest.php` (Stripe SDK-transport-mocked, no real
+> HTTP). The Payment Core trust boundary and every Phase 6A behavior described below are unchanged.
+
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
 This document describes the Phase 6A Payment Core endpoints as actually implemented in
@@ -126,15 +131,27 @@ replaces or weakens the DB constraint.
       "currency": { "code": "AED", "symbol": "د.إ", "decimal_places": 2 },
       "expires_at": "2026-08-09T19:55:00+00:00",
       "provider": "STRIPE",
-      "client_secret": "pi_..._secret_...(only when the provider returned one)"
+      "client_secret": "pi_..._secret_...(only when the provider returned one)",
+      "publishable_key": "pk_...(only alongside client_secret)"
     }
   }
 }
 ```
-  `client_secret` is only ever present on the response to the call that actually reached the
-  provider (a fresh attempt, or a same-key retry that reached the provider because the previous
-  call never confirmed a provider object) — it is never persisted and never present on `GET
-  /payments/{payment}`.
+  `client_secret` and `publishable_key` are only ever present together, on the response to the call
+  that actually reached the provider (a fresh attempt, or a same-key retry that reached the provider
+  because the previous call never confirmed a provider object) — neither is persisted and neither is
+  ever present on `GET /payments/{payment}`.
+  - `client_secret` is a Stripe **client-side capability token** scoped to this one PaymentIntent —
+    it lets the Flutter app complete (confirm) this specific payment via Stripe's PaymentSheet SDK,
+    and nothing else. It is returned only to the authenticated owner of this payment attempt, only
+    once, and is never logged, never stored in `payment_attempts`, and never reconstructible later.
+  - `publishable_key` is **not itself secret** — Stripe's own documentation publishes it in
+    client-side JS/mobile code by design (`config('services.stripe.publishable_key')`, the
+    `STRIPE_PUBLISHABLE_KEY` env var). It is still only attached alongside an active `client_secret`
+    (never on every response) so this endpoint returns only the safe initiation information a
+    PaymentSheet integration actually needs for that one call, matching the Phase 6B client
+    initiation contract. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are never returned by any
+    endpoint under any circumstance.
 
 ### Server-authoritative amount and currency
 
@@ -361,6 +378,35 @@ still be supplied against the *same* PaymentIntent), which normalizes to `NON_TE
 `FAILED` means the local attempt itself was intentionally/definitively closed — either a
 `DEFINITIVE_FAILURE` at creation time, never a mid-flight card decline. This mapping is unit-tested
 directly (`tests/Unit/Payment/StripeStatusMappingTest.php`), independent of any Stripe API access.
+
+---
+
+## Stripe error classification
+
+`StripePaymentGateway::classifyCreationFailure()` is the **one** centralized place a failed
+`paymentIntents->create()` call (any `\Stripe\Exception\ApiErrorException`) is turned into
+`PaymentCreationOutcome::DEFINITIVE_FAILURE` or `::UNKNOWN` — `CreatePaymentAttemptAction` branches on
+that outcome alone, never on the raw exception type:
+
+| Stripe exception | Outcome | Why |
+|---|---|---|
+| `RateLimitException`, `ApiConnectionException` | `UNKNOWN` | No proof the PaymentIntent was or wasn't created — recoverable via the same provider idempotency key |
+| `InvalidRequestException`, `AuthenticationException` | `DEFINITIVE_FAILURE` (`STRIPE_REQUEST_REJECTED`) | Stripe never creates the object when the request itself (bad params, bad/revoked key) is synchronously rejected |
+| Any other `ApiErrorException`, HTTP status ≥ 500 | `UNKNOWN` | Stripe's own server failed — ambiguous, not a proof of non-creation |
+| Any other `ApiErrorException`, HTTP status < 500 | `DEFINITIVE_FAILURE` (`STRIPE_API_ERROR`) | A synchronous 4xx this gateway doesn't specifically recognize |
+
+**Ordering hazard this method exists to avoid**: `stripe-php`'s `RateLimitException extends
+InvalidRequestException`, so a `catch (InvalidRequestException $e)` block (or an `instanceof` check)
+placed before the rate-limit case would silently swallow every 429 as a definitive rejection instead
+of a recoverable/ambiguous outcome — exactly the "never classify every exception as FAILED" failure
+mode this phase is required to avoid. `classifyCreationFailure()` checks `RateLimitException`/
+`ApiConnectionException` first for this reason, and is directly unit-tested against real Stripe SDK
+exception instances (built from a mocked HTTP response, never a live call) in
+`tests/Feature/Payment/StripeAdapterTest.php`.
+
+Raw Stripe exception messages/objects never reach Flutter — `PaymentCreationResult::$failureMessage`
+is consumed only internally (`CreatePaymentAttemptAction::compensateDefinitiveFailure()`, for the
+state machine's `failure_message` column) and `PaymentPresenter` never reads or exposes it.
 
 ---
 

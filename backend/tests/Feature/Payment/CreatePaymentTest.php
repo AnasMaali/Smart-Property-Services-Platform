@@ -325,6 +325,7 @@ class CreatePaymentTest extends TestCase
         $this->assertArrayNotHasKey('checkout_snapshot_hash', $payload);
         $this->assertArrayNotHasKey('idempotency_key', $payload);
         $this->assertArrayNotHasKey('client_secret', $payload);
+        $this->assertArrayNotHasKey('publishable_key', $payload);
     }
 
     public function test_raw_idempotency_key_is_never_stored(): void

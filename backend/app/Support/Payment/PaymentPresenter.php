@@ -12,9 +12,16 @@ use Illuminate\Support\Facades\DB;
  * idempotency_key, checkout_snapshot, checkout_snapshot_hash,
  * reconciliation fields, or any provider secret. $creationResult is only
  * ever passed by CreatePaymentAttemptAction, right after a fresh
- * PaymentGateway::createPayment() call, to attach a safe client-initiation
- * field (e.g. Stripe's PaymentIntent client_secret) that is never persisted
- * and therefore never available on a later GET.
+ * PaymentGateway::createPayment() call, to attach safe client-initiation
+ * fields (Stripe's PaymentIntent client_secret plus the publishable key the
+ * Flutter PaymentSheet needs alongside it) that are never persisted and
+ * therefore never available on a later GET. client_secret is a Stripe
+ * client-side capability token scoped to this one PaymentIntent - safe to
+ * return only here, to the authenticated owner of this payment attempt, and
+ * never logged or stored. publishable_key is not itself secret (Stripe
+ * publishes it in client-side JS by design) but is still only attached
+ * alongside an active client_secret, matching the "only the safe initiation
+ * information actually needed" rule from docs/api-contracts/payments-v1.md.
  */
 final class PaymentPresenter
 {
@@ -42,6 +49,7 @@ final class PaymentPresenter
 
         if ($creationResult !== null && $creationResult->clientSecret !== null) {
             $payload['client_secret'] = $creationResult->clientSecret;
+            $payload['publishable_key'] = config('services.stripe.publishable_key');
         }
 
         return $payload;

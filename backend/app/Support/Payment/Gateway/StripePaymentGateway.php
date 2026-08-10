@@ -67,21 +67,45 @@ final class StripePaymentGateway implements PaymentGateway
                 providerStatusCode: $intent->status,
                 clientSecret: $intent->client_secret,
             );
-        } catch (InvalidRequestException|AuthenticationException $e) {
+        } catch (ApiErrorException $e) {
+            return self::classifyCreationFailure($e);
+        }
+    }
+
+    /**
+     * The one centralized DEFINITIVE_FAILURE-vs-UNKNOWN classifier for a
+     * failed PaymentIntent create call - public/static so it is directly
+     * unit-testable against real Stripe SDK exception instances (built from
+     * a mocked HTTP response, never a live call) without going through a
+     * network-dependent createPayment() call. See docs/api-contracts/
+     * payments-v1.md "Stripe error classification".
+     *
+     * Ordering matters: `RateLimitException extends InvalidRequestException`
+     * in stripe-php, so a naive `catch (InvalidRequestException $e)` (or an
+     * instanceof check in that order) would silently misclassify a
+     * recoverable 429 as a definitive rejection. Rate limiting and
+     * connection failures are checked first, before the broader
+     * InvalidRequestException/AuthenticationException case, specifically to
+     * avoid that trap.
+     */
+    public static function classifyCreationFailure(ApiErrorException $e): PaymentCreationResult
+    {
+        return match (true) {
+            // Ambiguous/retryable: no proof the PaymentIntent was or was
+            // not created. Never a compensation trigger.
+            $e instanceof RateLimitException, $e instanceof ApiConnectionException => PaymentCreationResult::unknown($e->getMessage()),
+
             // Stripe never creates the object when the request itself is
             // rejected (bad params, bad/revoked key) - safe to compensate.
-            return PaymentCreationResult::definitiveFailure('STRIPE_REQUEST_REJECTED', $e->getMessage());
-        } catch (ApiConnectionException|RateLimitException $e) {
-            return PaymentCreationResult::unknown($e->getMessage());
-        } catch (ApiErrorException $e) {
-            $httpStatus = $e->getHttpStatus();
+            $e instanceof InvalidRequestException, $e instanceof AuthenticationException => PaymentCreationResult::definitiveFailure('STRIPE_REQUEST_REJECTED', $e->getMessage()),
 
-            if ($httpStatus !== null && $httpStatus >= 500) {
-                return PaymentCreationResult::unknown($e->getMessage());
-            }
-
-            return PaymentCreationResult::definitiveFailure('STRIPE_API_ERROR', $e->getMessage());
-        }
+            // Any other Stripe API error: a 5xx means Stripe's own server
+            // failed and the outcome is ambiguous; anything else (e.g. a
+            // synchronous 4xx this gateway doesn't specifically recognize)
+            // is a safe-to-compensate rejection.
+            ($e->getHttpStatus() ?? 0) >= 500 => PaymentCreationResult::unknown($e->getMessage()),
+            default => PaymentCreationResult::definitiveFailure('STRIPE_API_ERROR', $e->getMessage()),
+        };
     }
 
     public function verifyWebhook(string $rawBody, array $signatureHeaders): VerifiedWebhookResult

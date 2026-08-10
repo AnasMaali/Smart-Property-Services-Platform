@@ -42,6 +42,9 @@ class ProviderTest extends TestCase
         $this->assertNotNull($row->provider_session_reference);
         $this->assertSame('FAKE', $row->provider_code);
         $this->assertNotNull($response->json('data.payment.client_secret'));
+        // publishable_key is only ever attached alongside a fresh
+        // client_secret - see PaymentPresenter::present().
+        $this->assertArrayHasKey('publishable_key', $response->json('data.payment'));
     }
 
     public function test_definitive_provider_create_failure_marks_failed_releases_hold_and_restores_cart(): void
