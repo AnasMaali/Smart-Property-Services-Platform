@@ -24,6 +24,9 @@ use App\Http\Controllers\Api\V1\Checkout\GetAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Checkout\GetCheckoutController;
 use App\Http\Controllers\Api\V1\Checkout\ReleaseAppointmentHoldController;
 use App\Http\Controllers\Api\V1\Checkout\SaveCheckoutLocationController;
+use App\Http\Controllers\Api\V1\Payment\CreatePaymentController;
+use App\Http\Controllers\Api\V1\Payment\GetPaymentController;
+use App\Http\Controllers\Api\V1\Payment\PaymentWebhookController;
 use App\Http\Controllers\Api\V1\Profile\GetProfileController;
 use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
 use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
@@ -64,7 +67,14 @@ Route::middleware('auth.customer')->group(function () {
     Route::get('/v1/checkout/appointment-slots', GetAppointmentSlotsController::class);
     Route::post('/v1/checkout/appointment-hold', CreateAppointmentHoldController::class);
     Route::delete('/v1/checkout/appointment-hold', ReleaseAppointmentHoldController::class);
+
+    Route::post('/v1/payments', CreatePaymentController::class);
+    Route::get('/v1/payments/{payment}', GetPaymentController::class);
 });
+
+// Deliberately outside the auth.customer group - the caller is the payment
+// provider's server, authenticated by webhook signature only.
+Route::post('/v1/payments/webhooks/stripe', PaymentWebhookController::class);
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);
 

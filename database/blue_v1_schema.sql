@@ -1285,6 +1285,7 @@ DROP TABLE IF EXISTS `payment_attempts`;
 CREATE TABLE `payment_attempts` (
   `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
   `cart_id` binary(16) NOT NULL,
+  `appointment_hold_id` binary(16) NOT NULL,
   `status_id` tinyint unsigned NOT NULL,
   `currency_id` smallint unsigned NOT NULL,
   `checkout_reference` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -1294,13 +1295,20 @@ CREATE TABLE `payment_attempts` (
   `provider_transaction_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `requested_amount` decimal(19,6) NOT NULL,
   `confirmed_amount` decimal(19,6) DEFAULT NULL,
+  `checkout_snapshot` json NOT NULL,
+  `checkout_snapshot_hash` binary(32) NOT NULL,
   `payment_method_type` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `provider_status_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `failure_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `failure_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `requires_reconciliation` tinyint(1) NOT NULL DEFAULT '0',
+  `reconciliation_reason_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `reconciled_at` datetime(6) DEFAULT NULL,
   `expires_at` datetime(6) DEFAULT NULL,
   `successful_at` datetime(6) DEFAULT NULL,
   `finalized_at` datetime(6) DEFAULT NULL,
+  `open_cart_marker` binary(16) GENERATED ALWAYS AS ((case when (`finalized_at` is null) then `cart_id` else NULL end)) STORED,
+  `successful_cart_marker` binary(16) GENERATED ALWAYS AS ((case when (`successful_at` is not null) then `cart_id` else NULL end)) STORED,
   `status_changed_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -1309,12 +1317,16 @@ CREATE TABLE `payment_attempts` (
   UNIQUE KEY `uq_payment_attempts_idempotency_key` (`idempotency_key`),
   UNIQUE KEY `uq_payment_attempts_provider_session` (`provider_code`,`provider_session_reference`),
   UNIQUE KEY `uq_payment_attempts_provider_transaction` (`provider_code`,`provider_transaction_reference`),
+  UNIQUE KEY `uq_payment_attempts_open_cart` (`open_cart_marker`),
+  UNIQUE KEY `uq_payment_attempts_successful_cart` (`successful_cart_marker`),
   KEY `idx_payment_attempts_cart_created` (`cart_id`,`created_at`),
   KEY `idx_payment_attempts_cart_status` (`cart_id`,`status_id`),
   KEY `idx_payment_attempts_status_created` (`status_id`,`created_at`),
   KEY `idx_payment_attempts_currency` (`currency_id`),
   KEY `idx_payment_attempts_expires_at` (`expires_at`),
+  KEY `idx_payment_attempts_hold` (`appointment_hold_id`),
   CONSTRAINT `fk_payment_attempts_cart` FOREIGN KEY (`cart_id`) REFERENCES `carts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_payment_attempts_hold` FOREIGN KEY (`appointment_hold_id`) REFERENCES `appointment_holds` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_payment_attempts_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_payment_attempts_status` FOREIGN KEY (`status_id`) REFERENCES `payment_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `chk_payment_attempts_checkout_reference` CHECK ((char_length(trim(`checkout_reference`)) between 8 and 64)),
@@ -1328,7 +1340,11 @@ CREATE TABLE `payment_attempts` (
   CONSTRAINT `chk_payment_attempts_provider_status` CHECK (((`provider_status_code` is null) or (char_length(trim(`provider_status_code`)) between 1 and 100))),
   CONSTRAINT `chk_payment_attempts_requested_amount` CHECK ((`requested_amount` > 0)),
   CONSTRAINT `chk_payment_attempts_status_changed` CHECK ((`status_changed_at` >= `created_at`)),
-  CONSTRAINT `chk_payment_attempts_successful_at` CHECK (((`successful_at` is null) or ((`successful_at` >= `created_at`) and (`confirmed_amount` is not null) and (`finalized_at` is not null))))
+  CONSTRAINT `chk_payment_attempts_successful_at` CHECK (((`successful_at` is null) or ((`successful_at` >= `created_at`) and (`confirmed_amount` is not null) and (`finalized_at` is not null)))),
+  CONSTRAINT `chk_payment_attempts_requires_reconciliation` CHECK ((`requires_reconciliation` in (0,1))),
+  CONSTRAINT `chk_payment_attempts_reconciliation_reason` CHECK (((`reconciliation_reason_code` is null) or (`reconciliation_reason_code` in (_utf8mb4'AMOUNT_MISMATCH',_utf8mb4'CURRENCY_MISMATCH',_utf8mb4'HOLD_EXPIRED',_utf8mb4'HOLD_RELEASED',_utf8mb4'HOLD_CART_MISMATCH',_utf8mb4'SNAPSHOT_INTEGRITY_FAILURE',_utf8mb4'UNEXPECTED_PROVIDER_STATE')))),
+  CONSTRAINT `chk_payment_attempts_reconciliation_requires_flag` CHECK (((`reconciliation_reason_code` is null) or (`requires_reconciliation` = 1))),
+  CONSTRAINT `chk_payment_attempts_reconciled_at` CHECK (((`reconciled_at` is null) or (`reconciled_at` >= `created_at`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1379,6 +1395,90 @@ CREATE TABLE `payment_statuses` (
 LOCK TABLES `payment_statuses` WRITE;
 /*!40000 ALTER TABLE `payment_statuses` DISABLE KEYS */;
 /*!40000 ALTER TABLE `payment_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `payment_webhook_event_statuses`
+--
+
+DROP TABLE IF EXISTS `payment_webhook_event_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payment_webhook_event_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payment_webhook_event_statuses_code` (`code`),
+  KEY `idx_payment_webhook_event_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_payment_webhook_event_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_payment_webhook_event_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_payment_webhook_event_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_payment_webhook_event_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `payment_webhook_event_statuses`
+--
+
+LOCK TABLES `payment_webhook_event_statuses` WRITE;
+/*!40000 ALTER TABLE `payment_webhook_event_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `payment_webhook_event_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `payment_webhook_events`
+--
+
+DROP TABLE IF EXISTS `payment_webhook_events`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payment_webhook_events` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_event_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `payment_attempt_id` binary(16) DEFAULT NULL,
+  `event_type` varchar(100) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_transaction_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `payload_hash` binary(32) NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `processing_attempt_count` int unsigned NOT NULL DEFAULT '0',
+  `received_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `processed_at` datetime(6) DEFAULT NULL,
+  `last_error_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `last_error_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payment_webhook_events_provider_event` (`provider_code`,`provider_event_id`),
+  KEY `idx_payment_webhook_events_attempt` (`payment_attempt_id`),
+  KEY `idx_payment_webhook_events_transaction_ref` (`provider_transaction_reference`),
+  KEY `idx_payment_webhook_events_status_received` (`status_id`,`received_at`),
+  KEY `idx_payment_webhook_events_received_at` (`received_at`),
+  CONSTRAINT `fk_payment_webhook_events_attempt` FOREIGN KEY (`payment_attempt_id`) REFERENCES `payment_attempts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_payment_webhook_events_status` FOREIGN KEY (`status_id`) REFERENCES `payment_webhook_event_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_payment_webhook_events_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_payment_webhook_events_provider_event_id` CHECK ((char_length(trim(`provider_event_id`)) between 1 and 191)),
+  CONSTRAINT `chk_payment_webhook_events_event_type` CHECK ((char_length(trim(`event_type`)) between 1 and 100)),
+  CONSTRAINT `chk_payment_webhook_events_last_error_code` CHECK (((`last_error_code` is null) or (char_length(trim(`last_error_code`)) between 1 and 100))),
+  CONSTRAINT `chk_payment_webhook_events_last_error_message` CHECK (((`last_error_message` is null) or (char_length(trim(`last_error_message`)) between 2 and 500))),
+  CONSTRAINT `chk_payment_webhook_events_processed_at` CHECK (((`processed_at` is null) or (`processed_at` >= `received_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `payment_webhook_events`
+--
+
+LOCK TABLES `payment_webhook_events` WRITE;
+/*!40000 ALTER TABLE `payment_webhook_events` DISABLE KEYS */;
+/*!40000 ALTER TABLE `payment_webhook_events` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

@@ -25,6 +25,22 @@ captured automatically by List Appointment Slots (or set manually to a real, act
 `appointment_slots` row); `appointment_hold_uuid` is captured automatically by Create Appointment
 Hold. Payment is out of scope for this collection — there is no payment/booking request here.
 
+## Payment collection
+
+`BLUE-V1-Payment.postman_collection.json` covers the Phase 6A Payment Core endpoints (companion to
+`docs/api-contracts/payments-v1.md`): Create Payment, Get Payment. Import it alongside the Checkout
+collection and the same `BLUE V1 Local` environment — Create Payment requires the caller's ACTIVE
+cart to already be `ready_for_payment` (run the Checkout collection's Save Checkout Location and
+Create Appointment Hold first). The request body carries no amount/currency/status field — the
+server derives everything from the cart; sending one of those fields is rejected with 422. The
+`Idempotency-Key` header defaults to a fresh `{{$guid}}` per send — replace it with a fixed value
+across two sends to observe idempotent reuse (the same payment is returned, HTTP 200 instead of
+201, and no second provider operation happens). `payment_uuid` is captured automatically by Create
+Payment's test script. Stripe is the approved BLUE V1 provider, but no Stripe account/keys exist yet
+— none are required to use this collection, since local/testing environments bind a deterministic
+fake gateway instead; the collection intentionally does not include a webhook request, since a
+valid Stripe signature cannot be produced without the real `STRIPE_WEBHOOK_SECRET`.
+
 ## 1. Start the backend
 
 ```

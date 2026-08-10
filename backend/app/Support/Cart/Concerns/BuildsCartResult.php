@@ -31,6 +31,14 @@ trait BuildsCartResult
     }
 
     /**
+     * @return array{success: bool, status: int, message: string, data: null}
+     */
+    private function conflict(string $message): array
+    {
+        return ['success' => false, 'status' => 409, 'message' => $message, 'data' => null];
+    }
+
+    /**
      * @return array{success: bool, status: int, message: string, data: array<string, mixed>}
      */
     private function ok(int $status, string $message, array $data): array

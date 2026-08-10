@@ -1328,6 +1328,57 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 23A. PAYMENT WEBHOOK EVENT STATUSES
+-- Technical processing lifecycle of one inbound payment provider
+-- webhook delivery (payment_webhook_events.status_id). Distinct
+-- from payment_statuses, which is the customer-facing Payment
+-- business status.
+-- =============================================================
+
+INSERT INTO payment_webhook_event_statuses (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'RECEIVED',
+    'Received',
+    'The webhook delivery was authenticated and ledgered but not yet processed.',
+    1,
+    TRUE
+),
+(
+    'PROCESSED',
+    'Processed',
+    'The webhook delivery was successfully applied to a Payment Attempt state transition.',
+    2,
+    TRUE
+),
+(
+    'IGNORED',
+    'Ignored',
+    'The webhook delivery was authentic but did not require or trigger any Payment Attempt state change.',
+    3,
+    TRUE
+),
+(
+    'FAILED',
+    'Failed',
+    'The webhook delivery could not be processed and may be retried by the provider.',
+    4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 24. TECHNICIAN STATUSES
 -- =============================================================
 

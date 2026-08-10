@@ -1,0 +1,103 @@
+{
+  "info": {
+    "_postman_id": "9a3d6f1e-2c4b-4a8d-8e5f-1b7c9d2a4f60",
+    "name": "BLUE V1 - Payment",
+    "description": "BLUE V1 Phase 6A Payment Core endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Payment, backend/app/Actions/Payment, and verified against backend/tests/Feature/Payment. See docs/api-contracts/payments-v1.md for the full written contract.\n\nStripe is the approved BLUE V1 payment provider, but no Stripe account/keys are configured yet - none are needed to exercise this collection, since local/testing environments bind a deterministic fake gateway. Create Payment requires the caller's ACTIVE cart to already be ready_for_payment (run the Checkout collection first: Add Cart Item, Save Checkout Location, Create Appointment Hold). The request body carries NO amount/currency/status field - the server derives everything from the cart. The Idempotency-Key header defaults to a fresh {{$guid}} per send; replace it with a fixed value across two sends to observe idempotent reuse (same payment returned, HTTP 200 instead of 201).\n\nThis collection does not include a webhook request: POST /v1/payments/webhooks/stripe is provider-authenticated (Stripe-Signature over the raw body), not something a manually-sent Postman request can produce a valid signature for without the real STRIPE_WEBHOOK_SECRET, which is deliberately not configured yet. Webhook behavior is covered by backend/tests/Feature/Payment/WebhookTest.php using the fake gateway's own signing scheme instead.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Payment",
+      "item": [
+        {
+          "name": "Create Payment",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/payments",
+              "host": ["{{base_url}}"],
+              "path": ["payments"]
+            },
+            "description": "Revalidates the caller's ACTIVE cart is ready_for_payment (server-side, ignoring any previous GET /checkout response), freezes an immutable checkout snapshot, renews the appointment hold, transitions the cart ACTIVE -> CHECKOUT, and starts a payment with the configured provider. No amount/currency/payment_status/provider_status/success/checkout_reference/cart_uuid field is ever read from the request body - sending one is rejected with 422 so client bugs are obvious rather than silently ignored. Requires the Idempotency-Key header (a UUID); resending the exact same key returns the same payment attempt (200) instead of creating a second one or calling the provider again. 404 when there is no ACTIVE cart and no open payment attempt for this customer; 409 when this customer already has an open payment attempt for a CHECKOUT cart and a different Idempotency-Key was used; 422 when not ready_for_payment or when the Idempotency-Key is malformed/reused for another customer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 201', function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data && json.data.payment) {",
+                  "    pm.environment.set('payment_uuid', json.data.payment.uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get Payment",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/payments/{{payment_uuid}}",
+              "host": ["{{base_url}}"],
+              "path": ["payments", "{{payment_uuid}}"]
+            },
+            "description": "Reads the current safe state of one payment attempt - uuid, checkout_reference, status (PENDING/SUCCESSFUL/FAILED/CANCELLED/REFUNDED), requested_amount, currency, expires_at, provider. Never returns the checkout snapshot, its hash, the idempotency key, or any provider secret. Ownership-scoped through the payment's cart's customer_user_id - a foreign or unknown payment_uuid returns 404, identically, whether it belongs to another customer or does not exist at all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}
