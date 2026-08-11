@@ -12,7 +12,21 @@ use RuntimeException;
 
 class VerifyPasswordResetOtpAction
 {
-    private const GENERIC_INVALID_MESSAGE = 'This verification request is invalid or no longer active.';
+    /**
+     * SECURITY: every rejection branch in this action - unknown phone
+     * number, deactivated account, no pending PASSWORD_RESET OTP, expired
+     * OTP, attempts-exceeded OTP, or a simply-wrong code for a real pending
+     * OTP - must return this exact same message (and the controller's same
+     * 422 status, with the same {success:false, data:null} shape). Any
+     * branch-specific message would let a caller distinguish "this phone
+     * number belongs to a real, active account that requested a password
+     * reset" from "it doesn't", which is exactly the account-enumeration
+     * leak forgot-password already goes out of its way to prevent one step
+     * earlier. Internal state transitions (OTP status, failed_attempt_count,
+     * last_attempt_at) still happen normally - only the external message is
+     * unified.
+     */
+    private const GENERIC_INVALID_MESSAGE = 'Invalid or expired verification code.';
 
     private const RESET_SESSION_TTL_MINUTES = 15;
 
@@ -66,7 +80,7 @@ class VerifyPasswordResetOtpAction
                 $otp->status_id = $this->lookupId('otp_verification_statuses', 'EXPIRED');
                 $otp->save();
 
-                return $this->failure('This verification code has expired. Please request a new one.');
+                return $this->failure(self::GENERIC_INVALID_MESSAGE);
             }
 
             $attemptsExceededStatusId = $this->lookupId('otp_verification_statuses', 'ATTEMPTS_EXCEEDED');
@@ -77,7 +91,7 @@ class VerifyPasswordResetOtpAction
                     $otp->save();
                 }
 
-                return $this->failure('Maximum verification attempts exceeded. Please request a new verification code.');
+                return $this->failure(self::GENERIC_INVALID_MESSAGE);
             }
 
             if (! Hash::check($data['otp_code'], $otp->code_hash)) {
@@ -90,7 +104,7 @@ class VerifyPasswordResetOtpAction
 
                 $otp->save();
 
-                return $this->failure('The verification code you entered is incorrect.');
+                return $this->failure(self::GENERIC_INVALID_MESSAGE);
             }
 
             $otp->status_id = $this->lookupId('otp_verification_statuses', 'VERIFIED');

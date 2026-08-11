@@ -247,6 +247,91 @@ class VerifyPasswordResetOtpTest extends TestCase
             ->assertJsonValidationErrors(['otp_code']);
     }
 
+    // SECURITY REGRESSION: every rejection branch must be externally
+    // indistinguishable - same status code, same message, same response
+    // shape - so a caller cannot use this endpoint to learn whether a
+    // phone number belongs to a real, active account. This directly
+    // covers the enumeration gap where "unknown/no request" previously
+    // returned a different message than "wrong code for a real pending
+    // OTP" (and other real-account states also differed).
+    public function test_all_rejection_branches_return_identical_external_response(): void
+    {
+        // 1. Unknown phone number entirely.
+        $unknown = $this->verify('+971599999998', '123456');
+
+        // 2. Deactivated account (with a pending OTP that would otherwise verify).
+        $deactivatedUser = $this->createUser('DEACTIVATED');
+        $this->createOtp($deactivatedUser['user_uuid'], $deactivatedUser['phone_number'], '123456');
+        $deactivated = $this->verify($deactivatedUser['phone_number'], '123456');
+
+        // 3. Real, active account with no PASSWORD_RESET OTP ever requested.
+        $neverRequestedUser = $this->createUser();
+        $neverRequested = $this->verify($neverRequestedUser['phone_number'], '123456');
+
+        // 4. Real, active account, OTP expired.
+        $expiredNow = now();
+        $expiredFixture = $this->createUserWithOtp('123456', [
+            'created_at' => $expiredNow->copy()->subMinutes(10),
+            'updated_at' => $expiredNow->copy()->subMinutes(10),
+            'expires_at' => $expiredNow->copy()->subMinutes(5),
+        ]);
+        $expired = $this->verify($expiredFixture['phone_number'], '123456');
+
+        // 5. Real, active account, OTP attempts exhausted.
+        $exhaustedFixture = $this->createUserWithOtp('123456', ['max_attempts' => 1, 'failed_attempt_count' => 1]);
+        $exhausted = $this->verify($exhaustedFixture['phone_number'], '123456');
+
+        // 6. Real, active account, real pending OTP, simply wrong code.
+        $wrongCodeFixture = $this->createUserWithOtp('123456');
+        $wrongCode = $this->verify($wrongCodeFixture['phone_number'], '000000');
+
+        $responses = [
+            'unknown_phone_number' => $unknown,
+            'deactivated_account' => $deactivated,
+            'no_pending_otp' => $neverRequested,
+            'expired_otp' => $expired,
+            'attempts_exceeded' => $exhausted,
+            'wrong_code' => $wrongCode,
+        ];
+
+        foreach ($responses as $scenario => $response) {
+            $response->assertStatus(422);
+            $this->assertSame(
+                ['success', 'message', 'data'],
+                array_keys($response->json()),
+                "Response shape differed for scenario [{$scenario}]."
+            );
+            $this->assertFalse($response->json('success'), "success flag differed for scenario [{$scenario}].");
+            $this->assertNull($response->json('data'), "data differed for scenario [{$scenario}].");
+        }
+
+        $messages = collect($responses)->map(fn ($response) => $response->json('message'))->unique();
+
+        $this->assertCount(
+            1,
+            $messages,
+            'All rejection branches must return the exact same message. Got: '.$messages->values()->implode(' | ')
+        );
+
+        $this->assertSame('Invalid or expired verification code.', $messages->first());
+
+        // Internal behavior must be unaffected by the external message unification.
+        $this->assertSame(
+            $this->otpStatusId('EXPIRED'),
+            (int) DB::table('otp_verifications')->where('id', UuidBinary::toBinary($expiredFixture['otp_uuid']))->value('status_id')
+        );
+        $this->assertSame(
+            $this->otpStatusId('ATTEMPTS_EXCEEDED'),
+            (int) DB::table('otp_verifications')->where('id', UuidBinary::toBinary($exhaustedFixture['otp_uuid']))->value('status_id'),
+            'The attempts-exceeded branch must still transition the OTP status internally.'
+        );
+        $this->assertSame(
+            1,
+            (int) DB::table('otp_verifications')->where('id', UuidBinary::toBinary($wrongCodeFixture['otp_uuid']))->value('failed_attempt_count')
+        );
+        $this->assertDatabaseCount('password_reset_sessions', 0);
+    }
+
     // Lock ordering: the users row is always the first FOR UPDATE lock, before any otp_verifications row.
     public function test_user_row_is_locked_for_update_before_otp_row(): void
     {

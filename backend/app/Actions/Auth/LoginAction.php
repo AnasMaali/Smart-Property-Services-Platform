@@ -82,7 +82,17 @@ class LoginAction
             $rawRefreshToken = random_bytes(32);
             $sessionExpiresAt = $now->copy()->addDays((int) config('jwt.session_ttl_days'));
 
-            AuthSession::create([
+            // created_at/updated_at are set explicitly to the same $now
+            // instant as last_used_at (with $timestamps disabled so
+            // Eloquent doesn't overwrite them with its own freshTimestamp()
+            // captured microseconds later). Both auth_sessions.created_at
+            // and auth_sessions.last_used_at are datetime(6) columns, but
+            // Eloquent's default date format truncates to whole-second
+            // precision on write - if created_at were left to Eloquent's
+            // auto-timestamp, a request that happens to straddle a second
+            // boundary between capturing $now and the INSERT would violate
+            // chk_auth_sessions_last_used (last_used_at >= created_at).
+            $session = new AuthSession([
                 'id' => $sessionUuid,
                 'user_id' => $user->id,
                 'client_type_id' => $clientTypeId,
@@ -95,6 +105,10 @@ class LoginAction
                 'expires_at' => $sessionExpiresAt,
                 'revoked_at' => null,
             ]);
+            $session->timestamps = false;
+            $session->created_at = $now;
+            $session->updated_at = $now;
+            $session->save();
 
             $user->last_login_at = $now;
             $user->save();

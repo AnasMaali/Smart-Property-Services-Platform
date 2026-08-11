@@ -443,12 +443,13 @@ planned behavior is included.
 ```json
 {
   "success": false,
-  "message": "The verification code you entered is incorrect.",
+  "message": "Invalid or expired verification code.",
   "data": null
 }
 ```
-  Other possible messages: `"This verification request is invalid or no longer active."` (unknown/deactivated account or no pending OTP), `"This verification code has expired. Please request a new one."`, `"Maximum verification attempts exceeded. Please request a new verification code."`
-- **Business behavior**: Looks up the user's **latest** `PASSWORD_RESET` OTP by `phone_number` (since no UUID is available), validates it exactly like phone verification, and — only on success — creates a `password_reset_sessions` row. `reset_token` is a raw 64-hex-character token; only its SHA-256 hash is persisted. This token authorizes exactly one subsequent `reset-password` call and expires in 15 minutes.
+  This is the **only** business-failure message this endpoint ever returns — unlike Verify Phone OTP (§2), every rejection branch (unknown phone number, deactivated account, no pending `PASSWORD_RESET` OTP, expired OTP, attempts-exceeded OTP, or simply a wrong code for a real pending OTP) collapses to this same message, same `422` status, and same `{success: false, data: null}` shape.
+- **Business behavior**: Looks up the user's **latest** `PASSWORD_RESET` OTP by `phone_number` (since no UUID is available), validates it exactly like phone verification, and — only on success — creates a `password_reset_sessions` row. `reset_token` is a raw 64-hex-character token; only its SHA-256 hash is persisted. This token authorizes exactly one subsequent `reset-password` call and expires in 15 minutes. Internally, OTP state (status, `failed_attempt_count`, `last_attempt_at`) still transitions exactly as it does for Verify Phone OTP — only the externally-visible message is unified.
+- **Non-enumeration behavior**: Because `forgot-password` (§8) never reveals whether a phone number is registered, this endpoint must not undo that guarantee either. A caller cannot distinguish "this phone number has no account" from "this is a real, active account whose password-reset code was wrong/expired/exhausted" through status code, message, or response shape.
 - **Security notes**: `reset_token` is returned exactly once, in this response, and must never be logged.
 - **Postman test script**: on `200` + `success == true`, saves `reset_token` into the environment.
 
