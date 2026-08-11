@@ -53,6 +53,8 @@ final class BookingPresenter
                 'booking_items.pricing_breakdown',
                 'booking_items.unit_total_amount',
                 'booking_items.line_total_amount',
+                'booking_items.completed_at',
+                'booking_items.cancelled_at',
                 'booking_item_statuses.code as status_code',
             ]);
 
@@ -135,6 +137,8 @@ final class BookingPresenter
             ],
             'quantity' => (int) $item->quantity,
             'status' => $item->status_code,
+            'completed_at' => $item->completed_at === null ? null : Carbon::parse($item->completed_at)->toIso8601String(),
+            'cancelled_at' => $item->cancelled_at === null ? null : Carbon::parse($item->cancelled_at)->toIso8601String(),
             'pricing' => [
                 'pricing_scheme_version_uuid' => UuidBinary::toString($item->pricing_scheme_version_id),
                 'base_amount' => $item->base_amount_snapshot,

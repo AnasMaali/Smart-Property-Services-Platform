@@ -1,11 +1,12 @@
-# BLUE V1 — Phase 7A Exact-Once Booking Conversion API Contract
+# BLUE V1 — Phase 7A/7B Booking Conversion & Lifecycle API Contract
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
-This document describes the Phase 7A Booking endpoints as actually implemented in
-`backend/routes/api.php`, their Actions (`App\Actions\Booking\*`) and Controllers
-(`App\Http\Controllers\Api\V1\Booking\*`), and verified against `backend/tests/Feature/Booking/*`.
-It documents only what exists in code — no aspirational or planned behavior is included.
+This document describes the Phase 7A Booking endpoints and the Phase 7B Booking lifecycle, as
+actually implemented in `backend/routes/api.php`, their Actions (`App\Actions\Booking\*`) and
+Controllers (`App\Http\Controllers\Api\V1\Booking\*`), and verified against
+`backend/tests/Feature/Booking/*`. It documents only what exists in code — no aspirational or
+planned behavior is included.
 
 Phase 7A is built entirely on top of the Phase 6A/6B **Payment Core** contract
 (`docs/api-contracts/payments-v1.md`): it converts an already-trusted `SUCCESSFUL` payment attempt
@@ -17,9 +18,15 @@ redesigned by this phase.
 
 Phase 7A is: converting a trusted `SUCCESSFUL` `payment_attempts` row into exactly one `bookings`
 row (plus its `booking_items`, `booking_locations`, and initial `booking_status_history` row), and
-a minimal, read-only, ownership-scoped customer API to see the result. It is explicitly **not**
-refund execution, **not** technician/staff assignment, **not** notifications, and **not** Admin
-Booking management — all later phases.
+a minimal, read-only, ownership-scoped customer API to see the result.
+
+Phase 7B is: the code-driven Booking/Booking Item lifecycle state machine that moves a Booking
+forward from `PAID` through fulfillment (see "Booking lifecycle after PAID" below) — a foundation
+layer with no new HTTP surface, since no admin-authenticated caller exists yet.
+
+Neither phase is refund execution, technician/staff assignment (the schema tables already exist —
+see "Staff / technician assignment" below — but no assignment logic is built on them yet),
+notifications, or Admin Booking management — all later phases.
 
 ## Payment → Booking boundary
 
@@ -203,6 +210,91 @@ same transaction as the Booking itself, exactly once — a retried/duplicate con
 inserts a second history row, since it short-circuits at the existing-Booking check before reaching
 any insert.
 
+## Booking lifecycle after PAID (Phase 7B)
+
+**Payment status and Booking status are two separate things.** `payment_attempts.status_id` is
+financial truth and is frozen the moment a Booking exists (Phase 7A/7B never reopens it). A
+Booking's own `status_id` is fulfillment state — it starts at `PAID` and moves forward through
+operational work that happens after the money has already been collected. Concretely:
+
+- Payment `SUCCESSFUL` does **not** mean Booking `COMPLETED` — it only means the Booking was
+  allowed to exist in the first place, at status `PAID`.
+- Booking `CANCELLED` does **not** automatically mean payment `REFUNDED` — see "Cancellation" below.
+
+The seeded lifecycle (`database/blue_v1_seed.sql` "22. BOOKING STATUSES" /
+docs/03-features-and-requirements/08-request-status-tracking.md) is:
+
+```
+PAID -> ASSIGNED -> IN_PROGRESS -> COMPLETED
+{PAID, ASSIGNED, IN_PROGRESS} -> CANCELLED
+```
+
+`COMPLETED` and `CANCELLED` are both terminal (`booking_statuses.is_terminal = 1`) — no transition
+is possible out of either. The identical shape is seeded for `booking_item_statuses`
+(`PENDING_ASSIGNMENT -> ASSIGNED -> IN_PROGRESS -> COMPLETED`, `CANCELLED` from any non-terminal
+item status).
+
+### Transition Actions are server/internal-only in Phase 7B
+
+`App\Actions\Booking\TransitionBookingStatusAction` (`bookings`) and
+`App\Actions\Booking\TransitionBookingItemStatusAction` (`booking_items`) are the **one** canonical,
+code-driven implementation of the graph above — never an arbitrary `status_id`/`status_code` write
+from anywhere else. Each exposes one explicit method per business action (`assign()`, `start()`,
+`complete()`, `cancel()`), never a generic "transition to any code" call.
+
+**Neither is reachable from any HTTP route.**
+docs/03-features-and-requirements/08-request-status-tracking.md is explicit that "the admin manages
+and updates request statuses in Version 1" and "the customer can only view request statuses," and no
+admin-authenticated area of the API exists yet in this codebase. Phase 7B therefore stops at the
+Action layer — a future phase that adds admin authentication (and, separately, technician
+assignment) is expected to call these Actions from an admin-only controller. No customer-facing
+mutation endpoint (`POST /cancel`, `POST /complete`, `PATCH /status`, reschedule, etc.) exists, and
+none should be added on top of this state machine without that explicit admin-facing requirement.
+
+Every transition: locks the target row (`bookings` or `booking_items`) → resolves its current
+status by **code** → attempts the specific transition → on success, writes exactly one
+`booking_status_history` / `booking_item_status_history` row using the same captured server
+timestamp as the status write — all inside one DB transaction. A row already in the requested target
+status is a safe, idempotent no-op (nothing written, so a retried call after a lost response never
+duplicates history). A row whose current status does not allow the requested transition (including
+any attempt out of a terminal status) is safely rejected — never an exception for this expected case.
+
+### Booking and Booking Item lifecycles are independent
+
+A Booking Item can be driven through its own lifecycle independently of its parent Booking's status,
+and vice versa — Phase 7B does not derive or enforce one from the other. Transitioning a Booking
+Item never reads or locks the parent `bookings` row, and transitioning a Booking never reads or
+locks any `booking_items` row. This is a deliberate boundary, not an oversight: the requirements
+docs describe multi-service bookings where "each service may have its own status" without specifying
+that the system itself must auto-derive or gate one level from the other, so Phase 7B does not invent
+that coupling. A later phase — once technician assignment and an admin panel exist to drive both
+levels together — can decide whether/how to reconcile them.
+
+### Cancellation
+
+`cancel()` moves a Booking from any non-terminal status (`PAID`, `ASSIGNED`, `IN_PROGRESS`) to
+`CANCELLED`, sets `cancelled_at` from server time, and writes one history row. **It never touches
+`payment_attempts` and never triggers a refund.** A cancelled paid Booking may still have a
+`SUCCESSFUL` payment until a separate refund process exists in a later phase — Booking cancellation
+and Payment refund are deliberately two different, independently-triggered concerns. Refund
+execution is explicitly out of scope for both Phase 7A and Phase 7B.
+
+### Completion
+
+`complete()` moves a Booking from `IN_PROGRESS` to `COMPLETED` and sets `completed_at` from server
+time. It never re-runs `PricingEngine`, never rewrites `booking_items` pricing-snapshot columns, and
+never touches the appointment/hold history Phase 7A already wrote.
+
+## Staff / technician assignment
+
+`technicians`, `technician_statuses`, `technician_specializations`, and `technician_assignments`
+already exist in the schema, but Phase 7B does not build any assignment logic on top of them — no
+admin authentication exists yet to safely attribute an assignment to an actor, and inventing that
+workforce architecture without it would be premature. The `ASSIGNED`/`IN_PROGRESS` transitions above
+exist as foundation only (the state machine knows the codes and their ordering); nothing in this
+phase automatically drives a Booking or Booking Item into `ASSIGNED` from a real technician
+assignment. That wiring is left to a later, dedicated phase.
+
 ## Recovery
 
 A `SUCCESSFUL` payment with no Booking never becomes invisible. The reusable, idempotent
@@ -244,7 +336,11 @@ Both are read-only, never reprice, and are entirely historical-snapshot based �
   convention. A Booking UUID that does not exist, or belongs to another customer, returns `404`
   identically (never `403`) — a foreign or malformed UUID can never be distinguished from "does not
   exist."
-- **Success response**:
+- **Success response** (shown at `PAID`, the status immediately after Phase 7A conversion —
+  `status`/`items[].status` reflect whatever the Booking/Booking Item have actually reached via the
+  Phase 7B lifecycle in "Booking lifecycle after PAID" above: `PAID`, `ASSIGNED`, `IN_PROGRESS`,
+  `COMPLETED`, or `CANCELLED` for the Booking; `PENDING_ASSIGNMENT`, `ASSIGNED`, `IN_PROGRESS`,
+  `COMPLETED`, or `CANCELLED` per item):
 ```json
 {
   "success": true,
@@ -285,6 +381,8 @@ Both are read-only, never reprice, and are entirely historical-snapshot based �
           "service": { "uuid": "...", "code": "AC_REPAIR", "name": "AC Repair" },
           "quantity": 1,
           "status": "PENDING_ASSIGNMENT",
+          "completed_at": null,
+          "cancelled_at": null,
           "pricing": {
             "pricing_scheme_version_uuid": "...",
             "base_amount": "100.000000",
@@ -309,7 +407,10 @@ other provider/webhook internal. Every id is a UUID string (`App\Support\Uuid\Uu
 — no raw `binary(16)` value is ever serialized. Every monetary value is a decimal string with 6
 fraction digits (`decimal(19,6)` column shape) — never a JSON number/float.
 
-## Not implemented in Phase 7A
+## Not implemented in Phase 7A / 7B
 
-Cancel booking, reschedule, staff/technician assignment, review, refund, and Admin Booking
-management are all later phases — no route, Action, or Controller for any of them exists yet.
+Phase 7B added the internal Booking/Booking Item lifecycle state machine and transition Actions (see
+"Booking lifecycle after PAID" above) but no new HTTP route. Still not implemented, and still later
+phases: any admin-authenticated API (Admin Booking management, technician assignment), any
+customer-facing mutation endpoint (cancel, reschedule), reviews, and refund execution — no route,
+Action, or Controller for any of them exists yet.
