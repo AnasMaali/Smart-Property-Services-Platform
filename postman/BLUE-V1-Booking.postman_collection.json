@@ -1,0 +1,95 @@
+{
+  "info": {
+    "_postman_id": "3e7b9f2a-5d1c-4b6a-9f0e-2c8a6d4b1f75",
+    "name": "BLUE V1 - Booking",
+    "description": "BLUE V1 Phase 7A Booking read endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Booking, backend/app/Actions/Booking, and verified against backend/tests/Feature/Booking. See docs/api-contracts/bookings-v1.md for the full written contract.\n\nA Booking is never created through any endpoint in this collection - it is created automatically, server-side, only from a trusted payment_attempt that has already reached SUCCESSFUL through the verified provider webhook flow (see the Payment collection). To exercise these endpoints: run the Checkout collection (Add Cart Item, Save Checkout Location, Create Appointment Hold), then the Payment collection's Create Payment. Against the local/testing fake gateway, completing the payment still requires a provider webhook delivery, which this collection deliberately does not attempt to simulate (see the Payment collection's own note on why POST /v1/payments/webhooks/stripe cannot be manually signed from Postman). Point this collection at a database row already advanced to SUCCESSFUL by the automated test suite, or by a real signed webhook delivery, to see a populated Booking.\n\nEvery response here is read-only and historical: it reflects exactly what was frozen into the Booking (and its Booking Items / Booking Location) at the moment of conversion, never the live catalog, live pricing, or the customer's current profile/cart.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Booking",
+      "item": [
+        {
+          "name": "List Bookings",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["bookings"]
+            },
+            "description": "Every Booking belonging to the authenticated customer, newest first. Ownership-scoped through booking -> cart -> customer_user_id - never reveals another customer's Bookings. Each entry is the same safe shape as Get Booking (status, currency, total, location snapshot, appointment snapshot, items with their frozen pricing) - never a live-repriced value."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data && json.data.bookings && json.data.bookings.length > 0) {",
+                  "    pm.environment.set('booking_uuid', json.data.bookings[0].uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get Booking",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{access_token}}", "type": "string" }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/bookings/{{booking_uuid}}",
+              "host": ["{{base_url}}"],
+              "path": ["bookings", "{{booking_uuid}}"]
+            },
+            "description": "Reads one Booking's full historical snapshot: uuid, booking_number, status, currency, total (derived from its Booking Items, never a live recalculation), location, appointment (slot + time window), and items (each with its own frozen service identity and pricing snapshot). Never returns payment_attempt_id, checkout_snapshot, checkout_snapshot_hash, idempotency_key, reconciliation fields, or any provider/Stripe data. Ownership-scoped through the booking's cart's customer_user_id - a foreign or unknown booking uuid returns 404, identically, whether it belongs to another customer or does not exist at all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

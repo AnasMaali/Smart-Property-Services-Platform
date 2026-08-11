@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
+use App\Http\Controllers\Api\V1\Booking\GetBookingController;
+use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
 use App\Http\Controllers\Api\V1\Cart\AddCartItemController;
 use App\Http\Controllers\Api\V1\Cart\ClearCartController;
 use App\Http\Controllers\Api\V1\Cart\GetCartController;
@@ -70,6 +72,9 @@ Route::middleware('auth.customer')->group(function () {
 
     Route::post('/v1/payments', CreatePaymentController::class);
     Route::get('/v1/payments/{payment}', GetPaymentController::class);
+
+    Route::get('/v1/bookings', ListBookingsController::class);
+    Route::get('/v1/bookings/{booking}', GetBookingController::class);
 });
 
 // Deliberately outside the auth.customer group - the caller is the payment

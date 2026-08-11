@@ -2,6 +2,7 @@
 
 namespace App\Actions\Payment;
 
+use App\Actions\Booking\CreateBookingFromSuccessfulPaymentAction;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Payment\CanonicalJson;
@@ -13,14 +14,27 @@ use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Throwable;
 
 /**
  * Processes exactly one inbound provider webhook delivery end to end:
  * signature verification (against the RAW body only - see the Controller,
  * which never JSON-decodes before calling this) -> normalization ->
  * event-ledger dedup -> locked state-machine transition -> reconciliation
- * checks -> ledger finalization. No Booking is created here - Phase 6A
- * ends at a SUCCESSFUL (possibly reconciliation-flagged) payment attempt.
+ * checks -> ledger finalization. Phase 6A itself still ends at a
+ * SUCCESSFUL (possibly reconciliation-flagged) payment attempt and never
+ * writes a `bookings` row directly.
+ *
+ * Phase 7A hand-off: once that transaction commits, `handle()` makes one
+ * best-effort, idempotent attempt to convert the resolved attempt into a
+ * Booking (CreateBookingFromSuccessfulPaymentAction) - deliberately
+ * OUTSIDE the transaction above and in its own separate transaction, so a
+ * Booking-conversion failure can never roll back or otherwise affect the
+ * payment state that has already safely committed. Any exception from
+ * that attempt is reported and swallowed - the webhook still responds 200
+ * (the delivery itself was validly processed) and the missing Booking
+ * remains recoverable via `php artisan bookings:convert-successful-
+ * payments` (see App\Console\Commands\ConvertSuccessfulPaymentsToBookings).
  *
  * Webhook trust boundary: verifyWebhook() must pass before anything else
  * runs. An invalid/unverified payload never reaches the ledger and never
@@ -34,6 +48,7 @@ class ProcessPaymentWebhookAction
     public function __construct(
         private readonly PaymentGateway $gateway,
         private readonly PaymentAttemptStateMachine $stateMachine = new PaymentAttemptStateMachine,
+        private readonly CreateBookingFromSuccessfulPaymentAction $bookingConversion = new CreateBookingFromSuccessfulPaymentAction,
     ) {}
 
     /**
@@ -57,11 +72,32 @@ class ProcessPaymentWebhookAction
             return $this->ok(200, 'Webhook already processed.', []);
         }
 
-        DB::transaction(function () use ($event, $ledger): void {
-            $this->process($event, $ledger['id']);
+        $resolvedAttemptId = DB::transaction(function () use ($event, $ledger): ?string {
+            return $this->process($event, $ledger['id']);
         });
 
+        if ($resolvedAttemptId !== null) {
+            $this->attemptBookingConversion($resolvedAttemptId);
+        }
+
         return $this->ok(200, 'Webhook processed.', []);
+    }
+
+    /**
+     * Never allowed to turn a webhook delivery into a 5xx or to touch the
+     * payment_attempts row's financial fields - the payment already
+     * committed SUCCESSFUL (or whatever terminal/non-terminal state Phase
+     * 6A resolved) before this runs. A failure here only means the
+     * Booking is not yet visible; `requires_reconciliation` is untouched,
+     * so the recovery Artisan command can always find and retry it.
+     */
+    private function attemptBookingConversion(string $paymentAttemptIdBinary): void
+    {
+        try {
+            $this->bookingConversion->handle(UuidBinary::toString($paymentAttemptIdBinary));
+        } catch (Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -119,14 +155,23 @@ class ProcessPaymentWebhookAction
         return ['id' => $idBinary, 'alreadyProcessed' => false];
     }
 
-    private function process(NormalizedPaymentEvent $event, string $ledgerId): void
+    /**
+     * @return string|null The resolved payment_attempts.id (raw binary),
+     *                     for the caller's post-commit Phase 7A conversion attempt - regardless
+     *                     of which outcome branch actually ran, since a Booking-conversion
+     *                     retry is always safe to attempt and is exactly how a previously
+     *                     failed/skipped conversion for an already-SUCCESSFUL attempt gets a
+     *                     second chance on the next delivery of the same or a later event.
+     *                     null only when no local attempt could be resolved at all.
+     */
+    private function process(NormalizedPaymentEvent $event, string $ledgerId): ?string
     {
         $attempt = $this->resolveAttempt($event);
 
         if ($attempt === null) {
             $this->finalizeLedger($ledgerId, 'FAILED', null, 'PAYMENT_ATTEMPT_NOT_FOUND', 'No local payment attempt matched this event.');
 
-            return;
+            return null;
         }
 
         $locked = DB::table('payment_attempts')->where('id', $attempt->id)->lockForUpdate()->first();
@@ -134,7 +179,7 @@ class ProcessPaymentWebhookAction
         if ($locked === null) {
             $this->finalizeLedger($ledgerId, 'FAILED', null, 'PAYMENT_ATTEMPT_NOT_FOUND', 'No local payment attempt matched this event.');
 
-            return;
+            return null;
         }
 
         $now = now();
@@ -146,6 +191,8 @@ class ProcessPaymentWebhookAction
             NormalizedPaymentOutcome::UNEXPECTED_NON_TERMINAL => $this->handleUnexpectedNonTerminal($locked, $event, $ledgerId),
             NormalizedPaymentOutcome::UNRECOGNIZED => $this->finalizeLedger($ledgerId, 'IGNORED', $locked->id, null, null),
         };
+
+        return $locked->id;
     }
 
     private function resolveAttempt(NormalizedPaymentEvent $event): ?object

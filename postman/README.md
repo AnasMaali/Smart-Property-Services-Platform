@@ -41,6 +41,18 @@ Payment's test script. Stripe is the approved BLUE V1 provider, but no Stripe ac
 fake gateway instead; the collection intentionally does not include a webhook request, since a
 valid Stripe signature cannot be produced without the real `STRIPE_WEBHOOK_SECRET`.
 
+## Booking collection
+
+`BLUE-V1-Booking.postman_collection.json` covers the Phase 7A Booking read endpoints (companion to
+`docs/api-contracts/bookings-v1.md`): List Bookings, Get Booking. Import it alongside the Payment
+collection and the same `BLUE V1 Local` environment. A Booking is never created through any request
+in this collection - it is created automatically, server-side, only once a payment attempt has
+actually reached `SUCCESSFUL` through a verified provider webhook delivery, which (like the Payment
+collection's webhook route) cannot be manually signed from Postman. Point this collection at a
+customer who already has a Booking (produced by the automated test suite, or by a real signed
+webhook delivery in an environment with Stripe configured) to see a populated response. `booking_uuid`
+is captured automatically by List Bookings' test script when the customer has at least one Booking.
+
 ## 1. Start the backend
 
 ```

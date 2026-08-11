@@ -114,7 +114,7 @@ class ReconciliationTest extends TestCase
         $this->assertSame('HOLD_RELEASED', $fresh->reconciliation_reason_code);
     }
 
-    public function test_successful_payment_leaves_cart_in_checkout_status(): void
+    public function test_successful_payment_is_converted_to_a_booking_by_phase_7a(): void
     {
         $customer = $this->readyForPaymentCustomer();
         $cartUuid = $this->getCheckout($customer['access_token'])->json('data.checkout.cart_uuid');
@@ -127,21 +127,17 @@ class ReconciliationTest extends TestCase
             'amount' => $row->requested_amount,
         ]))->assertStatus(200);
 
-        // Phase 6A never converts the cart on success - that belongs to
-        // Phase 7's atomic Booking creation from the paid snapshot.
-        $this->assertSame('CHECKOUT', $this->cartStatusCode($cartUuid));
-        $this->assertSame(0, DB::table('bookings')->count());
+        // Phase 6A itself never converts the cart on success - that write
+        // belongs entirely to Phase 7A's atomic Booking creation from the
+        // paid snapshot, which now runs immediately after Phase 6A's own
+        // transaction commits (see ProcessPaymentWebhookAction::handle()).
+        $this->assertSame('CONVERTED', $this->cartStatusCode($cartUuid));
+        $this->assertSame(1, DB::table('bookings')->count());
     }
 
-    public function test_no_booking_is_ever_created_by_phase_6a(): void
+    public function test_no_booking_is_created_while_a_payment_is_only_pending(): void
     {
         ['row' => $row] = $this->createPendingPayment();
-
-        $this->postWebhook($this->fakeWebhookPayload([
-            'provider_session_reference' => $row->provider_session_reference,
-            'outcome' => 'SUCCEEDED',
-            'amount' => $row->requested_amount,
-        ]))->assertStatus(200);
 
         $this->assertSame(0, DB::table('bookings')->count());
         $this->assertSame(0, DB::table('booking_items')->count());
