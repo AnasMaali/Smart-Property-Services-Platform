@@ -1,12 +1,13 @@
-# BLUE V1 — Phase 7A/7B Booking Conversion & Lifecycle API Contract
+# BLUE V1 — Phase 7A/7B/8A Booking Conversion, Lifecycle & Technician Assignment Contract
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
-This document describes the Phase 7A Booking endpoints and the Phase 7B Booking lifecycle, as
-actually implemented in `backend/routes/api.php`, their Actions (`App\Actions\Booking\*`) and
-Controllers (`App\Http\Controllers\Api\V1\Booking\*`), and verified against
-`backend/tests/Feature/Booking/*`. It documents only what exists in code — no aspirational or
-planned behavior is included.
+This document describes the Phase 7A Booking endpoints, the Phase 7B Booking lifecycle, and the
+Phase 8A technician assignment foundation, as actually implemented in `backend/routes/api.php`,
+their Actions (`App\Actions\Booking\*`, `App\Actions\Technician\*`) and Controllers
+(`App\Http\Controllers\Api\V1\Booking\*`), and verified against `backend/tests/Feature/Booking/*`
+and `backend/tests/Feature/Technician/*`. It documents only what exists in code — no aspirational
+or planned behavior is included.
 
 Phase 7A is built entirely on top of the Phase 6A/6B **Payment Core** contract
 (`docs/api-contracts/payments-v1.md`): it converts an already-trusted `SUCCESSFUL` payment attempt
@@ -24,9 +25,12 @@ Phase 7B is: the code-driven Booking/Booking Item lifecycle state machine that m
 forward from `PAID` through fulfillment (see "Booking lifecycle after PAID" below) — a foundation
 layer with no new HTTP surface, since no admin-authenticated caller exists yet.
 
-Neither phase is refund execution, technician/staff assignment (the schema tables already exist —
-see "Staff / technician assignment" below — but no assignment logic is built on them yet),
-notifications, or Admin Booking management — all later phases.
+Phase 8A is: the code-driven Technician-to-Booking-Item assignment foundation (see "Technician
+assignment (Phase 8A)" below) — also internal/server-only, for the same reason Phase 7B stopped at
+the Action layer.
+
+None of these three phases is refund execution, notifications, or Admin Booking management — all
+later phases.
 
 ## Payment → Booking boundary
 
@@ -285,15 +289,168 @@ execution is explicitly out of scope for both Phase 7A and Phase 7B.
 time. It never re-runs `PricingEngine`, never rewrites `booking_items` pricing-snapshot columns, and
 never touches the appointment/hold history Phase 7A already wrote.
 
-## Staff / technician assignment
+## Technician assignment (Phase 8A)
 
-`technicians`, `technician_statuses`, `technician_specializations`, and `technician_assignments`
-already exist in the schema, but Phase 7B does not build any assignment logic on top of them — no
-admin authentication exists yet to safely attribute an assignment to an actor, and inventing that
-workforce architecture without it would be premature. The `ASSIGNED`/`IN_PROGRESS` transitions above
-exist as foundation only (the state machine knows the codes and their ordering); nothing in this
-phase automatically drives a Booking or Booking Item into `ASSIGNED` from a real technician
-assignment. That wiring is left to a later, dedicated phase.
+`App\Actions\Technician\AssignTechnicianToBookingItemAction` is the **one** canonical entry point
+for assigning a Technician to a Booking Item, built directly on the `technicians` /
+`technician_statuses` / `technician_specializations` / `technician_assignments` schema that already
+existed. It has two explicit methods, `assign()` and `reassign()` — never a generic mutation call.
+
+**Server/internal-only, exactly like Phase 7B's transition Actions.**
+`docs/03-features-and-requirements/07-technician-assignment.md` is explicit that "only the admin
+can assign technicians in Version 1," and no admin-authenticated area of the API exists yet in this
+codebase. There is therefore no `POST /v1/bookings/{booking}/assign-technician` or any other
+customer-reachable route — `backend/tests/Feature/Technician/TechnicianAssignmentTest.php` asserts
+this directly (a plausible assignment URL 404s for an authenticated customer). A future phase that
+adds admin authentication is expected to call `assign()`/`reassign()` from an admin-only controller.
+
+### Assignment is Booking-Item-level
+
+`technician_assignments.booking_item_id` is the table's only foreign key into the Booking graph —
+there is no Booking-level assignment concept in the schema. Assigning "one technician for the whole
+booking" (a case `docs/02-user-roles-and-stakeholders/04-technician-service-employee.md` describes)
+is simply calling `assign()` once per Booking Item with the same Technician uuid — never a separate
+code path. A Booking Item may currently have at most one **primary** active Technician
+(`technician_assignments.is_primary = 1`); the schema's own unique constraints
+(`uq_technician_assignments_active_technician`, `uq_technician_assignments_active_primary`) show it
+was designed to also allow secondary/non-primary technicians on the same item, but nothing in the
+Version 1 requirements describes that, so it is not built in Phase 8A.
+
+### Eligibility
+
+- **Booking Item**: must currently be `PENDING_ASSIGNMENT` for `assign()`, or `ASSIGNED`/
+  `IN_PROGRESS` for `reassign()`. `IN_PROGRESS`/`COMPLETED`/`CANCELLED` are never valid starting
+  points for `assign()`; `PENDING_ASSIGNMENT`/`COMPLETED`/`CANCELLED` are never valid starting
+  points for `reassign()`. Resolved by locking the `booking_items` row and reading its status by
+  **code**, never a hardcoded id.
+- **Technician**: must currently be in a `technician_statuses` row with `is_assignable = 1` — a
+  data-driven flag, never a hardcoded status code. The seeded statuses
+  (`database/blue_v1_seed.sql` "24. TECHNICIAN STATUSES") are `AVAILABLE` (`is_assignable = 1`),
+  `BUSY`, `ON_LEAVE`, `INACTIVE` (all `is_assignable = 0`) — Phase 8A does not treat `AVAILABLE` as
+  a magic string anywhere in code, only as the seed data's current answer to "which statuses are
+  assignable."
+- **Actor**: `assigned_by_user_id` / `released_by_user_id` are `NOT NULL` foreign keys to `users`,
+  so every call must supply a real actor uuid — Phase 8A never fabricates one. The actor must also
+  hold the `ADMIN` or `SUPER_ADMIN` role (`roles`/`user_roles`, matching "only the admin can assign
+  technicians"). An unknown actor uuid is `ACTOR_NOT_FOUND`; a real user without that role is
+  `ACTOR_NOT_AUTHORIZED`.
+
+### Specialization matching is data-driven
+
+Compatibility is resolved entirely from `service_specializations` (keyed by the Booking Item's own,
+authoritative `booking_items.service_id` — never a client-supplied service id, since the Action
+signature has no such parameter at all) intersected with the Technician's active
+`technician_specializations`. No service id, slug, or technician "type" is ever hardcoded or
+branched on.
+
+- The service's active specializations are read in the schema's own preference order (its
+  `is_primary` specialization first, then `display_order`); the first one the Technician actually
+  holds (an active `technician_specializations` row) is the one recorded on the assignment.
+- If the service has **no** active `service_specializations` row at all, assignment is rejected as
+  `SERVICE_SPECIALIZATION_NOT_CONFIGURED` — `technician_assignments.specialization_id` is `NOT
+  NULL`, so there is no id available to satisfy it. This is a catalog data-completeness
+  precondition (an admin must configure a service's specialization before any technician can be
+  assigned to it), not a technician eligibility problem or a schema gap.
+- If the service has requirements but the Technician holds none of them: `SPECIALIZATION_MISMATCH`.
+
+### Scheduling / double-booking
+
+`bookings.appointment_slot_id` is singular — every Booking Item inside one Booking shares the exact
+same `starts_at`/`ends_at` window. There is no per-Booking-Item time column and no unique constraint
+that can enforce "a Technician may not hold two overlapping active assignments" at the database
+level, so Phase 8A implements exactly the safe subset the schema supports:
+
+- Before writing a new active assignment, the Technician's other active assignments (on
+  **different** Bookings only — two items of the *same* Booking never conflict with each other,
+  since they share one identical slot) are compared against the new Booking's slot period. Any
+  overlap (`existing.starts_at < new.ends_at AND existing.ends_at > new.starts_at`) is rejected as
+  `TECHNICIAN_DOUBLE_BOOKED`. Assignments on cancelled Booking Items, or on a cancelled Booking, are
+  excluded from the comparison — a cancelled job no longer occupies the calendar.
+- This check is made race-safe by locking the `technicians` row `FOR UPDATE` before running it: any
+  concurrent assignment attempt referencing the same Technician must first take an implicit
+  FK-parent lock on that same row (to satisfy `technician_assignments.technician_id`'s foreign key),
+  so it blocks until the first transaction commits or rolls back, then correctly re-reads the
+  just-committed state.
+- **Limitation, reported as required**: technician assignment can be safely recorded with this
+  overlap protection, but a full technician *scheduling/availability* engine (working hours, shifts,
+  per-item time granularity, travel time between jobs) is out of scope — the schema has no such
+  data model yet. That is a later scheduling extension, not a Phase 8A gap.
+
+### Idempotency
+
+Retrying the exact same `assign(item, technician, actor)` call is a safe no-op: `assign()` first
+checks for an existing active assignment on that Booking Item, and if it is already the requested
+Technician, returns the existing assignment uuid immediately — no duplicate
+`technician_assignments` row, no duplicate `booking_item_status_history` row, no second lifecycle
+transition attempt. The schema's own `uq_technician_assignments_active_technician` unique
+constraint is the DB-level backstop for the same guarantee under a genuine insert race (caught as
+`UniqueConstraintViolationException` and resolved by re-reading the winner, mirroring
+`CreateBookingFromSuccessfulPaymentAction`'s own race-resolution pattern). A **different** Technician
+can never silently overwrite an already-active assignment — `assign()` rejects that as
+`ASSIGNED_TO_ANOTHER_TECHNICIAN`; only `reassign()` may replace an active Technician.
+
+### Reassignment
+
+`reassign(item, newTechnician, actor, releaseReason)` replaces the active primary Technician on a
+Booking Item that is already `ASSIGNED` or `IN_PROGRESS`. The schema explicitly supports this
+(`technician_assignments.released_at` / `released_by_user_id` / `release_reason`), so Phase 8A
+implements the one safe path it describes:
+
+- The previous assignment row is **never deleted** — it is released (all three release columns set
+  together, exactly as `chk_technician_assignments_release_data` requires), remaining a permanent,
+  queryable audit row.
+- The new Technician goes through the exact same eligibility/specialization/double-booking checks as
+  `assign()`.
+- The Booking Item's own status is **never changed** by reassignment — an `IN_PROGRESS` item stays
+  `IN_PROGRESS` under its new Technician; `BookingItemStatusMachine` has no reverse transition and
+  none is required by current requirements, so Phase 8A does not invent a regression path.
+- Reassigning to the Technician already active is an idempotent no-op (`ALREADY_ASSIGNED`).
+- There is no standalone "unassign" (release with no replacement) in Phase 8A: since
+  `BookingItemStatusMachine` cannot move a Booking Item backward from `ASSIGNED` to
+  `PENDING_ASSIGNMENT`, a bare release would leave the item stuck `ASSIGNED` with no active
+  Technician — an unsupported state this phase does not invent.
+
+### Booking Item lifecycle integration
+
+A **first-time** successful `assign()` (from `PENDING_ASSIGNMENT`) calls the existing Phase 7B
+`App\Actions\Booking\TransitionBookingItemStatusAction::assign()` in the same DB transaction —
+Phase 8A never writes `booking_items.status_id` directly, and never duplicates the Phase 7B state
+machine's rules. `reassign()` never calls it at all (the item's status does not change).
+
+### Booking lifecycle boundary — unchanged from Phase 7B
+
+Technician assignment **never** reads, locks, or writes the parent `bookings` row, and never calls
+`App\Actions\Booking\TransitionBookingStatusAction`. Phase 7B's Booking/Booking-Item independence
+(see "Booking and Booking Item lifecycles are independent" above) is preserved exactly as-is — no
+aggregate rule ("Booking → `ASSIGNED` once all items are assigned," etc.) is defined by current
+requirements, so Phase 8A does not invent one. A future phase may decide whether/how to reconcile
+the two levels once an admin panel exists to drive both together.
+
+### Payment / pricing boundary
+
+Technician assignment never touches `payment_attempts`, `carts`, `checkout_snapshot`, or any
+`booking_items` pricing-snapshot column, and never calls `PricingEngine` or the Stripe gateway —
+`backend/tests/Feature/Technician/TechnicianAssignmentTest.php` asserts both the source-level
+absence of any such reference and that a Booking's payment/pricing snapshot survive assignment
+byte-for-byte unchanged.
+
+### Transaction / lock order
+
+`booking_items` (the row being assigned) → `technicians` (the Technician being assigned) — both
+`assign()` and `reassign()` acquire locks in this exact order, so two concurrent calls for the same
+Booking Item simply queue on the `booking_items` lock, and two concurrent calls for the same
+Technician (different items) simply queue on the `technicians` lock, never a reversed pair and
+therefore never a deadlock cycle. This lock order never touches `bookings`, `payment_attempts`,
+`carts`, or `appointment_holds` — disjoint from every Phase 7A/7B lock path. No external/network
+call is ever made inside the transaction.
+
+### Customer-facing technician information
+
+Not implemented in Phase 8A. `docs/03-features-and-requirements/13-technician-contact-information.md`
+describes customer-visible technician name/specialization/contact-number-if-allowed, but the Booking
+read API (`GET /v1/bookings/{booking}`, "Booking APIs" below) is deliberately **unchanged** by this
+phase — `BookingPresenter` still returns no technician data of any kind. Adding it is a later,
+explicit scope decision, not an automatic consequence of assignment existing.
 
 ## Recovery
 
@@ -407,10 +564,13 @@ other provider/webhook internal. Every id is a UUID string (`App\Support\Uuid\Uu
 — no raw `binary(16)` value is ever serialized. Every monetary value is a decimal string with 6
 fraction digits (`decimal(19,6)` column shape) — never a JSON number/float.
 
-## Not implemented in Phase 7A / 7B
+## Not implemented in Phase 7A / 7B / 8A
 
 Phase 7B added the internal Booking/Booking Item lifecycle state machine and transition Actions (see
-"Booking lifecycle after PAID" above) but no new HTTP route. Still not implemented, and still later
-phases: any admin-authenticated API (Admin Booking management, technician assignment), any
-customer-facing mutation endpoint (cancel, reschedule), reviews, and refund execution — no route,
-Action, or Controller for any of them exists yet.
+"Booking lifecycle after PAID" above); Phase 8A added the internal Technician assignment Actions
+(see "Technician assignment (Phase 8A)" above). Neither added a new HTTP route. Still not
+implemented, and still later phases: any admin-authenticated API at all (Admin Booking management,
+Admin technician assignment/management), any customer-facing mutation endpoint (cancel, reschedule),
+customer-visible technician information on the Booking read API, secondary/team technician
+assignment, a full technician scheduling/availability engine, reviews, and refund execution — no
+route, Action, or Controller for any of them exists yet.
