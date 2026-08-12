@@ -2,7 +2,15 @@
 
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
+use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
+use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
@@ -100,6 +108,27 @@ Route::post('/v1/admin/auth/refresh', AdminRefreshController::class);
 
 Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/me', AdminMeController::class);
+
+    // BLUE V1 Phase 9B - Admin Operations APIs: a thin, auth.admin-only
+    // transport layer over the already-tested Phase 7B/8A/8B domain Actions.
+    // No route here re-implements assignment/lifecycle business logic - see
+    // docs/api-contracts/admin-operations-v1.md.
+    // Booking-level lifecycle mutation (assign/start/complete on `bookings`
+    // itself) is deliberately NOT exposed here - see
+    // docs/api-contracts/admin-operations-v1.md "Booking-Level Lifecycle"
+    // for why BR-16-based completion cannot be safely built without first
+    // resolving the still-open ASSIGNED/IN_PROGRESS aggregation decision
+    // bookings-v1.md already flags. Only the read APIs are exposed.
+    Route::get('/v1/admin/bookings', ListAdminBookingsController::class);
+    Route::get('/v1/admin/bookings/{booking}', GetAdminBookingController::class);
+
+    Route::get('/v1/admin/technicians', ListAdminTechniciansController::class);
+
+    Route::get('/v1/admin/booking-items/{bookingItem}/technician-candidates', ListTechnicianCandidatesController::class);
+    Route::post('/v1/admin/booking-items/{bookingItem}/assign-technician', AssignTechnicianController::class);
+    Route::post('/v1/admin/booking-items/{bookingItem}/reassign-technician', ReassignTechnicianController::class);
+    Route::post('/v1/admin/booking-items/{bookingItem}/start-work', StartWorkController::class);
+    Route::post('/v1/admin/booking-items/{bookingItem}/complete-work', CompleteWorkController::class);
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

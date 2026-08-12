@@ -1,0 +1,334 @@
+{
+  "info": {
+    "_postman_id": "6f2e9c5a-8b1d-4a7e-9c3f-2d5b7a1e4f6c",
+    "name": "BLUE V1 - Admin Operations (Phase 9B)",
+    "description": "BLUE V1 Phase 9B Admin Operations endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Admin/{Booking,Technician}, backend/app/Actions/Admin/*, and verified against backend/tests/Feature/Admin/*. See docs/api-contracts/admin-operations-v1.md for the full written contract.\n\nOnly endpoints actually implemented are included: List/Get Bookings, List Technicians, List Technician Candidates, Assign/Reassign Technician, Start/Complete Work. No Booking-level lifecycle mutation exists in this phase (see the contract doc's 'Booking-Level Lifecycle' section for why).\n\nReuses BLUE-V1-Local.postman_environment.json and the admin_access_token variable Admin Login (below, or the Admin Authentication collection) already populates. No credentials or real tokens are stored in this file.\n\nSuggested run order: Admin Login -> List Bookings -> Get Booking -> List Technicians -> List Technician Candidates -> Assign Technician -> Reassign Technician -> Start Work -> Complete Work. Bookings/Booking Items/Technicians must already exist in your target environment (a paid Booking with a PENDING_ASSIGNMENT item, and at least one Technician holding the matching specialization) - this collection does not create fixture data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 - Admin Login",
+      "item": [
+        {
+          "name": "Admin Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_number\": \"{{admin_phone_number}}\",\n  \"password\": \"{{admin_password}}\",\n  \"device_name\": \"Ops MacBook\",\n  \"app_version\": \"1.0.0\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/auth/login",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "auth", "login" ]
+            },
+            "description": "See the Admin Authentication (Phase 9A) collection for the full contract. Included here only so this collection can be run standalone."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "if (json.data && json.data.access_token) pm.environment.set('admin_access_token', json.data.access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - Booking Read",
+      "item": [
+        {
+          "name": "List Bookings",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings?page=1&per_page=20",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "bookings" ],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "per_page", "value": "20" },
+                { "key": "status", "value": "PAID", "disabled": true },
+                { "key": "booking_number", "value": "", "disabled": true },
+                { "key": "customer_uuid", "value": "", "disabled": true },
+                { "key": "from", "value": "", "disabled": true },
+                { "key": "to", "value": "", "disabled": true },
+                { "key": "appointment_date", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Not customer-scoped - returns paid Bookings across every customer. Paginated (data.pagination), deterministically ordered created_at DESC, id DESC."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "pm.test('response has pagination', function () { pm.expect(json.data.pagination).to.have.property('total'); });",
+                  "if (json.data.bookings && json.data.bookings.length > 0) {",
+                  "    pm.environment.set('admin_booking_uuid', json.data.bookings[0].uuid);",
+                  "    if (json.data.bookings[0].items_count > 0) {",
+                  "        pm.collectionVariables.set('_has_booking', 'true');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Booking",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings/{{admin_booking_uuid}}",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "bookings", "{{admin_booking_uuid}}" ]
+            },
+            "description": "Operational detail: customer summary, location, appointment, trusted payment summary, and every Booking Item with its current + historical technician assignment. Never exposes client_secret/checkout_snapshot/payment secrets."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "pm.test('no client_secret exposed', function () { pm.expect(JSON.stringify(json)).to.not.include('client_secret'); });",
+                  "if (json.data.booking.items && json.data.booking.items.length > 0) {",
+                  "    pm.environment.set('admin_booking_item_uuid', json.data.booking.items[0].uuid);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Technician Read",
+      "item": [
+        {
+          "name": "List Technicians",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/technicians?page=1&per_page=20",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "technicians" ],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "per_page", "value": "20" },
+                { "key": "status", "value": "AVAILABLE", "disabled": true },
+                { "key": "specialization", "value": "", "disabled": true }
+              ]
+            },
+            "description": "Paginated Technician list. The Admin sees the full record - phone number is always shown here regardless of is_phone_visible_to_customer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "if (json.data.technicians && json.data.technicians.length > 0) {",
+                  "    pm.environment.set('admin_technician_uuid', json.data.technicians[0].uuid);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Technician Candidates",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/booking-items/{{admin_booking_item_uuid}}/technician-candidates",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "booking-items", "{{admin_booking_item_uuid}}", "technician-candidates" ]
+            },
+            "description": "Server-authoritative candidate list matching this Booking Item's service specialization. Advisory only - is_double_booked can go stale; the real assign/reassign call always re-validates."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "if (json.data.candidates && json.data.candidates.length > 0) {",
+                  "    pm.environment.set('admin_technician_uuid', json.data.candidates[0].uuid);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Assignment",
+      "item": [
+        {
+          "name": "Assign Technician",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technician_uuid\": \"{{admin_technician_uuid}}\",\n  \"internal_note\": \"Assigned via Postman QA run.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/booking-items/{{admin_booking_item_uuid}}/assign-technician",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "booking-items", "{{admin_booking_item_uuid}}", "assign-technician" ]
+            },
+            "description": "201 on first assignment, 200 on an idempotent retry of the same technician, 404/409/422 for the documented rejection cases (see docs/api-contracts/admin-operations-v1.md)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 201', function () { pm.expect([200, 201]).to.include(pm.response.code); });",
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.assignment) pm.environment.set('admin_assignment_uuid', json.data.assignment.uuid);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reassign Technician",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technician_uuid\": \"{{admin_technician_uuid}}\",\n  \"release_reason\": \"Reassigned via Postman QA run.\",\n  \"internal_note\": \"\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/booking-items/{{admin_booking_item_uuid}}/reassign-technician",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "booking-items", "{{admin_booking_item_uuid}}", "reassign-technician" ]
+            },
+            "description": "release_reason is required. The previous assignment is released, never deleted. Set technician_uuid to a *different* technician uuid before running this against a real environment, or expect an idempotent 200 ALREADY_ASSIGNED."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Job Execution",
+      "item": [
+        {
+          "name": "Start Work",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technician_uuid\": \"{{admin_technician_uuid}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/booking-items/{{admin_booking_item_uuid}}/start-work",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "booking-items", "{{admin_booking_item_uuid}}", "start-work" ]
+            },
+            "description": "The Admin acts on the Technician's behalf - technician_uuid must match the Booking Item's actual active assignment or this is rejected (409 ASSIGNMENT_MISMATCH)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete Work",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{admin_access_token}}" } ] },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technician_uuid\": \"{{admin_technician_uuid}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/booking-items/{{admin_booking_item_uuid}}/complete-work",
+              "host": [ "{{base_url}}" ],
+              "path": [ "admin", "booking-items", "{{admin_booking_item_uuid}}", "complete-work" ]
+            },
+            "description": "Requires the item to currently be IN_PROGRESS. Idempotent on retry - completed_at never changes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "_has_booking", "value": "false" }
+  ]
+}

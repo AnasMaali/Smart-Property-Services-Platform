@@ -1,0 +1,79 @@
+<?php
+
+namespace App\Actions\Admin\Technician;
+
+use App\Actions\Technician\AssignTechnicianToBookingItemAction;
+use App\Models\User;
+use App\Support\Admin\AdminAssignmentPresenter;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Technician\TechnicianAssignmentOutcome;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+/**
+ * Thin Admin transport wrapper around the existing, already-tested
+ * App\Actions\Technician\AssignTechnicianToBookingItemAction::assign()
+ * (BLUE V1 Phase 8A) - never re-implements eligibility, specialization
+ * matching, double-booking detection, item-status validation, idempotency,
+ * or DB race handling; only maps the request to the Action's signature and
+ * the Action's outcome to an HTTP-shaped result. The actor is always the
+ * `auth.admin`-resolved caller, never a request field (see
+ * App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController).
+ */
+final class AdminAssignTechnicianAction
+{
+    use BuildsCartResult;
+
+    public function __construct(
+        private readonly AssignTechnicianToBookingItemAction $action = new AssignTechnicianToBookingItemAction,
+    ) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function handle(Request $request, string $bookingItemUuid, string $technicianUuid, User $actor, ?string $internalNote): array
+    {
+        if (! Str::isUuid($bookingItemUuid)) {
+            return $this->notFound('Booking Item not found.');
+        }
+
+        if (! Str::isUuid($technicianUuid)) {
+            return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
+        }
+
+        $result = $this->action->assign($bookingItemUuid, $technicianUuid, $actor->id, $internalNote);
+
+        $response = match ($result->outcome) {
+            TechnicianAssignmentOutcome::ASSIGNED => $this->ok(201, 'Technician assigned successfully.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),
+            TechnicianAssignmentOutcome::ALREADY_ASSIGNED => $this->ok(200, 'This technician is already assigned to this Booking Item.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),
+            TechnicianAssignmentOutcome::ITEM_NOT_FOUND => $this->notFound('Booking Item not found.'),
+            TechnicianAssignmentOutcome::TECHNICIAN_NOT_FOUND => $this->notFound('Technician not found.'),
+            TechnicianAssignmentOutcome::ITEM_NOT_ELIGIBLE => $this->conflict('This Booking Item cannot be assigned from its current status.'),
+            TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN => $this->conflict('This Booking Item already has an active technician assigned. Use reassign instead.'),
+            TechnicianAssignmentOutcome::TECHNICIAN_NOT_ELIGIBLE => $this->conflict('This technician is not currently assignable.'),
+            TechnicianAssignmentOutcome::TECHNICIAN_DOUBLE_BOOKED => $this->conflict('This technician already has an overlapping assignment for this appointment period.'),
+            TechnicianAssignmentOutcome::SERVICE_SPECIALIZATION_NOT_CONFIGURED => $this->unprocessable('This service has no specialization configured yet, so no technician can be assigned.'),
+            TechnicianAssignmentOutcome::SPECIALIZATION_MISMATCH => $this->unprocessable('This technician does not hold the specialization required for this service.'),
+            TechnicianAssignmentOutcome::ACTOR_NOT_FOUND, TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED => $this->forbidden(),
+            TechnicianAssignmentOutcome::NO_ACTIVE_ASSIGNMENT => $this->conflict('This Booking Item has no active technician assignment.'),
+        };
+
+        if ($result->outcome === TechnicianAssignmentOutcome::ASSIGNED) {
+            AdminAuditLogger::record($request, $actor, 'TECHNICIAN_ASSIGNED', 'BOOKING_ITEM', $bookingItemUuid, [
+                'technician_uuid' => $result->technicianUuid,
+                'assignment_uuid' => $result->assignmentUuid,
+            ]);
+        }
+
+        return $response;
+    }
+
+    /**
+     * @return array{success: bool, status: int, message: string, data: null}
+     */
+    private function forbidden(): array
+    {
+        return ['success' => false, 'status' => 403, 'message' => 'You are not authorized to perform this action.', 'data' => null];
+    }
+}

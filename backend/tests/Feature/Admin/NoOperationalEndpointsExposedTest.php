@@ -7,28 +7,25 @@ use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
 
 /**
- * BLUE V1 Phase 9A builds only the Admin authentication/authorization
- * security boundary - not the Admin operational APIs that will sit behind
- * it in Phase 9B. This guards against accidentally exposing any of those
- * routes (technician assignment/start/complete from Phase 8A/8B, or Booking
- * management) while wiring up the new Admin auth surface.
+ * BLUE V1 Phase 9A built only the Admin authentication/authorization
+ * security boundary. Phase 9B now exposes the actual Admin Operations
+ * surface behind it (see docs/api-contracts/admin-operations-v1.md) - this
+ * test was updated in lockstep with that route list. It still guards
+ * against anything Phase 9B explicitly did NOT build: Booking cancellation/
+ * refund, a generic status-setter endpoint, and any route not gated by
+ * `auth.admin`.
  */
 class NoOperationalEndpointsExposedTest extends TestCase
 {
     use DatabaseTransactions;
 
     private const FORBIDDEN_URI_FRAGMENTS = [
-        'assign',
-        'reassign',
-        'start-work',
-        'complete-work',
-        'start-job',
-        'complete-job',
-        'technician',
         'cancel',
+        'refund',
+        'reprice',
     ];
 
-    public function test_no_technician_or_booking_management_routes_are_registered(): void
+    public function test_no_out_of_scope_operational_routes_are_registered(): void
     {
         $matches = [];
 
@@ -45,19 +42,62 @@ class NoOperationalEndpointsExposedTest extends TestCase
         $this->assertSame([], $matches, 'Found unexpected operational route(s) registered: '.implode(', ', $matches));
     }
 
+    public function test_no_generic_booking_status_setter_route_exists(): void
+    {
+        $hasGenericStatusRoute = collect(Route::getRoutes())
+            ->contains(function ($route) {
+                $uri = strtolower($route->uri());
+                $methods = $route->methods();
+
+                return $uri === 'api/v1/admin/bookings/{booking}'
+                    && (in_array('PATCH', $methods, true) || in_array('PUT', $methods, true));
+            });
+
+        $this->assertFalse($hasGenericStatusRoute, 'A generic PATCH/PUT booking status-setter route must never exist - only named operations (complete, assign-technician, etc.) are allowed.');
+    }
+
     public function test_only_the_expected_admin_routes_exist(): void
     {
         $adminUris = collect(Route::getRoutes())
+            ->filter(fn ($route) => in_array('auth.admin', $route->gatherMiddleware(), true) || str_starts_with($route->uri(), 'api/v1/admin/auth'))
             ->map(fn ($route) => $route->uri())
-            ->filter(fn ($uri) => str_starts_with($uri, 'api/v1/admin'))
-            ->values()
+            ->unique()
             ->sort()
+            ->values()
             ->all();
 
         $this->assertSame([
             'api/v1/admin/auth/login',
             'api/v1/admin/auth/refresh',
+            'api/v1/admin/booking-items/{bookingItem}/assign-technician',
+            'api/v1/admin/booking-items/{bookingItem}/complete-work',
+            'api/v1/admin/booking-items/{bookingItem}/reassign-technician',
+            'api/v1/admin/booking-items/{bookingItem}/start-work',
+            'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
+            'api/v1/admin/bookings',
+            'api/v1/admin/bookings/{booking}',
             'api/v1/admin/me',
-        ], collect($adminUris)->unique()->sort()->values()->all());
+            'api/v1/admin/technicians',
+        ], $adminUris);
+    }
+
+    public function test_every_admin_operations_route_requires_auth_admin_middleware(): void
+    {
+        $operationalUris = [
+            'api/v1/admin/bookings',
+            'api/v1/admin/bookings/{booking}',
+            'api/v1/admin/technicians',
+            'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
+            'api/v1/admin/booking-items/{bookingItem}/assign-technician',
+            'api/v1/admin/booking-items/{bookingItem}/reassign-technician',
+            'api/v1/admin/booking-items/{bookingItem}/start-work',
+            'api/v1/admin/booking-items/{bookingItem}/complete-work',
+        ];
+
+        foreach (Route::getRoutes() as $route) {
+            if (in_array($route->uri(), $operationalUris, true)) {
+                $this->assertContains('auth.admin', $route->gatherMiddleware(), "Route {$route->uri()} must be gated by auth.admin.");
+            }
+        }
     }
 }
