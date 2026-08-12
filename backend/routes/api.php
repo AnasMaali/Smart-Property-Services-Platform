@@ -1,5 +1,8 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
+use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
@@ -80,6 +83,24 @@ Route::middleware('auth.customer')->group(function () {
 // Deliberately outside the auth.customer group - the caller is the payment
 // provider's server, authenticated by webhook signature only.
 Route::post('/v1/payments/webhooks/stripe', PaymentWebhookController::class);
+
+// BLUE V1 Phase 9A - Admin authentication & authorization foundation.
+// A valid Customer access token never grants access to these routes, and a
+// valid Admin access token never grants access to the auth.customer routes
+// above: AuthenticateAdmin/AuthenticateCustomer each re-check current role
+// membership in the database on every request, independent of any `role`
+// claim embedded in the token itself.
+//
+// Admin logout / logout-all deliberately reuse the existing
+// /v1/auth/logout and /v1/auth/logout-all routes above - LogoutAction and
+// LogoutAllAction only require a valid session belonging to an ACTIVE user
+// and never check role, so they already work unchanged for Admin sessions.
+Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('throttle:5,1');
+Route::post('/v1/admin/auth/refresh', AdminRefreshController::class);
+
+Route::middleware('auth.admin')->group(function () {
+    Route::get('/v1/admin/me', AdminMeController::class);
+});
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);
 

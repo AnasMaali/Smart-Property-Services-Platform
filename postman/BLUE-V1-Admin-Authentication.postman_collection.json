@@ -1,0 +1,281 @@
+{
+  "info": {
+    "_postman_id": "9a2d4b7e-1f3c-4e6a-8b2d-6c1a9e0f5d3b",
+    "name": "BLUE V1 - Admin Authentication (Phase 9A)",
+    "description": "BLUE V1 Phase 9A Admin authentication/authorization endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Admin, backend/app/Actions/Auth (Admin*), and verified against backend/tests/Feature/Admin. See docs/api-contracts/admin-authentication-v1.md for the full written contract.\n\nThis collection only covers what Phase 9A actually built: Admin login, Admin refresh, GET /v1/admin/me, and the auth.admin middleware boundary. Admin logout / logout-all reuse the existing customer /v1/auth/logout and /v1/auth/logout-all endpoints unchanged (see the Authentication collection) - they are included here for convenience, pointed at the admin_access_token variable.\n\nAdmin accounts are provisioned directly in the database in Version 1 - there is no registration endpoint for them. Set admin_phone_number/admin_password in the environment to a real Admin account in your target environment before running this collection. No credentials or real tokens are stored in this file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - Admin Login",
+      "item": [
+        {
+          "name": "Admin Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_number\": \"{{admin_phone_number}}\",\n  \"password\": \"{{admin_password}}\",\n  \"device_name\": \"Ops MacBook\",\n  \"app_version\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Authenticates an ADMIN/SUPER_ADMIN account and issues an Admin (ADMIN_WEB) session. Rate limited to 5 requests/minute per IP. Returns the exact same generic failure message for unknown phone number, wrong password, non-ACTIVE account, and an account that has no active ADMIN/SUPER_ADMIN role (including a normal CUSTOMER account) - it never reveals which case occurred."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data) {",
+                  "    if (json.data.access_token) pm.environment.set('admin_access_token', json.data.access_token);",
+                  "    if (json.data.refresh_token) pm.environment.set('admin_refresh_token', json.data.refresh_token);",
+                  "    if (json.data.session_uuid) pm.environment.set('admin_session_uuid', json.data.session_uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Admin Session",
+      "item": [
+        {
+          "name": "Refresh Access Token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{admin_refresh_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Rotates the Admin refresh token and issues a new access token. Re-checks ADMIN/SUPER_ADMIN role membership and account status fresh at refresh time - a role revoked or account deactivated after login is rejected on the very next refresh call."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "if (json.data) {",
+                  "    if (json.data.access_token) pm.environment.set('admin_access_token', json.data.access_token);",
+                  "    if (json.data.refresh_token) pm.environment.set('admin_refresh_token', json.data.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get Admin Me",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "me"
+              ]
+            },
+            "description": "Protected by the auth.admin middleware. Returns only safe identity fields (uuid, full_name, phone_number, email, active Admin role codes) for the Admin UI to bootstrap with after login. A Customer access token, an expired/revoked/malformed token, or a token whose Admin role has since been revoked all receive the same generic 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Logout (shared with Customer auth)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "The exact same /v1/auth/logout endpoint used by customer sessions - LogoutAction only requires a valid, non-revoked session for an ACTIVE user and never checks role, so it already revokes Admin sessions correctly with no separate Admin logout route."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Logout All Sessions (shared with Customer auth)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout-all"
+              ]
+            },
+            "description": "The exact same /v1/auth/logout-all endpoint used by customer sessions - revokes every auth_sessions row for this Admin user, including sessions on other devices."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('success is true', function () {",
+                  "    pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}
