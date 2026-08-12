@@ -1,13 +1,13 @@
-# BLUE V1 — Phase 7A/7B/8A Booking Conversion, Lifecycle & Technician Assignment Contract
+# BLUE V1 — Phase 7A/7B/8A/8B Booking Conversion, Lifecycle, Technician Assignment & Job Execution Contract
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
-This document describes the Phase 7A Booking endpoints, the Phase 7B Booking lifecycle, and the
-Phase 8A technician assignment foundation, as actually implemented in `backend/routes/api.php`,
-their Actions (`App\Actions\Booking\*`, `App\Actions\Technician\*`) and Controllers
-(`App\Http\Controllers\Api\V1\Booking\*`), and verified against `backend/tests/Feature/Booking/*`
-and `backend/tests/Feature/Technician/*`. It documents only what exists in code — no aspirational
-or planned behavior is included.
+This document describes the Phase 7A Booking endpoints, the Phase 7B Booking lifecycle, the
+Phase 8A technician assignment foundation, and the Phase 8B technician job execution foundation, as
+actually implemented in `backend/routes/api.php`, their Actions (`App\Actions\Booking\*`,
+`App\Actions\Technician\*`) and Controllers (`App\Http\Controllers\Api\V1\Booking\*`), and verified
+against `backend/tests/Feature/Booking/*` and `backend/tests/Feature/Technician/*`. It documents
+only what exists in code — no aspirational or planned behavior is included.
 
 Phase 7A is built entirely on top of the Phase 6A/6B **Payment Core** contract
 (`docs/api-contracts/payments-v1.md`): it converts an already-trusted `SUCCESSFUL` payment attempt
@@ -29,7 +29,11 @@ Phase 8A is: the code-driven Technician-to-Booking-Item assignment foundation (s
 assignment (Phase 8A)" below) — also internal/server-only, for the same reason Phase 7B stopped at
 the Action layer.
 
-None of these three phases is refund execution, notifications, or Admin Booking management — all
+Phase 8B is: the code-driven Start Work / Complete Work foundation that executes an already-assigned
+Booking Item (see "Technician job execution (Phase 8B)" below) — also internal/server-only, for the
+same reason Phase 8A stopped at the Action layer: technicians have no system accounts in BLUE V1.
+
+None of these four phases is refund execution, notifications, or Admin Booking management — all
 later phases.
 
 ## Payment → Booking boundary
@@ -452,6 +456,190 @@ read API (`GET /v1/bookings/{booking}`, "Booking APIs" below) is deliberately **
 phase — `BookingPresenter` still returns no technician data of any kind. Adding it is a later,
 explicit scope decision, not an automatic consequence of assignment existing.
 
+## Technician job execution (Phase 8B)
+
+Phase 8A answers "who is doing this job" (assignment). Phase 8B answers "is the job actually
+happening" (execution) — the two are deliberately separate concepts, separate tables
+(`technician_assignments` vs. `booking_items.status_id`), and separate Actions.
+
+`App\Actions\Technician\StartTechnicianJobAction::start()` and
+`App\Actions\Technician\CompleteTechnicianJobAction::complete()` are the **two** canonical entry
+points for moving an already-assigned Booking Item through fulfillment:
+
+```
+ASSIGNED --start()--> IN_PROGRESS --complete()--> COMPLETED
+```
+
+Both reuse the existing Phase 7B `App\Actions\Booking\TransitionBookingItemStatusAction` for the
+actual `booking_items.status_id` write and `booking_item_status_history` insert — Phase 8B never
+writes `status_id` directly and never duplicates `BookingItemStatusMachine`'s rules.
+
+### Technician authentication boundary — server/internal-only
+
+Exactly like Phase 8A, neither Action is reachable from any HTTP route.
+`docs/03-features-and-requirements/07-technician-assignment.md` is explicit that "technicians do not
+have separate system accounts" and "the admin ... updates the service progress on their behalf" —
+the schema confirms this (`technicians` has no foreign key to `users`, no password/credential
+column, and no session/token table references it). There is therefore no
+`POST /v1/bookings/{booking}/items/{item}/start-work` (or `/complete-work`, or any generic
+`PATCH .../status`) route — `backend/tests/Feature/Technician/TechnicianJobExecutionTest.php` asserts
+this directly. Every caller of `start()`/`complete()` must be an authenticated **ADMIN or
+SUPER_ADMIN** user (the same actor-authorization check `AssignTechnicianToBookingItemAction` already
+uses), acting on the Technician's behalf. A future Technician Authentication/API phase is required
+before either Action can be called from a technician-facing mobile client directly.
+
+### Active assignment is authoritative
+
+Both Actions take a `$technicianUuid` parameter, but it is never trusted as proof of identity by
+itself — it must match the Booking Item's current active primary `technician_assignments` row
+(`released_at IS NULL`, `is_primary = 1`), resolved fresh inside the same transaction that locks the
+`booking_items` row. A Technician who has since been released or reassigned away
+(`AssignTechnicianToBookingItemAction::reassign()`) can never successfully start or complete the job
+under their own uuid — the mismatch is rejected as `ASSIGNMENT_MISMATCH`, never silently ignored or
+silently succeeded. This holds whether the reassignment happened before `start()` was ever called, or
+mid-`IN_PROGRESS` (the new active Technician may then call `complete()`; the old one may not).
+
+### Start Work
+
+`start(bookingItemUuid, technicianUuid, actorUserUuid, ?reason)`:
+
+- **Booking Item** must currently be `ASSIGNED`. `PENDING_ASSIGNMENT` (never assigned),
+  `COMPLETED`, and `CANCELLED` are rejected as `ITEM_NOT_ELIGIBLE`.
+- An `IN_PROGRESS` retry with the same active Technician is an idempotent no-op (`ALREADY_STARTED`,
+  nothing written); an `IN_PROGRESS` retry with a Technician who is no longer active is
+  `ASSIGNMENT_MISMATCH`.
+- No dedicated `started_at` column exists on `booking_items` — `status_changed_at` (written by
+  `BookingItemStatusMachine`) is the authoritative "work started" timestamp. Phase 8B does not invent
+  a duplicate column for a value that already exists.
+- No appointment-timing validation: nothing in the Version 1 requirements restricts starting work
+  relative to `appointment_slots.starts_at`/`ends_at` (early arrival, late arrival, grace windows),
+  so none is enforced here.
+
+### Complete Work
+
+`complete(bookingItemUuid, technicianUuid, actorUserUuid, ?reason)`:
+
+- **Booking Item** must currently be `IN_PROGRESS`. `PENDING_ASSIGNMENT`, `ASSIGNED` ("complete
+  before start"), and `CANCELLED` are rejected as `ITEM_NOT_ELIGIBLE`.
+- A `COMPLETED` retry with the same active Technician is an idempotent no-op (`ALREADY_COMPLETED`,
+  nothing written) and never mutates the already-set `completed_at`.
+- `completed_at` already exists on `booking_items` and is written by
+  `BookingItemStatusMachine::transitionToCompleted()` from the single timestamp
+  `TransitionBookingItemStatusAction::complete()` captures — Phase 8B never captures or writes its
+  own timestamp.
+- **Completion evidence has no schema support in BLUE V1.** `booking_items`,
+  `booking_item_status_history`, and `technician_assignments` have no column for photos, signatures,
+  service reports, or technician completion notes, and no dedicated media/evidence table references
+  either row (`service_media` is catalog-level, tied to `services`, not to a specific job visit).
+  `complete()` therefore accepts no such data. **Gap classification: CAN WAIT** — nothing in the
+  Version 1 requirements docs describes capturing completion evidence, so this is not a blocking gap
+  for Phase 8B, only a documented boundary for a later extension.
+
+### Idempotency
+
+Retrying `start()`/`complete()` with the exact same `(bookingItemUuid, technicianUuid)` after a lost
+response is always a safe no-op: no duplicate `booking_item_status_history` row, no second call into
+`TransitionBookingItemStatusAction`, and no mutation of the already-written `status_changed_at` /
+`completed_at`. Retrying with a *different* Technician than the one currently active is never treated
+as idempotent — it is `ASSIGNMENT_MISMATCH`, since a different actor genuinely did not perform the
+already-recorded transition.
+
+### Assignment acceptance / rejection, arrival, and check-in — not implemented
+
+`technician_assignments` has no `accepted_at`, `rejected_at`, `arrived_at`, or check-in column of any
+kind, and no requirements document describes a Technician acknowledgement step. Phase 8B does not
+overload `released_at`/`release_reason` to fake a rejection, and does not treat "Start Work" as
+implying physical arrival — that would invent a business rule the docs never state. **Gap
+classification: CAN WAIT** — these belong to whatever later phase introduces a real
+technician-facing mobile client (which also requires the Technician Authentication/API phase above).
+
+### Booking Item lifecycle
+
+Phase 8B introduces no new Booking Item status and no new transition beyond the ones Phase 7B's
+`BookingItemStatusMachine` already defines (`ASSIGNED -> IN_PROGRESS -> COMPLETED`). No backward
+transition, no arbitrary target status, and no bulk/multi-item operation exists — every call is
+scoped to exactly one `booking_items` row, so starting or completing one item never touches a sibling
+item in the same Booking.
+
+### Parent Booking lifecycle boundary — unchanged from Phase 7B/8A
+
+Phase 8B, like Phase 8A before it, **never reads, locks, or writes the parent `bookings` row**, and
+never calls `TransitionBookingStatusAction`. The Booking/Booking-Item independence Phase 7B
+established is preserved exactly as-is.
+
+This is a deliberate decision, not an oversight, and the missing piece is named explicitly:
+`docs/05-system-requirements/07-business-rules.md` BR-16 ("A Booking becomes Completed only after
+all required Booking Items are completed") states a *constraint* on when a Booking may be marked
+Completed, not that the system must *automatically derive* the Booking's status from its items'
+statuses. `docs/03-features-and-requirements/08-request-status-tracking.md` reinforces a manual
+model throughout ("the admin manages and updates request statuses," "the admin should be able to
+... update the status of each service item if needed," separately from updating the Booking's own
+status) and never specifies the exact aggregation rule for `ASSIGNED`/`IN_PROGRESS` (e.g., does the
+Booking become `IN_PROGRESS` the moment *any* item starts, or only when *all* items have started?).
+Inventing an answer here would be a business decision Phase 8B is not authorized to make. **Gap
+classification: CAN WAIT** — the missing decision is: *should Booking-level status be automatically
+derived from Booking Item statuses, and if so, under exactly what rule per transition, or does the
+admin continue to set it manually via `TransitionBookingStatusAction` once an admin panel exists?*
+That decision belongs to the same later phase that adds admin authentication and an admin panel to
+drive both levels together — exactly where Phase 7B originally deferred it.
+
+### Technician status after assignment — unchanged from Phase 8A
+
+Phase 8B never writes `technicians.status_id`. Nothing in the Version 1 requirements docs specifies
+that a Technician should automatically flip `AVAILABLE -> BUSY` when a job starts (or back on
+completion), and Phase 8A already treats `technician_statuses.is_assignable` purely as an
+*eligibility input* for new assignments, not a value the system drives. Auto-toggling it here would
+also be unsafe for the documented "one technician for the whole booking" case
+(`docs/02-user-roles-and-stakeholders/04-technician-service-employee.md`): a Technician starting one
+Booking Item while holding other active assignments should not be forced `BUSY` in a way that blocks
+unrelated eligibility checks. **Gap classification: CAN WAIT.**
+
+### Payment / pricing boundary
+
+Identical guarantee to Phase 8A: Start Work and Complete Work never touch `payment_attempts`,
+`carts`, `checkout_snapshot`, or any `booking_items` pricing-snapshot column, and never call
+`PricingEngine` or the Stripe gateway —
+`backend/tests/Feature/Technician/TechnicianJobExecutionTest.php` asserts both the source-level
+absence of any such reference and that a Booking's payment/pricing snapshot survive Start/Complete
+byte-for-byte unchanged.
+
+### Transaction / lock order
+
+Both Actions lock only the single `booking_items` row being transitioned — never `bookings`,
+`payment_attempts`, `carts`, or `appointment_holds`. `technician_assignments` is read with a plain
+(non-locking) `SELECT` *after* that lock is acquired: since
+`AssignTechnicianToBookingItemAction::reassign()` also locks the same `booking_items` row first, two
+concurrent calls (one reassigning, one starting/completing the same item) always serialize on that
+lock. The loser only reads `technician_assignments` after being unblocked, at which point InnoDB
+REPEATABLE READ establishes a fresh snapshot for this transaction's first consistent read and
+correctly observes the winner's already-committed state — including a just-released assignment. This
+is the same reasoning `AssignTechnicianToBookingItemAction` already relies on for its own
+`technicians`-row overlap check, applied here to `technician_assignments` instead. No external/network
+call is ever made inside either transaction.
+
+### Customer API
+
+Unaffected. The Booking read API (`GET /v1/bookings/{booking}`, "Booking APIs" below) already
+returns each Booking Item's `status` (including `IN_PROGRESS`/`COMPLETED` once Phase 8B moves it
+there) and `completed_at` — no change was needed or made to `BookingPresenter` for Phase 8B to be
+visible to the customer. No technician identity, contact information, internal notes, or assignment
+actor is exposed — that boundary is unchanged from Phase 8A.
+
+### Technician-facing API — not implemented
+
+No `GET /v1/technician/jobs` (or any other technician-facing route) exists, and none was added.
+Building one requires the Technician Authentication/API phase named above — creating an endpoint
+without an authentication boundary to protect it would let any authenticated party impersonate any
+Technician. **Gap classification: REQUIRED, but for a later, separate phase** — not a Phase 8B
+blocker, since Phase 8B's job is the domain foundation, not the technician-facing transport.
+
+### Admin boundary
+
+Identical to Phase 7B/8A: no admin-authenticated area of the API exists yet, so `start()`/`complete()`
+remain internal Actions rather than Controllers. A future phase that adds admin authentication is
+expected to call them directly from an admin-only controller — no `PATCH /status` or other generic
+mutation endpoint should be added ahead of that, on either the admin or customer side.
+
 ## Recovery
 
 A `SUCCESSFUL` payment with no Booking never becomes invisible. The reusable, idempotent
@@ -564,13 +752,18 @@ other provider/webhook internal. Every id is a UUID string (`App\Support\Uuid\Uu
 — no raw `binary(16)` value is ever serialized. Every monetary value is a decimal string with 6
 fraction digits (`decimal(19,6)` column shape) — never a JSON number/float.
 
-## Not implemented in Phase 7A / 7B / 8A
+## Not implemented in Phase 7A / 7B / 8A / 8B
 
 Phase 7B added the internal Booking/Booking Item lifecycle state machine and transition Actions (see
 "Booking lifecycle after PAID" above); Phase 8A added the internal Technician assignment Actions
-(see "Technician assignment (Phase 8A)" above). Neither added a new HTTP route. Still not
-implemented, and still later phases: any admin-authenticated API at all (Admin Booking management,
-Admin technician assignment/management), any customer-facing mutation endpoint (cancel, reschedule),
-customer-visible technician information on the Booking read API, secondary/team technician
-assignment, a full technician scheduling/availability engine, reviews, and refund execution — no
-route, Action, or Controller for any of them exists yet.
+(see "Technician assignment (Phase 8A)" above); Phase 8B added the internal Start Work / Complete
+Work Actions (see "Technician job execution (Phase 8B)" above). None of the three added a new HTTP
+route. Still not implemented, and still later phases: any admin-authenticated API at all (Admin
+Booking management, Admin technician assignment/management), any customer-facing mutation endpoint
+(cancel, reschedule), customer-visible technician information on the Booking read API,
+secondary/team technician assignment, a full technician scheduling/availability engine, Technician
+Authentication/API (and therefore any technician-facing route), assignment acceptance/rejection,
+arrival/check-in, completion evidence (photos/signatures/service reports), automatic Booking-level
+status aggregation from Booking Item statuses, automatic Technician `AVAILABLE`/`BUSY` toggling,
+reviews, and refund execution — no route, Action, Controller, or schema column for any of them
+exists yet.
