@@ -461,6 +461,35 @@ class StripeAdapterTest extends TestCase
         $this->assertSame(NormalizedPaymentOutcome::UNRECOGNIZED, $normalized->outcome);
     }
 
+    /**
+     * Regression guard for a live Stripe Sandbox reproduction: a real
+     * customer.created event (data.object is a Customer, not a
+     * PaymentIntent) must verify and normalize to UNRECOGNIZED with no
+     * session/checkout reference to resolve against - exactly the input
+     * that previously caused ProcessPaymentWebhookAction to misclassify
+     * the event as PAYMENT_ATTEMPT_NOT_FOUND instead of IGNORED.
+     */
+    public function test_a_real_customer_created_event_normalizes_to_unrecognized_with_no_references(): void
+    {
+        $event = [
+            'id' => 'evt_customer_created_live',
+            'object' => 'event',
+            'type' => 'customer.created',
+            'data' => ['object' => ['id' => 'cus_fake_1', 'object' => 'customer']],
+        ];
+        ['body' => $body, 'header' => $header] = $this->signedStripePayload($event);
+
+        $gateway = $this->gateway();
+        $verified = $gateway->verifyWebhook($body, ['Stripe-Signature' => $header]);
+        $this->assertTrue($verified->valid);
+
+        $normalized = $gateway->parseWebhook($verified->providerEvent);
+
+        $this->assertSame(NormalizedPaymentOutcome::UNRECOGNIZED, $normalized->outcome);
+        $this->assertNull($normalized->providerSessionReference);
+        $this->assertNull($normalized->checkoutReference);
+    }
+
     public function test_no_signature_header_at_all_is_rejected(): void
     {
         $verified = $this->gateway()->verifyWebhook('{}', []);

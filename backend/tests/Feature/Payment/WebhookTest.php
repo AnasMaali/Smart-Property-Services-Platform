@@ -194,6 +194,101 @@ class WebhookTest extends TestCase
         $this->assertSame('IGNORED', $this->webhookLedgerStatusCode('evt_unrecognized'));
     }
 
+    /**
+     * Regression guard for a live Stripe Sandbox reproduction: an authentic
+     * event unrelated to any PaymentIntent (e.g. customer.created) carries
+     * no provider_session_reference/checkout_reference at all, so
+     * resolveAttempt() can never find a local match. Before the fix,
+     * process() resolved the attempt before branching on outcome, so this
+     * always fell into the FAILED/PAYMENT_ATTEMPT_NOT_FOUND branch even
+     * though the event is authentic and simply not one BLUE acts on. It
+     * must instead be finalized as IGNORED, with no payment/Booking
+     * mutation of any kind.
+     */
+    public function test_authentic_unrelated_event_with_no_resolvable_reference_is_ignored_not_failed(): void
+    {
+        ['row' => $row] = $this->createPendingPayment();
+        $eventId = 'evt_customer_created';
+
+        $response = $this->postWebhook($this->fakeWebhookPayload([
+            'event_id' => $eventId,
+            'event_type' => 'customer.created',
+            'outcome' => 'UNRECOGNIZED',
+            'provider_session_reference' => null,
+            'checkout_reference' => null,
+        ]));
+
+        $response->assertStatus(200);
+
+        $ledger = $this->webhookLedgerRow($eventId);
+        $this->assertNotNull($ledger);
+        $this->assertSame('IGNORED', $this->webhookLedgerStatusCode($eventId));
+        $this->assertNull($ledger->payment_attempt_id);
+        $this->assertNull($ledger->last_error_code);
+        $this->assertNull($ledger->last_error_message);
+        $this->assertNotNull($ledger->processed_at);
+
+        // Zero payment mutation: the unrelated pre-existing PENDING
+        // attempt must be completely untouched.
+        $fresh = $this->paymentRow($this->uuidOf($row));
+        $this->assertSame('PENDING', $this->paymentStatusCode($fresh));
+        $this->assertSame(0, (int) $fresh->requires_reconciliation);
+        $this->assertNull($fresh->finalized_at);
+        $this->assertNull($fresh->successful_at);
+
+        // Zero Booking mutation.
+        $this->assertSame(0, DB::table('bookings')->count());
+    }
+
+    public function test_duplicate_unrelated_event_remains_idempotent(): void
+    {
+        $eventId = 'evt_customer_created_dup';
+
+        $payload = $this->fakeWebhookPayload([
+            'event_id' => $eventId,
+            'event_type' => 'customer.created',
+            'outcome' => 'UNRECOGNIZED',
+            'provider_session_reference' => null,
+            'checkout_reference' => null,
+        ]);
+
+        $this->postWebhook($payload)->assertStatus(200);
+        $this->postWebhook($payload)->assertStatus(200);
+
+        $this->assertSame(1, DB::table('payment_webhook_events')->where('provider_event_id', $eventId)->count());
+        $this->assertSame('IGNORED', $this->webhookLedgerStatusCode($eventId));
+        $this->assertSame(0, DB::table('bookings')->count());
+    }
+
+    /**
+     * The distinction the fix must preserve: a SUPPORTED PaymentIntent
+     * event (outcome !== UNRECOGNIZED) that genuinely cannot resolve a
+     * local attempt must still fail as PAYMENT_ATTEMPT_NOT_FOUND - the
+     * UNRECOGNIZED short-circuit must never weaken this path.
+     */
+    public function test_supported_payment_intent_event_with_no_matching_attempt_still_fails(): void
+    {
+        $eventId = 'evt_supported_no_match';
+
+        $response = $this->postWebhook($this->fakeWebhookPayload([
+            'event_id' => $eventId,
+            'event_type' => 'payment_intent.succeeded',
+            'outcome' => 'SUCCEEDED',
+            'provider_session_reference' => 'pi_does_not_exist_locally',
+            'checkout_reference' => null,
+        ]));
+
+        $response->assertStatus(200);
+
+        $ledger = $this->webhookLedgerRow($eventId);
+        $this->assertNotNull($ledger);
+        $this->assertSame('FAILED', $this->webhookLedgerStatusCode($eventId));
+        $this->assertNull($ledger->payment_attempt_id);
+        $this->assertSame('PAYMENT_ATTEMPT_NOT_FOUND', $ledger->last_error_code);
+        $this->assertNotNull($ledger->last_error_message);
+        $this->assertSame(0, DB::table('bookings')->count());
+    }
+
     public function test_webhook_response_never_exposes_internal_details(): void
     {
         ['row' => $row] = $this->createPendingPayment();

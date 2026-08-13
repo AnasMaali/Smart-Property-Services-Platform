@@ -166,6 +166,19 @@ class ProcessPaymentWebhookAction
      */
     private function process(NormalizedPaymentEvent $event, string $ledgerId): ?string
     {
+        // An UNRECOGNIZED outcome means this authentic event is not one
+        // BLUE Payment Core acts on (e.g. a non-PaymentIntent Stripe event
+        // such as customer.created) - see NormalizedPaymentOutcome::
+        // UNRECOGNIZED. It must never be resolved against payment_attempts
+        // first: an event with no session/checkout reference to resolve
+        // would otherwise be misclassified as PAYMENT_ATTEMPT_NOT_FOUND
+        // instead of IGNORED.
+        if ($event->outcome === NormalizedPaymentOutcome::UNRECOGNIZED) {
+            $this->finalizeLedger($ledgerId, 'IGNORED', null, null, null);
+
+            return null;
+        }
+
         $attempt = $this->resolveAttempt($event);
 
         if ($attempt === null) {
