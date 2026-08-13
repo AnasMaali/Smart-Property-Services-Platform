@@ -4,6 +4,7 @@ namespace App\Actions\Auth;
 
 use App\Models\OtpVerification;
 use App\Models\User;
+use App\Support\Otp\OtpDeliveryChannel;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -11,6 +12,8 @@ use RuntimeException;
 
 class RequestPhoneNumberChangeAction
 {
+    public function __construct(private readonly OtpDeliveryChannel $otpDelivery) {}
+
     private const RESEND_COOLDOWN_SECONDS = 60;
 
     private const GENERIC_INVALID_MESSAGE = 'Your session is no longer valid. Please log in again.';
@@ -29,7 +32,7 @@ class RequestPhoneNumberChangeAction
      */
     public function handle(string $userUuid, array $data): array
     {
-        return DB::transaction(function () use ($userUuid, $data) {
+        $result = DB::transaction(function () use ($userUuid, $data) {
             $user = User::where('id', UuidBinary::toBinary($userUuid))
                 ->lockForUpdate()
                 ->first();
@@ -94,7 +97,6 @@ class RequestPhoneNumberChangeAction
                 'max_attempts' => 5,
                 'expires_at' => $otpExpiresAt,
             ]);
-            unset($otpCode);
 
             return [
                 'success' => true,
@@ -105,8 +107,23 @@ class RequestPhoneNumberChangeAction
                     'otp_expires_at' => $otpExpiresAt->toIso8601String(),
                     'resend_available_at' => $now->copy()->addSeconds(self::RESEND_COOLDOWN_SECONDS)->toIso8601String(),
                 ],
+                'otp_raw_code' => $otpCode,
+                'otp_raw_expires_at' => $otpExpiresAt,
             ];
         });
+
+        if ($result['success']) {
+            $rawOtp = $result['otp_raw_code'];
+            $rawOtpExpiresAt = $result['otp_raw_expires_at'];
+
+            // Delivered only after the transaction above has committed.
+            $this->otpDelivery->deliver('PHONE_NUMBER_CHANGE', $result['data']['new_phone_number'], $rawOtp, $rawOtpExpiresAt);
+            unset($rawOtp);
+        }
+
+        unset($result['otp_raw_code'], $result['otp_raw_expires_at']);
+
+        return $result;
     }
 
     private function failure(string $message): array

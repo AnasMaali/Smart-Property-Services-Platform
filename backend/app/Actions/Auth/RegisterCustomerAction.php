@@ -6,6 +6,7 @@ use App\Models\CustomerProfile;
 use App\Models\OtpVerification;
 use App\Models\User;
 use App\Models\UserProfile;
+use App\Support\Otp\OtpDeliveryChannel;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -13,6 +14,8 @@ use RuntimeException;
 
 class RegisterCustomerAction
 {
+    public function __construct(private readonly OtpDeliveryChannel $otpDelivery) {}
+
     /**
      * Create the user, profile, customer profile, service interests, role
      * assignment, and initial phone-verification OTP in a single atomic
@@ -41,7 +44,7 @@ class RegisterCustomerAction
      */
     public function handle(array $data): array
     {
-        return DB::transaction(function () use ($data) {
+        $result = DB::transaction(function () use ($data) {
             $accountStatusId = $this->lookupId('user_account_statuses', 'PENDING_VERIFICATION');
             $customerRoleId = $this->lookupId('roles', 'CUSTOMER');
             $otpPurposeId = $this->lookupId('otp_verification_purposes', 'PHONE_VERIFICATION');
@@ -108,7 +111,6 @@ class RegisterCustomerAction
                 'max_attempts' => 5,
                 'expires_at' => $otpExpiresAt,
             ]);
-            unset($otpCode);
 
             return [
                 'user_uuid' => $userUuid,
@@ -119,8 +121,22 @@ class RegisterCustomerAction
                 'phone_verified' => false,
                 'otp_verification_uuid' => $otpUuid,
                 'otp_expires_at' => $otpExpiresAt->toIso8601String(),
+                'otp_raw_code' => $otpCode,
+                'otp_expires_at_carbon' => $otpExpiresAt,
             ];
         });
+
+        $rawOtp = $result['otp_raw_code'];
+        $rawOtpExpiresAt = $result['otp_expires_at_carbon'];
+        unset($result['otp_raw_code'], $result['otp_expires_at_carbon']);
+
+        // Delivered only after the transaction above has committed - the
+        // raw code is never handed to a delivery channel for a row that
+        // might still be rolled back.
+        $this->otpDelivery->deliver('PHONE_VERIFICATION', $result['phone_number'], $rawOtp, $rawOtpExpiresAt);
+        unset($rawOtp);
+
+        return $result;
     }
 
     private function lookupId(string $table, string $code): int

@@ -4,6 +4,7 @@ namespace App\Actions\Auth;
 
 use App\Models\OtpVerification;
 use App\Models\User;
+use App\Support\Otp\OtpDeliveryChannel;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -11,6 +12,8 @@ use RuntimeException;
 
 class ForgotPasswordAction
 {
+    public function __construct(private readonly OtpDeliveryChannel $otpDelivery) {}
+
     private const RESEND_COOLDOWN_SECONDS = 60;
 
     private const SAFE_PUBLIC_MESSAGE = 'If an account exists for this phone number, a password reset code has been sent.';
@@ -38,7 +41,13 @@ class ForgotPasswordAction
      */
     public function handle(array $data): array
     {
-        return DB::transaction(function () use ($data) {
+        // Populated only on the one branch below that actually issues an
+        // OTP - every decline branch (unknown phone, deactivated account,
+        // cooldown) returns the identical public success response, so this
+        // is the only reliable signal that a real OTP exists to deliver.
+        $issuedOtp = null;
+
+        $result = DB::transaction(function () use ($data, &$issuedOtp) {
             $user = User::where('phone_number', $data['phone_number'])
                 ->lockForUpdate()
                 ->first();
@@ -91,10 +100,23 @@ class ForgotPasswordAction
                 'max_attempts' => 5,
                 'expires_at' => $otpExpiresAt,
             ]);
-            unset($otpCode);
+
+            $issuedOtp = [
+                'phone_number' => $user->phone_number,
+                'raw_code' => $otpCode,
+                'expires_at' => $otpExpiresAt,
+            ];
 
             return $this->safeResponse();
         });
+
+        if ($issuedOtp !== null) {
+            // Delivered only after the transaction above has committed.
+            $this->otpDelivery->deliver('PASSWORD_RESET', $issuedOtp['phone_number'], $issuedOtp['raw_code'], $issuedOtp['expires_at']);
+            $issuedOtp = null;
+        }
+
+        return $result;
     }
 
     /**
