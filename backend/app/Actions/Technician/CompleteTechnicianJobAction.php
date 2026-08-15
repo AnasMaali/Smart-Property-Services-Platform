@@ -9,7 +9,7 @@ use App\Support\Technician\TechnicianJobOutcome;
 use App\Support\Technician\TechnicianJobResult;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
-
+use App\Actions\Booking\SyncBookingStatusFromItemsAction;
 /**
  * The one canonical, server/internal-only entry point for completing work on
  * an in-progress Booking Item (BLUE V1 Phase 8B). Same technician
@@ -37,8 +37,9 @@ class CompleteTechnicianJobAction
     use TechnicianJobPreconditions;
 
     public function __construct(
-        private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
-    ) {}
+    private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
+    private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
+) {}
 
     /**
      * Moves a Booking Item IN_PROGRESS -> COMPLETED on behalf of its current
@@ -54,7 +55,7 @@ class CompleteTechnicianJobAction
         $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
         $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
 
-        return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
+        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
@@ -107,5 +108,13 @@ class CompleteTechnicianJobAction
                 $transition->toStatus,
             );
         });
+if (in_array($result->outcome, [
+    TechnicianJobOutcome::COMPLETED,
+    TechnicianJobOutcome::ALREADY_COMPLETED,
+], true)) {
+    $this->bookingLifecycleSync->syncForItem($bookingItemUuid);
+}
+
+return $result;
     }
 }

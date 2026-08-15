@@ -417,9 +417,23 @@ class TechnicianJobExecutionTest extends TestCase
         $this->assertSame(0, DB::table('booking_item_status_history')->where('booking_item_id', $items[1]->id)->count());
         $this->assertSame($items[1]->updated_at, $sibling->updated_at);
 
-        $bookingAfter = DB::table('bookings')->where('id', $booking->id)->first();
-        $this->assertSame($booking->status_id, $bookingAfter->status_id);
-        $this->assertSame($bookingHistoryCountBefore, DB::table('booking_status_history')->where('booking_id', $booking->id)->count());
+        $bookingAfter = DB::table('bookings')
+        ->where('id', $booking->id)
+        ->first();
+
+    $this->assertSame(
+        'IN_PROGRESS',
+        DB::table('booking_statuses')
+            ->where('id', $bookingAfter->status_id)
+            ->value('code')
+    );
+
+    $this->assertSame(
+        $bookingHistoryCountBefore + 2,
+        DB::table('booking_status_history')
+            ->where('booking_id', $booking->id)
+            ->count()
+    );
     }
 
     // --- Static regression guards ---

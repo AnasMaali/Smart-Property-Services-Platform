@@ -1,7 +1,7 @@
 <?php
 
 namespace App\Actions\Technician;
-
+use App\Actions\Booking\SyncBookingStatusFromItemsAction;
 use App\Actions\Booking\TransitionBookingItemStatusAction;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Technician\TechnicianAssignmentOutcome;
@@ -11,7 +11,6 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
-
 /**
  * The one canonical, server/internal-only entry point for assigning a
  * Technician to a Booking Item (BLUE V1 Phase 8A). Never reachable from any
@@ -80,72 +79,133 @@ class AssignTechnicianToBookingItemAction
 {
     public function __construct(
         private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
+        private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
     ) {}
 
-    public function assign(string $bookingItemUuid, string $technicianUuid, string $assignedByUserUuid, ?string $internalNote = null): TechnicianAssignmentResult
-    {
-        $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
-        $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
-        $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
+    public function assign(
+    string $bookingItemUuid,
+    string $technicianUuid,
+    string $assignedByUserUuid,
+    ?string $internalNote = null
+): TechnicianAssignmentResult {
+    $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
+    $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
+    $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
 
-        try {
-            return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $internalNote): TechnicianAssignmentResult {
-                $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
+    try {
+        $result = DB::transaction(function () use (
+            $itemIdBinary,
+            $technicianIdBinary,
+            $actorIdBinary,
+            $internalNote
+        ): TechnicianAssignmentResult {
+            $item = DB::table('booking_items')
+                ->where('id', $itemIdBinary)
+                ->lockForUpdate()
+                ->first();
 
-                if ($item === null) {
-                    return new TechnicianAssignmentResult(TechnicianAssignmentOutcome::ITEM_NOT_FOUND);
-                }
+            if ($item === null) {
+                return new TechnicianAssignmentResult(
+                    TechnicianAssignmentOutcome::ITEM_NOT_FOUND
+                );
+            }
 
-                $itemStatusCode = BookingItemStatuses::code((int) $item->status_id);
+            $itemStatusCode = BookingItemStatuses::code((int) $item->status_id);
 
-                if (in_array($itemStatusCode, ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'], true)) {
-                    return new TechnicianAssignmentResult(TechnicianAssignmentOutcome::ITEM_NOT_ELIGIBLE, itemStatusFrom: $itemStatusCode);
-                }
+            if (in_array(
+                $itemStatusCode,
+                ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+                true
+            )) {
+                return new TechnicianAssignmentResult(
+                    TechnicianAssignmentOutcome::ITEM_NOT_ELIGIBLE,
+                    itemStatusFrom: $itemStatusCode
+                );
+            }
 
-                if ($itemStatusCode === 'ASSIGNED') {
-                    $active = $this->activePrimaryAssignment($itemIdBinary);
+            if ($itemStatusCode === 'ASSIGNED') {
+                $active = $this->activePrimaryAssignment($itemIdBinary);
 
-                    if ($active !== null && $active->technician_id === $technicianIdBinary) {
-                        return new TechnicianAssignmentResult(
-                            TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
-                            UuidBinary::toString($active->id),
-                            UuidBinary::toString($itemIdBinary),
-                            UuidBinary::toString($technicianIdBinary),
-                        );
-                    }
-
+                if (
+                    $active !== null &&
+                    $active->technician_id === $technicianIdBinary
+                ) {
                     return new TechnicianAssignmentResult(
-                        TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN,
-                        previousTechnicianUuid: $active === null ? null : UuidBinary::toString($active->technician_id),
+                        TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
+                        UuidBinary::toString($active->id),
+                        UuidBinary::toString($itemIdBinary),
+                        UuidBinary::toString($technicianIdBinary),
                     );
                 }
 
-                // Only PENDING_ASSIGNMENT reaches here.
-                $eligibility = $this->validateEligibility($item, $technicianIdBinary, $actorIdBinary);
-
-                if ($eligibility instanceof TechnicianAssignmentResult) {
-                    return $eligibility;
-                }
-
-                [$specializationId] = $eligibility;
-
-                $assignmentUuid = $this->writeAssignment($itemIdBinary, $technicianIdBinary, $actorIdBinary, $specializationId, $internalNote);
-
-                $this->itemLifecycle->assign(UuidBinary::toString($itemIdBinary));
-
                 return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ASSIGNED,
-                    $assignmentUuid,
-                    UuidBinary::toString($itemIdBinary),
-                    UuidBinary::toString($technicianIdBinary),
-                    itemStatusFrom: 'PENDING_ASSIGNMENT',
-                    itemStatusTo: 'ASSIGNED',
+                    TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN,
+                    previousTechnicianUuid: $active === null
+                        ? null
+                        : UuidBinary::toString($active->technician_id),
                 );
-            });
-        } catch (UniqueConstraintViolationException) {
-            return $this->resolveAssignmentRace($itemIdBinary, $technicianIdBinary);
-        }
+            }
+
+            $eligibility = $this->validateEligibility(
+                $item,
+                $technicianIdBinary,
+                $actorIdBinary
+            );
+
+            if ($eligibility instanceof TechnicianAssignmentResult) {
+                return $eligibility;
+            }
+
+            [$specializationId] = $eligibility;
+
+            $assignmentUuid = $this->writeAssignment(
+                $itemIdBinary,
+                $technicianIdBinary,
+                $actorIdBinary,
+                $specializationId,
+                $internalNote
+            );
+
+            $this->itemLifecycle->assign(
+                UuidBinary::toString($itemIdBinary)
+            );
+
+            return new TechnicianAssignmentResult(
+                TechnicianAssignmentOutcome::ASSIGNED,
+                $assignmentUuid,
+                UuidBinary::toString($itemIdBinary),
+                UuidBinary::toString($technicianIdBinary),
+                itemStatusFrom: 'PENDING_ASSIGNMENT',
+                itemStatusTo: 'ASSIGNED',
+            );
+        });
+    } catch (UniqueConstraintViolationException) {
+        $result = $this->resolveAssignmentRace(
+            $itemIdBinary,
+            $technicianIdBinary
+        );
     }
+
+    /*
+     * بعد انتهاء transaction الخاصة بالـ Booking Item،
+     * نحدّث حالة الـ Booking الأب تلقائيًا.
+     *
+     * مثال:
+     * Booking = PAID
+     * Item = ASSIGNED
+     *
+     * يصبح:
+     * Booking = ASSIGNED
+     */
+    if (in_array($result->outcome, [
+        TechnicianAssignmentOutcome::ASSIGNED,
+        TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
+    ], true)) {
+        $this->bookingLifecycleSync->syncForItem($bookingItemUuid);
+    }
+
+    return $result;
+}
 
     /**
      * Replaces the current active primary Technician on a Booking Item that

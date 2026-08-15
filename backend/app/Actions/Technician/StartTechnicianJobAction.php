@@ -3,6 +3,7 @@
 namespace App\Actions\Technician;
 
 use App\Actions\Booking\TransitionBookingItemStatusAction;
+use App\Actions\Booking\SyncBookingStatusFromItemsAction;
 use App\Actions\Technician\Concerns\TechnicianJobPreconditions;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Technician\TechnicianJobOutcome;
@@ -56,8 +57,9 @@ class StartTechnicianJobAction
     use TechnicianJobPreconditions;
 
     public function __construct(
-        private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
-    ) {}
+    private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
+    private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
+) {}
 
     /**
      * Moves a Booking Item ASSIGNED -> IN_PROGRESS on behalf of its current
@@ -80,7 +82,7 @@ class StartTechnicianJobAction
         $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
         $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
 
-        return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
+        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
@@ -133,5 +135,13 @@ class StartTechnicianJobAction
                 $transition->toStatus,
             );
         });
+if (in_array($result->outcome, [
+    TechnicianJobOutcome::STARTED,
+    TechnicianJobOutcome::ALREADY_STARTED,
+], true)) {
+    $this->bookingLifecycleSync->syncForItem($bookingItemUuid);
+}
+
+return $result;
     }
 }

@@ -7,6 +7,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Admin\Concerns\CreatesAdminFixtures;
 use Tests\TestCase;
+use Illuminate\Support\Str;
 
 class AdminJobExecutionTest extends TestCase
 {
@@ -19,6 +20,85 @@ class AdminJobExecutionTest extends TestCase
         $this->setUpCheckoutFixtures();
     }
 
+    private function bookingWithTwoAssignableItems(): array
+    {
+        $specializationId = $this->createSpecialization();
+
+        $serviceOne = $this->createPricedCartService();
+        $serviceTwo = $this->createPricedCartService();
+
+        $this->linkServiceSpecialization(
+            $serviceOne['uuid'],
+            $specializationId
+        );
+
+        $this->linkServiceSpecialization(
+            $serviceTwo['uuid'],
+            $specializationId
+        );
+
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->addCartItem($customer['access_token'], [
+            'service_uuid' => $serviceOne['uuid'],
+            'quantity' => 1,
+        ])->assertStatus(201);
+
+        $this->addCartItem($customer['access_token'], [
+            'service_uuid' => $serviceTwo['uuid'],
+            'quantity' => 1,
+        ])->assertStatus(201);
+
+        [$areaId] = $this->twoDistinctAreaIds();
+
+        $this->saveCheckoutLocation(
+            $customer['access_token'],
+            $this->locationPayload($areaId)
+        )->assertStatus(200);
+
+        $slot = $this->createAppointmentSlot();
+
+        $this->createAppointmentHold(
+            $customer['access_token'],
+            $slot['uuid']
+        )->assertStatus(201);
+
+        $createResponse = $this->createPayment(
+            $customer['access_token'],
+            (string) Str::uuid()
+        );
+
+        $paymentRow = $this->paymentRow(
+            $createResponse->json('data.payment.uuid')
+        );
+
+        $this->postWebhook($this->fakeWebhookPayload([
+            'provider_session_reference' => $paymentRow->provider_session_reference,
+            'outcome' => 'SUCCEEDED',
+            'amount' => $paymentRow->requested_amount,
+        ]));
+
+        $payment = $this->paymentRow(
+            UuidBinary::toString($paymentRow->id)
+        );
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $items = DB::table('booking_items')
+            ->where('booking_id', $booking->id)
+            ->orderBy('id')
+            ->get();
+
+        $this->assertCount(2, $items);
+
+        return [
+            'customer' => $customer,
+            'booking' => $booking,
+            'items' => $items,
+            'specialization_id' => $specializationId,
+        ];
+    }
+
     private function startUrl(object $item): string
     {
         return '/api/v1/admin/booking-items/'.UuidBinary::toString($item->id).'/start-work';
@@ -28,6 +108,21 @@ class AdminJobExecutionTest extends TestCase
     {
         return '/api/v1/admin/booking-items/'.UuidBinary::toString($item->id).'/complete-work';
     }
+
+    private function bookingStatusForItem(object $item): string
+{
+    $bookingId = DB::table('booking_items')
+        ->where('id', $item->id)
+        ->value('booking_id');
+
+    $statusId = DB::table('bookings')
+        ->where('id', $bookingId)
+        ->value('status_id');
+
+    return (string) DB::table('booking_statuses')
+        ->where('id', $statusId)
+        ->value('code');
+}
 
     /**
      * @return array{fixture: array, technician: array{uuid: string, specialization_id: int}, admin: array{user_uuid: string, access_token: string}}
@@ -212,4 +307,225 @@ class AdminJobExecutionTest extends TestCase
             'technician_uuid' => $technician,
         ], $this->bearer($admin['access_token']))->assertStatus(404);
     }
+    public function test_parent_booking_status_follows_item_lifecycle(): void
+{
+    ['fixture' => $fixture, 'technician' => $technician, 'admin' => $admin] = $this->assignedItem();
+
+    // بعد تعيين الفني:
+    // Booking: PAID -> ASSIGNED
+    $this->assertSame(
+        'ASSIGNED',
+        $this->bookingStatusForItem($fixture['item'])
+    );
+
+    // يبدأ الفني العمل:
+    // Booking: ASSIGNED -> IN_PROGRESS
+    $this->postJson(
+        $this->startUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        'IN_PROGRESS',
+        $this->bookingStatusForItem($fixture['item'])
+    );
+
+    // تنتهي الخدمة:
+    // وبما أن الحجز هنا يحتوي على Item واحد:
+    // Booking: IN_PROGRESS -> COMPLETED
+    $this->postJson(
+        $this->completeUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        'COMPLETED',
+        $this->bookingStatusForItem($fixture['item'])
+    );
+}
+public function test_parent_booking_completes_only_after_all_items_are_completed(): void
+{
+    $admin = $this->createAndLoginAdmin(['ADMIN']);
+
+    $fixture = $this->bookingWithTwoAssignableItems();
+
+    $technician = $this->createEligibleTechnician(
+        $fixture['specialization_id']
+    );
+
+    $itemOne = $fixture['items'][0];
+    $itemTwo = $fixture['items'][1];
+
+    /*
+     * Assign the same technician to both items.
+     * Same Booking, so this is allowed.
+     */
+    foreach ([$itemOne, $itemTwo] as $item) {
+        $this->postJson(
+            '/api/v1/admin/booking-items/'.
+            UuidBinary::toString($item->id).
+            '/assign-technician',
+            [
+                'technician_uuid' => $technician['uuid'],
+            ],
+            $this->bearer($admin['access_token'])
+        )->assertStatus(201);
+    }
+
+    // Parent Booking must now be ASSIGNED.
+    $booking = DB::table('bookings')
+        ->where('id', $fixture['booking']->id)
+        ->first();
+
+    $this->assertSame(
+        'ASSIGNED',
+        DB::table('booking_statuses')
+            ->where('id', $booking->status_id)
+            ->value('code')
+    );
+
+    /*
+     * Start Item 1.
+     * Parent becomes IN_PROGRESS.
+     */
+    $this->postJson(
+        $this->startUrl($itemOne),
+        [
+            'technician_uuid' => $technician['uuid'],
+        ],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        'IN_PROGRESS',
+        $this->bookingStatusForItem($itemOne)
+    );
+
+    /*
+     * Complete Item 1 only.
+     *
+     * Item 2 is still ASSIGNED,
+     * therefore parent Booking MUST remain IN_PROGRESS.
+     */
+    $this->postJson(
+        $this->completeUrl($itemOne),
+        [
+            'technician_uuid' => $technician['uuid'],
+        ],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        'IN_PROGRESS',
+        $this->bookingStatusForItem($itemOne)
+    );
+
+    /*
+     * Start and complete Item 2.
+     */
+    $this->postJson(
+        $this->startUrl($itemTwo),
+        [
+            'technician_uuid' => $technician['uuid'],
+        ],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->postJson(
+        $this->completeUrl($itemTwo),
+        [
+            'technician_uuid' => $technician['uuid'],
+        ],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    /*
+     * NOW every Booking Item is COMPLETED,
+     * so the parent Booking must also be COMPLETED.
+     */
+    $this->assertSame(
+        'COMPLETED',
+        $this->bookingStatusForItem($itemTwo)
+    );
+}
+public function test_parent_booking_history_is_not_duplicated_by_retries(): void
+{
+    ['fixture' => $fixture, 'technician' => $technician, 'admin' => $admin] = $this->assignedItem();
+
+    $bookingId = $fixture['booking']->id;
+
+    $afterAssign = DB::table('booking_status_history')
+        ->where('booking_id', $bookingId)
+        ->count();
+
+    // Retry assignment.
+    $this->postJson(
+        '/api/v1/admin/booking-items/'.
+        UuidBinary::toString($fixture['item']->id).
+        '/assign-technician',
+        [
+            'technician_uuid' => $technician['uuid'],
+        ],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        $afterAssign,
+        DB::table('booking_status_history')
+            ->where('booking_id', $bookingId)
+            ->count()
+    );
+
+    // First real start.
+    $this->postJson(
+        $this->startUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $afterStart = DB::table('booking_status_history')
+        ->where('booking_id', $bookingId)
+        ->count();
+
+    // Retry start.
+    $this->postJson(
+        $this->startUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        $afterStart,
+        DB::table('booking_status_history')
+            ->where('booking_id', $bookingId)
+            ->count()
+    );
+
+    // First real completion.
+    $this->postJson(
+        $this->completeUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $afterComplete = DB::table('booking_status_history')
+        ->where('booking_id', $bookingId)
+        ->count();
+
+    // Retry completion.
+    $this->postJson(
+        $this->completeUrl($fixture['item']),
+        ['technician_uuid' => $technician['uuid']],
+        $this->bearer($admin['access_token'])
+    )->assertStatus(200);
+
+    $this->assertSame(
+        $afterComplete,
+        DB::table('booking_status_history')
+            ->where('booking_id', $bookingId)
+            ->count()
+    );
+}
 }
