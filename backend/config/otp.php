@@ -27,6 +27,6 @@ return [
     |
     */
 
-    'delivery_driver' => env('OTP_DELIVERY_DRIVER', 'null'),
+    'delivery_driver' => env('OTP_DELIVERY_DRIVER') ?? 'null',
 
 ];
