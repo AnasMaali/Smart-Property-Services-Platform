@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\V1\ServiceCatalog\ListCategoryServicesController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 
 Route::post('/v1/auth/register', RegisterController::class);
 Route::post('/v1/auth/verify-phone', VerifyPhoneController::class);
@@ -86,6 +87,7 @@ Route::middleware('auth.customer')->group(function () {
 
     Route::get('/v1/bookings', ListBookingsController::class);
     Route::get('/v1/bookings/{booking}', GetBookingController::class);
+    Route::post('/v1/bookings/{booking}/cancel', CancelBookingController::class);
 });
 
 // Deliberately outside the auth.customer group - the caller is the payment

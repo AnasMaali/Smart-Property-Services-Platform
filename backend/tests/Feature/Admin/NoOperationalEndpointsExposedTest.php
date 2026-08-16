@@ -11,9 +11,16 @@ use Tests\TestCase;
  * security boundary. Phase 9B now exposes the actual Admin Operations
  * surface behind it (see docs/api-contracts/admin-operations-v1.md) - this
  * test was updated in lockstep with that route list. It still guards
- * against anything Phase 9B explicitly did NOT build: Booking cancellation/
- * refund, a generic status-setter endpoint, and any route not gated by
- * `auth.admin`.
+ * against anything Phase 9B explicitly did NOT build: Admin Booking
+ * cancellation/refund, a generic status-setter endpoint, and any route not
+ * gated by `auth.admin`.
+ *
+ * A later phase added customer-facing Booking cancellation
+ * (api/v1/bookings/{booking}/cancel). That single, explicitly named route
+ * is carved out below - it is NOT an Admin operational route (see
+ * CancelBookingController), never touches Stripe, and refund execution
+ * stays MANUAL. Every other `cancel`/`refund` route - Admin ones in
+ * particular - remains forbidden unless explicitly added here.
  */
 class NoOperationalEndpointsExposedTest extends TestCase
 {
@@ -25,12 +32,20 @@ class NoOperationalEndpointsExposedTest extends TestCase
         'reprice',
     ];
 
+    private const ALLOWED_URI_EXCEPTIONS = [
+        'api/v1/bookings/{booking}/cancel',
+    ];
+
     public function test_no_out_of_scope_operational_routes_are_registered(): void
     {
         $matches = [];
 
         foreach (Route::getRoutes() as $route) {
             $uri = strtolower($route->uri());
+
+            if (in_array($uri, self::ALLOWED_URI_EXCEPTIONS, true)) {
+                continue;
+            }
 
             foreach (self::FORBIDDEN_URI_FRAGMENTS as $fragment) {
                 if (str_contains($uri, $fragment)) {
