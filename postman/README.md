@@ -53,6 +53,29 @@ customer who already has a Booking (produced by the automated test suite, or by 
 webhook delivery in an environment with Stripe configured) to see a populated response. `booking_uuid`
 is captured automatically by List Bookings' test script when the customer has at least one Booking.
 
+## Properties collection
+
+`BLUE-V1-Properties.postman_collection.json` covers the Phase 10A Customer Properties endpoints
+(companion to `docs/api-contracts/properties-v1.md`): List Properties, Create Property, Get
+Property, Update Property, Archive Property. Import it alongside the Booking collection and the
+same `BLUE V1 Local` environment. `property_uuid` is captured automatically by Create Property's
+test script; `property_relationship_type_id`, `property_type_id`, and `area_id` in the request body
+use placeholder IDs and should be adjusted to match your local reference data, exactly like the
+Registration collection's placeholders.
+
+## Service Contracts collection
+
+`BLUE-V1-Contracts.postman_collection.json` covers the Phase 10B/10C/10D/10E/10F Service Contract
+endpoints, customer and admin, in two folders (companion to `docs/api-contracts/contracts-v1.md`).
+Import it alongside the Properties collection, an Admin Authentication login (for
+`admin_access_token`), and the same `BLUE V1 Local` environment. `contract_service_uuid` must be set
+manually to a real, active, `SUBSCRIPTION`-eligible service uuid (see
+`docs/api-contracts/contracts-v1.md` "CONTRACT eligibility") - it is not provided by the environment
+file, the same way Cart's `service_uuid` is not. Recommended order: Customer → Request Contract,
+Admin → Approve Contract (captures `contract_item_uuid`), Admin → Send For Acceptance, Customer →
+Accept Contract, Customer → Book Contract Service (needs `appointment_slot_uuid` from the Checkout
+collection's List Appointment Slots).
+
 ## 1. Start the backend
 
 ```

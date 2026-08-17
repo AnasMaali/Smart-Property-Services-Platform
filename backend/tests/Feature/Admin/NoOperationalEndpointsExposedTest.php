@@ -21,6 +21,13 @@ use Tests\TestCase;
  * CancelBookingController), never touches Stripe, and refund execution
  * stays MANUAL. Every other `cancel`/`refund` route - Admin ones in
  * particular - remains forbidden unless explicitly added here.
+ *
+ * BLUE V1 Phase 10E added exactly one Admin `cancel` route:
+ * api/v1/admin/contracts/{contract}/cancel. This is Service Contract
+ * lifecycle cancellation (App\Actions\Admin\Contract\AdminCancelContractAction)
+ * - it never touches a Booking, Payment, or refund; it only stops a Contract
+ * from authorizing further CONTRACT Bookings. It is carved out below for
+ * that reason, the same way the customer Booking-cancel route already was.
  */
 class NoOperationalEndpointsExposedTest extends TestCase
 {
@@ -34,6 +41,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
 
     private const ALLOWED_URI_EXCEPTIONS = [
         'api/v1/bookings/{booking}/cancel',
+        'api/v1/admin/contracts/{contract}/cancel',
     ];
 
     public function test_no_out_of_scope_operational_routes_are_registered(): void
@@ -91,6 +99,12 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
+            'api/v1/admin/contracts',
+            'api/v1/admin/contracts/{contract}',
+            'api/v1/admin/contracts/{contract}/approve',
+            'api/v1/admin/contracts/{contract}/cancel',
+            'api/v1/admin/contracts/{contract}/send-for-acceptance',
+            'api/v1/admin/contracts/{contract}/suspend',
             'api/v1/admin/me',
             'api/v1/admin/technicians',
         ], $adminUris);
@@ -107,6 +121,12 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/booking-items/{bookingItem}/reassign-technician',
             'api/v1/admin/booking-items/{bookingItem}/start-work',
             'api/v1/admin/booking-items/{bookingItem}/complete-work',
+            'api/v1/admin/contracts',
+            'api/v1/admin/contracts/{contract}',
+            'api/v1/admin/contracts/{contract}/approve',
+            'api/v1/admin/contracts/{contract}/cancel',
+            'api/v1/admin/contracts/{contract}/send-for-acceptance',
+            'api/v1/admin/contracts/{contract}/suspend',
         ];
 
         foreach (Route::getRoutes() as $route) {

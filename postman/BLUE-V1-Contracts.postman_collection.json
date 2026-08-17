@@ -1,0 +1,214 @@
+{
+  "info": {
+    "_postman_id": "1d6a7b3e-2f9c-4e5a-8b1d-3c7e9f4a2b56",
+    "name": "BLUE V1 - Service Contracts",
+    "description": "BLUE V1 Phase 10B/10C/10D/10E/10F Service Contract endpoints (customer + admin), generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Contract, backend/app/Http/Controllers/Api/V1/Admin/Contract, backend/app/Actions/Contract, backend/app/Actions/Admin/Contract, and verified against backend/tests/Feature/Contract/* and backend/tests/Feature/Admin/AdminContractTest.php. See docs/api-contracts/contracts-v1.md for the full written contract.\n\nTypical end-to-end flow: Customer Request Contract -> Admin Approve Contract -> Admin Send For Acceptance -> Customer Accept Contract -> Customer Book Contract Service. Run the Properties collection first to obtain a property_uuid, and the Admin Authentication collection to obtain admin_access_token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Customer",
+      "item": [
+        {
+          "name": "Request Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"property_uuid\": \"{{property_uuid}}\",\n  \"all_services\": false,\n  \"service_uuids\": [\"{{contract_service_uuid}}\"],\n  \"desired_start_date\": null,\n  \"customer_note\": null\n}"
+            },
+            "url": { "raw": "{{base_url}}/contracts/requests", "host": ["{{base_url}}"], "path": ["contracts", "requests"] },
+            "description": "Creates a REQUESTED Service Contract. The customer never chooses status, entitlement quantities, price, or contract number. Set all_services to true and omit service_uuids to request every currently SUBSCRIPTION-eligible service."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.contract) { pm.environment.set('contract_uuid', json.data.contract.uuid); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List My Contracts",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/contracts", "host": ["{{base_url}}"], "path": ["contracts"] },
+            "description": "Every Service Contract belonging to the authenticated customer, newest first."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Get My Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/contracts/{{contract_uuid}}", "host": ["{{base_url}}"], "path": ["contracts", "{{contract_uuid}}"] },
+            "description": "Full detail: term, covered services with used/remaining visits, acceptance info, and every CONTRACT Booking created against it."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Accept Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/contracts/{{contract_uuid}}/accept", "host": ["{{base_url}}"], "path": ["contracts", "{{contract_uuid}}", "accept"] },
+            "description": "Only works for the owning customer, only from PENDING_CUSTOMER_ACCEPTANCE. Idempotent. Transitions to ACTIVE."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Book Contract Service",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"appointment_slot_uuid\": \"{{appointment_slot_uuid}}\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/contracts/{{contract_uuid}}/services/{{contract_item_uuid}}/book",
+              "host": ["{{base_url}}"],
+              "path": ["contracts", "{{contract_uuid}}", "services", "{{contract_item_uuid}}", "book"]
+            },
+            "description": "Consumes one entitlement unit into a real Booking - no new customer PaymentAttempt is created. Only succeeds when the Contract is ACTIVE, within term, the item belongs to this contract, the entitlement is not exhausted, and the slot has remaining capacity."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.booking) { pm.environment.set('booking_uuid', json.data.booking.uuid); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "List Contracts",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/contracts?status=REQUESTED&page=1&per_page=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "contracts"],
+              "query": [
+                { "key": "status", "value": "REQUESTED" },
+                { "key": "page", "value": "1" },
+                { "key": "per_page", "value": "20" }
+              ]
+            },
+            "description": "Paginated Admin listing, filterable by status, contract_number, customer_uuid."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Get Contract (Admin)",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/admin/contracts/{{contract_uuid}}", "host": ["{{base_url}}"], "path": ["admin", "contracts", "{{contract_uuid}}"] },
+            "description": "Full operational detail: customer identity, internal note, requested-service snapshot, status history."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Approve Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"starts_at\": \"2026-09-01T00:00:00Z\",\n  \"ends_at\": \"2027-09-01T00:00:00Z\",\n  \"term_months\": 12,\n  \"services\": [\n    { \"service_uuid\": \"{{contract_service_uuid}}\", \"entitlement_mode\": \"LIMITED_VISITS\", \"included_visits\": 4 }\n  ],\n  \"quoted_amount\": \"1200.000000\",\n  \"currency_code\": \"AED\",\n  \"internal_note\": null\n}"
+            },
+            "url": { "raw": "{{base_url}}/admin/contracts/{{contract_uuid}}/approve", "host": ["{{base_url}}"], "path": ["admin", "contracts", "{{contract_uuid}}", "approve"] },
+            "description": "REQUESTED -> APPROVED. The one place service_contract_items rows are ever created - the Admin always explicitly lists every covered service and its entitlement terms, even for an 'all services' request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.contract && json.data.contract.covered_services && json.data.contract.covered_services.length > 0) {",
+                  "    pm.environment.set('contract_item_uuid', json.data.contract.covered_services[0].contract_item_uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Send For Acceptance",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/admin/contracts/{{contract_uuid}}/send-for-acceptance", "host": ["{{base_url}}"], "path": ["admin", "contracts", "{{contract_uuid}}", "send-for-acceptance"] },
+            "description": "APPROVED -> PENDING_CUSTOMER_ACCEPTANCE."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Suspend Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Customer requested a pause.\"\n}" },
+            "url": { "raw": "{{base_url}}/admin/contracts/{{contract_uuid}}/suspend", "host": ["{{base_url}}"], "path": ["admin", "contracts", "{{contract_uuid}}", "suspend"] },
+            "description": "ACTIVE -> SUSPENDED. A suspended Contract does not authorize new CONTRACT Bookings but is not cancelled."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Cancel Contract",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Customer cancelled.\"\n}" },
+            "url": { "raw": "{{base_url}}/admin/contracts/{{contract_uuid}}/cancel", "host": ["{{base_url}}"], "path": ["admin", "contracts", "{{contract_uuid}}", "cancel"] },
+            "description": "Any non-terminal status -> CANCELLED. Idempotent."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

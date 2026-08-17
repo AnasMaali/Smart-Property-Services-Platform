@@ -5,6 +5,7 @@ namespace Tests\Feature\Booking;
 use App\Actions\Booking\CreateBookingFromSuccessfulPaymentAction;
 use App\Console\Commands\ConvertSuccessfulPaymentsToBookings;
 use App\Support\Booking\BookingConversionOutcome;
+use App\Support\Booking\BookingSources;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -198,6 +199,7 @@ class BookingConversionTest extends TestCase
             'booking_number' => 'BLU-TESTDUPE01',
             'cart_id' => $payment->cart_id,
             'payment_attempt_id' => $payment->id,
+            'booking_source_id' => BookingSources::id('STANDARD'),
             'appointment_slot_id' => DB::table('appointment_holds')->where('id', $payment->appointment_hold_id)->value('appointment_slot_id'),
             'status_id' => DB::table('booking_statuses')->where('code', 'PAID')->value('id'),
             'status_changed_at' => $timestamp,

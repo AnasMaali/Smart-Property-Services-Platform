@@ -418,3 +418,20 @@ silently clamped). Neither endpoint can return an unbounded result set in one re
   `bookings-v1.md`; unaffected by this phase.
 - **Completion evidence** (photos/signatures/reports) — no schema support (`bookings-v1.md`
   "Completion Evidence"). **CAN WAIT**.
+
+## Admin Service Contract management (BLUE V1 Phase 10E)
+
+`GET /v1/admin/contracts`, `GET /v1/admin/contracts/{contract}`,
+`POST /v1/admin/contracts/{contract}/approve`, `POST /v1/admin/contracts/{contract}/send-for-acceptance`,
+`POST /v1/admin/contracts/{contract}/suspend`, `POST /v1/admin/contracts/{contract}/cancel` are
+documented in full in `docs/api-contracts/contracts-v1.md` (request/response shapes, the Contract
+state machine, idempotency, and audit logging) rather than duplicated here. They follow every
+convention this document already established: `auth.admin`-gated, thin Controller → Action →
+`AdminContractPresenter` transport with no business logic re-implemented at the route layer, and
+`AdminAuditLogger::record()` called exactly once per real state transition (never for an idempotent
+no-op), mirroring `AdminAssignTechnicianAction`'s pattern precisely.
+
+`App\Http\Controllers\Api\V1\Admin\Contract\*` and `App\Actions\Admin\Contract\*` never touch a
+`bookings`, `payment_attempts`, or `technician_assignments` row directly — Contract lifecycle
+management is fully independent of Booking/Payment/Technician management, the same separation this
+document already keeps between Booking reads and Technician operations.

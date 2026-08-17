@@ -787,3 +787,48 @@ arrival/check-in, completion evidence (photos/signatures/service reports), autom
 status aggregation from Booking Item statuses, automatic Technician `AVAILABLE`/`BUSY` toggling,
 reviews, and refund execution — no route, Action, Controller, or schema column for any of them
 exists yet.
+
+## Booking source: STANDARD vs CONTRACT (BLUE V1 Phase 10F)
+
+`bookings.booking_source_id` (a lookup, `booking_sources.code` — `STANDARD` or `CONTRACT`) records
+how a Booking came to exist, on top of everything documented above, which describes the STANDARD
+path unchanged.
+
+**STANDARD** — the flow this whole document describes: a Booking created from a `SUCCESSFUL`
+`payment_attempts` row by `CreateBookingFromSuccessfulPaymentAction`. `payment_attempt_id` remains
+required for this source (enforced by `chk_bookings_source_pairing`); `service_contract_id` /
+`service_contract_item_id` are `NULL`. Nothing about this path changed in Phase 10 — it now simply
+also writes `booking_source_id = STANDARD` explicitly.
+
+**CONTRACT** — a Booking created by `App\Actions\Contract\CreateContractBookingAction` when a
+customer consumes an active Service Contract entitlement (`docs/api-contracts/contracts-v1.md`).
+`payment_attempt_id` is `NULL` — **no customer PaymentAttempt is ever created**, and none is faked
+as a zero-value row either; `service_contract_id` and `service_contract_item_id` are both required
+instead. There is no separate job system: this Action still creates a real `carts` + `cart_items` +
+`appointment_holds` row (the exact same capacity-protected slot-holding mechanism
+`CreateAppointmentHoldAction` uses for a normal checkout), immediately "converted" since there is no
+payment step to wait for — the resulting `bookings` / `booking_items` rows are indistinguishable in
+shape from a STANDARD Booking to every downstream Action (technician assignment, start/complete
+work, `SyncBookingStatusFromItemsAction`, `CancelBookingAction`). The Booking Item's price is
+recorded as `0.000000` — not a fake payment, simply the true fact that no further amount is due for
+a visit already paid for by the Contract in advance.
+
+A CONTRACT Booking may only ever contain the one contract-covered service item it was created for —
+V1 never mixes a STANDARD paid item and a CONTRACT-covered item in the same Booking.
+
+### Cancellation
+
+`CancelBookingAction` branches on `service_contract_id !== null`: a CONTRACT Booking skips the
+payment/refund-eligibility calculation entirely (there is nothing to refund), and
+`cancellation_refund_percentage`/`cancellation_refund_amount` stay permanently `NULL` — the
+`refund_due` field in the cancellation response and read APIs is simply `null`. Every other part of
+cancellation (parent + item transition, technician-assignment release, idempotency) is byte-for-byte
+identical to the STANDARD path. Cancelling a CONTRACT Booking also automatically and permanently
+frees the Contract entitlement it consumed — see `docs/api-contracts/contracts-v1.md` "Entitlements".
+
+### Read API additions
+
+Both `BookingPresenter` (customer) and `AdminBookingPresenter` (admin) now include a `source` field
+and, when CONTRACT-sourced, a `contract` object (`contract_uuid`, `contract_number`,
+`contract_item_uuid`) — purely additive; every STANDARD Booking's existing response shape is
+unchanged.

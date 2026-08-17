@@ -63,8 +63,9 @@ final class AdminBookingPresenter
             ->keyBy(fn ($row) => $row->id);
 
         $statuses = DB::table('booking_statuses')->get(['id', 'code'])->keyBy('id');
+        $sources = DB::table('booking_sources')->get(['id', 'code'])->keyBy('id');
 
-        return $rows->map(function (object $row) use ($aggregates, $customers, $currencies, $statuses): array {
+        return $rows->map(function (object $row) use ($aggregates, $customers, $currencies, $statuses, $sources): array {
             $customer = $customers->get($row->customer_user_id);
             $currency = $currencies->get($row->cart_currency_id);
             $aggregate = $aggregates->get($row->id);
@@ -73,6 +74,7 @@ final class AdminBookingPresenter
                 'uuid' => UuidBinary::toString($row->id),
                 'booking_number' => $row->booking_number,
                 'status' => $statuses->get($row->status_id)?->code,
+                'source' => $sources->get($row->booking_source_id)?->code,
                 'customer' => $customer === null ? null : [
                     'uuid' => UuidBinary::toString($customer->id),
                     'full_name' => $customer->full_name,
@@ -106,6 +108,11 @@ final class AdminBookingPresenter
     {
         $statusCode = DB::table('booking_statuses')->where('id', $row->status_id)->value('code');
         $currency = DB::table('currencies')->where('id', $row->cart_currency_id)->first(['code', 'symbol', 'minor_unit']);
+        $sourceCode = DB::table('booking_sources')->where('id', $row->booking_source_id)->value('code');
+
+        $contract = $row->service_contract_id === null ? null : DB::table('service_contracts')
+            ->where('id', $row->service_contract_id)
+            ->first(['id', 'contract_number']);
 
         $customer = DB::table('users')
             ->join('user_profiles', 'user_profiles.user_id', '=', 'users.id')
@@ -175,6 +182,12 @@ final class AdminBookingPresenter
             'uuid' => UuidBinary::toString($row->id),
             'booking_number' => $row->booking_number,
             'status' => $statusCode,
+            'source' => $sourceCode,
+            'contract' => $contract === null ? null : [
+                'contract_uuid' => UuidBinary::toString($contract->id),
+                'contract_number' => $contract->contract_number,
+                'contract_item_uuid' => UuidBinary::toString($row->service_contract_item_id),
+            ],
             'customer' => $customer === null ? null : [
                 'uuid' => UuidBinary::toString($customer->id),
                 'full_name' => $customer->full_name,

@@ -1,0 +1,130 @@
+{
+  "info": {
+    "_postman_id": "8f1a2c6e-4b3d-4a1e-9c7f-6d2b8e5a1f34",
+    "name": "BLUE V1 - Properties",
+    "description": "BLUE V1 Phase 10A Customer Properties endpoints, generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Property, backend/app/Actions/Property, and verified against backend/tests/Feature/Property/PropertyTest.php. See docs/api-contracts/properties-v1.md for the full written contract.\n\nRun the Authentication collection first to obtain access_token. Every request here is auth.customer-gated and ownership-scoped to the authenticated customer.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Properties",
+      "item": [
+        {
+          "name": "List Properties",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/properties?status=active",
+              "host": ["{{base_url}}"],
+              "path": ["properties"],
+              "query": [{ "key": "status", "value": "active" }]
+            },
+            "description": "Every Property belonging to the authenticated customer, newest first. status=active (default), archived, or all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create Property",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"My Apartment\",\n  \"property_relationship_type_id\": 1,\n  \"property_type_id\": 1,\n  \"other_property_type_name\": null,\n  \"area_id\": 1,\n  \"street_name\": \"Sheikh Zayed Road\",\n  \"address_line\": \"Building 4, near the mall\",\n  \"building_name_or_number\": \"Tower 4\",\n  \"floor_number\": \"12\",\n  \"unit_number\": \"1201\",\n  \"nearby_landmark\": \"Near the metro station\",\n  \"additional_location_notes\": null,\n  \"visit_contact_phone\": \"+971501234567\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/properties", "host": ["{{base_url}}"], "path": ["properties"] },
+            "description": "Creates a new saved Property owned by the authenticated customer. other_property_type_name is required only when property_type_id resolves to the OTHER code."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "if (json.data && json.data.property) { pm.environment.set('property_uuid', json.data.property.uuid); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get Property",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/properties/{{property_uuid}}", "host": ["{{base_url}}"], "path": ["properties", "{{property_uuid}}"] },
+            "description": "Property detail plus every Service Contract ever requested against it (lightweight summary only)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update Property",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"label\": \"Updated label\"\n}" },
+            "url": { "raw": "{{base_url}}/properties/{{property_uuid}}", "host": ["{{base_url}}"], "path": ["properties", "{{property_uuid}}"] },
+            "description": "Partial update. Every field is optional. Returns 409 if the Property is currently archived."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Archive Property",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/properties/{{property_uuid}}", "host": ["{{base_url}}"], "path": ["properties", "{{property_uuid}}"] },
+            "description": "Archives the Property (is_active = 0) - never a destructive delete. Idempotent."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

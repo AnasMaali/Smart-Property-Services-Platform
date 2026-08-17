@@ -10,6 +10,12 @@ use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
+use App\Http\Controllers\Api\V1\Admin\Contract\CancelContractController;
+use App\Http\Controllers\Api\V1\Admin\Contract\GetAdminContractController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ListAdminContractsController;
+use App\Http\Controllers\Api\V1\Admin\Contract\SendContractForAcceptanceController;
+use App\Http\Controllers\Api\V1\Admin\Contract\SuspendContractController;
 use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
@@ -37,11 +43,21 @@ use App\Http\Controllers\Api\V1\Checkout\GetAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Checkout\GetCheckoutController;
 use App\Http\Controllers\Api\V1\Checkout\ReleaseAppointmentHoldController;
 use App\Http\Controllers\Api\V1\Checkout\SaveCheckoutLocationController;
+use App\Http\Controllers\Api\V1\Contract\AcceptContractController;
+use App\Http\Controllers\Api\V1\Contract\CreateContractBookingController;
+use App\Http\Controllers\Api\V1\Contract\GetContractController;
+use App\Http\Controllers\Api\V1\Contract\ListContractsController;
+use App\Http\Controllers\Api\V1\Contract\RequestContractController;
 use App\Http\Controllers\Api\V1\Payment\CreatePaymentController;
 use App\Http\Controllers\Api\V1\Payment\GetPaymentController;
 use App\Http\Controllers\Api\V1\Payment\PaymentWebhookController;
 use App\Http\Controllers\Api\V1\Profile\GetProfileController;
 use App\Http\Controllers\Api\V1\Profile\UpdateProfileController;
+use App\Http\Controllers\Api\V1\Property\CreatePropertyController;
+use App\Http\Controllers\Api\V1\Property\DeletePropertyController;
+use App\Http\Controllers\Api\V1\Property\GetPropertyController;
+use App\Http\Controllers\Api\V1\Property\ListPropertiesController;
+use App\Http\Controllers\Api\V1\Property\UpdatePropertyController;
 use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\GetServiceDetailsController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListCategoryServicesController;
@@ -88,6 +104,23 @@ Route::middleware('auth.customer')->group(function () {
     Route::get('/v1/bookings', ListBookingsController::class);
     Route::get('/v1/bookings/{booking}', GetBookingController::class);
     Route::post('/v1/bookings/{booking}/cancel', CancelBookingController::class);
+
+    // BLUE V1 Phase 10A - Customer Properties.
+    Route::get('/v1/properties', ListPropertiesController::class);
+    Route::post('/v1/properties', CreatePropertyController::class);
+    Route::get('/v1/properties/{property}', GetPropertyController::class);
+    Route::patch('/v1/properties/{property}', UpdatePropertyController::class);
+    Route::delete('/v1/properties/{property}', DeletePropertyController::class);
+
+    // BLUE V1 Phase 10D - Customer Service Contracts. `requests` is a
+    // literal segment (never a {contract} uuid), matching the
+    // /v1/checkout/appointment-hold-style "specific action, not a
+    // resource id" naming already used elsewhere in this file.
+    Route::get('/v1/contracts', ListContractsController::class);
+    Route::post('/v1/contracts/requests', RequestContractController::class);
+    Route::get('/v1/contracts/{contract}', GetContractController::class);
+    Route::post('/v1/contracts/{contract}/accept', AcceptContractController::class);
+    Route::post('/v1/contracts/{contract}/services/{contractItem}/book', CreateContractBookingController::class);
 });
 
 // Deliberately outside the auth.customer group - the caller is the payment
@@ -131,6 +164,16 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/booking-items/{bookingItem}/reassign-technician', ReassignTechnicianController::class);
     Route::post('/v1/admin/booking-items/{bookingItem}/start-work', StartWorkController::class);
     Route::post('/v1/admin/booking-items/{bookingItem}/complete-work', CompleteWorkController::class);
+
+    // BLUE V1 Phase 10E - Admin Service Contract management. Never
+    // exposes customer-private/provider/payment internals - see
+    // App\Support\Admin\AdminContractPresenter.
+    Route::get('/v1/admin/contracts', ListAdminContractsController::class);
+    Route::get('/v1/admin/contracts/{contract}', GetAdminContractController::class);
+    Route::post('/v1/admin/contracts/{contract}/approve', ApproveContractController::class);
+    Route::post('/v1/admin/contracts/{contract}/send-for-acceptance', SendContractForAcceptanceController::class);
+    Route::post('/v1/admin/contracts/{contract}/suspend', SuspendContractController::class);
+    Route::post('/v1/admin/contracts/{contract}/cancel', CancelContractController::class);
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

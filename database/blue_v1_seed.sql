@@ -1857,6 +1857,122 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 30. BOOKING SOURCES
+-- Distinguishes a normal paid Booking from a Booking created by
+-- consuming an active Service Contract entitlement (BLUE V1
+-- Phase 10). STANDARD is inserted first so it is guaranteed to be
+-- id = 1, matching the smallest-safe-default convention already
+-- used for the first row of every other lookup table in this file.
+-- =============================================================
+
+INSERT INTO booking_sources (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'STANDARD',
+    'Standard',
+    'A Booking created from a successful customer Payment.',
+    1,
+    TRUE
+),
+(
+    'CONTRACT',
+    'Contract',
+    'A Booking created by consuming an active Service Contract entitlement, with no new customer Payment.',
+    2,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 31. SERVICE CONTRACT STATUSES
+-- Lifecycle of a long-term Service Contract (BLUE V1 Phase 10).
+-- =============================================================
+
+INSERT INTO service_contract_statuses (
+    code,
+    name,
+    description,
+    is_terminal,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'REQUESTED',
+    'Requested',
+    'The customer has requested a Service Contract; it is awaiting Admin review.',
+    FALSE,
+    1,
+    TRUE
+),
+(
+    'APPROVED',
+    'Approved',
+    'An Admin has finalized the term, covered Services and entitlements for this Contract.',
+    FALSE,
+    2,
+    TRUE
+),
+(
+    'PENDING_CUSTOMER_ACCEPTANCE',
+    'Pending Customer Acceptance',
+    'The finalized Contract has been sent to the customer and is awaiting their acceptance.',
+    FALSE,
+    3,
+    TRUE
+),
+(
+    'ACTIVE',
+    'Active',
+    'The customer has accepted the Contract and it is currently within its term.',
+    FALSE,
+    4,
+    TRUE
+),
+(
+    'SUSPENDED',
+    'Suspended',
+    'The Contract has been temporarily suspended by an Admin; it does not authorize new Bookings.',
+    FALSE,
+    5,
+    TRUE
+),
+(
+    'EXPIRED',
+    'Expired',
+    'The Contract term has ended.',
+    TRUE,
+    6,
+    TRUE
+),
+(
+    'CANCELLED',
+    'Cancelled',
+    'The Contract was cancelled by an Admin.',
+    TRUE,
+    7,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_terminal = new.is_terminal,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- COMPLETE SEED TRANSACTION
 -- =============================================================
 

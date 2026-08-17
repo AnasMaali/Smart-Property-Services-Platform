@@ -6,6 +6,7 @@ use App\Support\Booking\BookingConversionOutcome;
 use App\Support\Booking\BookingConversionResult;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Booking\BookingNumberGenerator;
+use App\Support\Booking\BookingSources;
 use App\Support\Booking\BookingStatuses;
 use App\Support\Cart\CartStatuses;
 use App\Support\Payment\CanonicalJson;
@@ -305,6 +306,7 @@ class CreateBookingFromSuccessfulPaymentAction
             'booking_number' => BookingNumberGenerator::generate(),
             'cart_id' => $attempt->cart_id,
             'payment_attempt_id' => $attempt->id,
+            'booking_source_id' => BookingSources::id('STANDARD'),
             'appointment_slot_id' => $hold->appointment_slot_id,
             'status_id' => $paidStatusId,
             'status_changed_at' => $timestamp,

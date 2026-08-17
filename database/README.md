@@ -7,7 +7,7 @@ This directory contains the MySQL database schema for the BLUE property-services
 - Database name: `blue_db`
 - Database engine: MySQL
 - Recommended version: MySQL 8.0+
-- Total tables: 72
+- Total tables: 79
 - Character set: `utf8mb4`
 - Version 1 currency: UAE Dirham (`AED`)
 - Currency symbol: `د.إ`
@@ -38,7 +38,8 @@ The file contains the database structure only and does not include real customer
 - Cart and Cart Items
 - Property and appointment management
 - Payment attempts and payment webhook event ledger (Stripe-ready, provider-neutral)
-- Bookings and Booking Items
+- Bookings and Booking Items (STANDARD payment-backed, or CONTRACT entitlement-backed)
+- Customer Properties and long-term Service Contracts (entitlements, acceptance, status history)
 - Technician management and assignments
 - Support requests and messages
 - Ratings and feedback

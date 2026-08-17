@@ -31,6 +31,7 @@ final class BookingPresenter
     {
         $statusCode = DB::table('booking_statuses')->where('id', $booking->status_id)->value('code');
         $currency = DB::table('currencies')->where('id', $booking->cart_currency_id)->first(['code', 'symbol', 'minor_unit']);
+        $sourceCode = DB::table('booking_sources')->where('id', $booking->booking_source_id)->value('code');
 
         $location = DB::table('booking_locations')->where('booking_id', $booking->id)->first();
         $slot = DB::table('appointment_slots')
@@ -67,6 +68,11 @@ final class BookingPresenter
             'uuid' => UuidBinary::toString($booking->id),
             'booking_number' => $booking->booking_number,
             'status' => $statusCode,
+            'source' => $sourceCode,
+            'contract' => $booking->service_contract_id === null ? null : [
+                'contract_uuid' => UuidBinary::toString($booking->service_contract_id),
+                'contract_item_uuid' => UuidBinary::toString($booking->service_contract_item_id),
+            ],
             'currency' => $currency === null ? null : [
                 'code' => $currency->code,
                 'symbol' => $currency->symbol,

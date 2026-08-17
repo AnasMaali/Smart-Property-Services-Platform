@@ -136,28 +136,49 @@ final class CancelBookingAction
             }
 
             /*
-             * Payment and appointment are read only.
+             * A CONTRACT-sourced Booking (BLUE V1 Phase 10F) has no
+             * payment_attempt_id at all - it was never paid for directly,
+             * so there is nothing to refund. Cancelling it only needs to
+             * move the Booking/Booking Item/assignment state; the
+             * refund-eligibility snapshot below is skipped entirely and
+             * stays permanently NULL, which chk_bookings_cancellation_refund_data
+             * already allows. The entitlement this Booking consumed is
+             * automatically and permanently freed the moment its status
+             * stops being counted as "used" - see
+             * App\Support\Contract\ContractEntitlementCalculator's docblock
+             * - with no extra write required here.
+             */
+            $isContractBooking = $booking->service_contract_id !== null;
+
+            /*
+             * Payment and appointment are read only (STANDARD Bookings
+             * only).
              *
              * confirmed_amount is authoritative after successful payment.
              * requested_amount is only a defensive fallback.
              */
-            $payment = DB::table('payment_attempts')
-                ->where('id', $booking->payment_attempt_id)
-                ->first([
-                    'confirmed_amount',
-                    'requested_amount',
-                ]);
+            $payment = null;
+            $slot = null;
 
-            $slot = DB::table('appointment_slots')
-                ->where('id', $booking->appointment_slot_id)
-                ->first([
-                    'starts_at',
-                ]);
+            if (! $isContractBooking) {
+                $payment = DB::table('payment_attempts')
+                    ->where('id', $booking->payment_attempt_id)
+                    ->first([
+                        'confirmed_amount',
+                        'requested_amount',
+                    ]);
 
-            if ($payment === null || $slot === null) {
-                return $this->conflict(
-                    'Booking cancellation data is incomplete.'
-                );
+                $slot = DB::table('appointment_slots')
+                    ->where('id', $booking->appointment_slot_id)
+                    ->first([
+                        'starts_at',
+                    ]);
+
+                if ($payment === null || $slot === null) {
+                    return $this->conflict(
+                        'Booking cancellation data is incomplete.'
+                    );
+                }
             }
 
             $now = now();
@@ -261,7 +282,9 @@ final class CancelBookingAction
              * never App\Support\Booking\RefundEligibilityCalculator
              * directly.
              */
-            if ($currentStatus === 'CANCELLED') {
+            if ($isContractBooking) {
+                $refund = null;
+            } elseif ($currentStatus === 'CANCELLED') {
                 $refund = [
                     'percentage' => (int) $booking->cancellation_refund_percentage,
                     'amount' => (string) $booking->cancellation_refund_amount,

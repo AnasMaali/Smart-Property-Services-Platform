@@ -579,6 +579,40 @@ LOCK TABLES `booking_locations` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `booking_sources`
+--
+
+DROP TABLE IF EXISTS `booking_sources`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_sources` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_sources_code` (`code`),
+  KEY `idx_booking_sources_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_booking_sources_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_booking_sources_code` CHECK ((char_length(trim(`code`)) between 2 and 20)),
+  CONSTRAINT `chk_booking_sources_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_sources`
+--
+
+LOCK TABLES `booking_sources` WRITE;
+/*!40000 ALTER TABLE `booking_sources` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_sources` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `booking_status_history`
 --
 
@@ -664,7 +698,10 @@ CREATE TABLE `bookings` (
   `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
   `booking_number` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `cart_id` binary(16) NOT NULL,
-  `payment_attempt_id` binary(16) NOT NULL,
+  `payment_attempt_id` binary(16) DEFAULT NULL,
+  `booking_source_id` tinyint unsigned NOT NULL,
+  `service_contract_id` binary(16) DEFAULT NULL,
+  `service_contract_item_id` binary(16) DEFAULT NULL,
   `appointment_slot_id` binary(16) NOT NULL,
   `status_id` tinyint unsigned NOT NULL,
   `status_changed_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -681,9 +718,15 @@ CREATE TABLE `bookings` (
   KEY `idx_bookings_status_created` (`status_id`,`created_at`),
   KEY `idx_bookings_appointment_status` (`appointment_slot_id`,`status_id`),
   KEY `idx_bookings_created_at` (`created_at`),
+  KEY `idx_bookings_source` (`booking_source_id`),
+  KEY `idx_bookings_contract` (`service_contract_id`),
+  KEY `idx_bookings_contract_item` (`service_contract_item_id`,`service_contract_id`,`status_id`),
   CONSTRAINT `fk_bookings_appointment_slot` FOREIGN KEY (`appointment_slot_id`) REFERENCES `appointment_slots` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_bookings_cart` FOREIGN KEY (`cart_id`) REFERENCES `carts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_bookings_payment_attempt` FOREIGN KEY (`payment_attempt_id`) REFERENCES `payment_attempts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_bookings_source` FOREIGN KEY (`booking_source_id`) REFERENCES `booking_sources` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_bookings_contract` FOREIGN KEY (`service_contract_id`) REFERENCES `service_contracts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_bookings_contract_item` FOREIGN KEY (`service_contract_item_id`, `service_contract_id`) REFERENCES `service_contract_items` (`id`, `service_contract_id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_bookings_status` FOREIGN KEY (`status_id`) REFERENCES `booking_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `chk_bookings_booking_number` CHECK ((char_length(trim(`booking_number`)) between 6 and 40)),
   CONSTRAINT `chk_bookings_cancellation_refund_amount` CHECK (((`cancellation_refund_amount` is null) or (`cancellation_refund_amount` >= 0))),
@@ -692,7 +735,8 @@ CREATE TABLE `bookings` (
   CONSTRAINT `chk_bookings_cancelled_at` CHECK (((`cancelled_at` is null) or (`cancelled_at` >= `created_at`))),
   CONSTRAINT `chk_bookings_completed_at` CHECK (((`completed_at` is null) or (`completed_at` >= `created_at`))),
   CONSTRAINT `chk_bookings_single_final_state` CHECK (((`completed_at` is null) or (`cancelled_at` is null))),
-  CONSTRAINT `chk_bookings_status_changed_at` CHECK ((`status_changed_at` >= `created_at`))
+  CONSTRAINT `chk_bookings_status_changed_at` CHECK ((`status_changed_at` >= `created_at`)),
+  CONSTRAINT `chk_bookings_source_pairing` CHECK ((((`payment_attempt_id` is not null) and (`service_contract_id` is null) and (`service_contract_item_id` is null)) or ((`payment_attempt_id` is null) and (`service_contract_id` is not null) and (`service_contract_item_id` is not null))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1066,6 +1110,65 @@ CREATE TABLE `customer_profiles` (
 LOCK TABLES `customer_profiles` WRITE;
 /*!40000 ALTER TABLE `customer_profiles` DISABLE KEYS */;
 /*!40000 ALTER TABLE `customer_profiles` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `customer_properties`
+--
+
+DROP TABLE IF EXISTS `customer_properties`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `customer_properties` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `customer_user_id` binary(16) NOT NULL,
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `property_relationship_type_id` smallint unsigned NOT NULL,
+  `property_type_id` smallint unsigned NOT NULL,
+  `other_property_type_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `area_id` int unsigned NOT NULL,
+  `street_name` varchar(180) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `address_line` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `building_name_or_number` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `floor_number` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `unit_number` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `nearby_landmark` varchar(250) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `additional_location_notes` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `visit_contact_phone` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_customer_properties_id_customer` (`id`,`customer_user_id`),
+  KEY `idx_customer_properties_customer_active` (`customer_user_id`,`is_active`,`created_at`),
+  KEY `idx_customer_properties_area` (`area_id`),
+  KEY `idx_customer_properties_relationship_type` (`property_relationship_type_id`),
+  KEY `idx_customer_properties_property_type` (`property_type_id`),
+  CONSTRAINT `fk_customer_properties_customer` FOREIGN KEY (`customer_user_id`) REFERENCES `customer_profiles` (`user_id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_customer_properties_area` FOREIGN KEY (`area_id`) REFERENCES `areas` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_customer_properties_relationship_type` FOREIGN KEY (`property_relationship_type_id`) REFERENCES `property_relationship_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_customer_properties_property_type` FOREIGN KEY (`property_type_id`) REFERENCES `property_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_customer_properties_label` CHECK ((char_length(trim(`label`)) between 2 and 120)),
+  CONSTRAINT `chk_customer_properties_is_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_customer_properties_address` CHECK ((char_length(trim(`address_line`)) between 5 and 500)),
+  CONSTRAINT `chk_customer_properties_building` CHECK ((char_length(trim(`building_name_or_number`)) between 1 and 120)),
+  CONSTRAINT `chk_customer_properties_contact_phone` CHECK ((char_length(trim(`visit_contact_phone`)) between 8 and 20)),
+  CONSTRAINT `chk_customer_properties_floor` CHECK (((`floor_number` is null) or (char_length(trim(`floor_number`)) between 1 and 30))),
+  CONSTRAINT `chk_customer_properties_landmark` CHECK (((`nearby_landmark` is null) or (char_length(trim(`nearby_landmark`)) between 2 and 250))),
+  CONSTRAINT `chk_customer_properties_notes` CHECK (((`additional_location_notes` is null) or (char_length(trim(`additional_location_notes`)) between 2 and 1000))),
+  CONSTRAINT `chk_customer_properties_other_type` CHECK (((`other_property_type_name` is null) or (char_length(trim(`other_property_type_name`)) between 2 and 120))),
+  CONSTRAINT `chk_customer_properties_street` CHECK ((char_length(trim(`street_name`)) between 2 and 180)),
+  CONSTRAINT `chk_customer_properties_unit` CHECK (((`unit_number` is null) or (char_length(trim(`unit_number`)) between 1 and 50)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `customer_properties`
+--
+
+LOCK TABLES `customer_properties` WRITE;
+/*!40000 ALTER TABLE `customer_properties` DISABLE KEYS */;
+/*!40000 ALTER TABLE `customer_properties` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1976,6 +2079,217 @@ CREATE TABLE `service_categories` (
 LOCK TABLES `service_categories` WRITE;
 /*!40000 ALTER TABLE `service_categories` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_categories` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_statuses`
+--
+
+DROP TABLE IF EXISTS `service_contract_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_terminal` tinyint(1) NOT NULL DEFAULT '0',
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_statuses_code` (`code`),
+  KEY `idx_service_contract_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_service_contract_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_service_contract_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 50)),
+  CONSTRAINT `chk_service_contract_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_service_contract_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 120)),
+  CONSTRAINT `chk_service_contract_statuses_terminal` CHECK ((`is_terminal` in (0,1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_statuses`
+--
+
+LOCK TABLES `service_contract_statuses` WRITE;
+/*!40000 ALTER TABLE `service_contract_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contracts`
+--
+
+DROP TABLE IF EXISTS `service_contracts`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contracts` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `contract_number` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `customer_user_id` binary(16) NOT NULL,
+  `customer_property_id` binary(16) NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `status_changed_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `requested_service_ids` json DEFAULT NULL,
+  `requested_all_services` tinyint(1) NOT NULL DEFAULT '0',
+  `requested_starts_on` date DEFAULT NULL,
+  `customer_note` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `internal_note` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `starts_at` datetime(6) DEFAULT NULL,
+  `ends_at` datetime(6) DEFAULT NULL,
+  `term_months` smallint unsigned DEFAULT NULL,
+  `currency_id` smallint unsigned DEFAULT NULL,
+  `quoted_amount` decimal(19,6) DEFAULT NULL,
+  `agreement_snapshot` json DEFAULT NULL,
+  `agreement_hash` binary(32) DEFAULT NULL,
+  `accepted_at` datetime(6) DEFAULT NULL,
+  `accepted_by_user_id` binary(16) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contracts_number` (`contract_number`),
+  KEY `idx_service_contracts_customer` (`customer_user_id`,`created_at`),
+  KEY `idx_service_contracts_property` (`customer_property_id`,`customer_user_id`),
+  KEY `idx_service_contracts_status` (`status_id`,`created_at`),
+  KEY `idx_service_contracts_currency` (`currency_id`),
+  KEY `idx_service_contracts_accepted_by` (`accepted_by_user_id`),
+  KEY `idx_service_contracts_term` (`status_id`,`ends_at`),
+  CONSTRAINT `fk_service_contracts_customer` FOREIGN KEY (`customer_user_id`) REFERENCES `customer_profiles` (`user_id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contracts_property` FOREIGN KEY (`customer_property_id`, `customer_user_id`) REFERENCES `customer_properties` (`id`, `customer_user_id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contracts_status` FOREIGN KEY (`status_id`) REFERENCES `service_contract_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contracts_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contracts_accepted_by` FOREIGN KEY (`accepted_by_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_service_contracts_number` CHECK ((char_length(trim(`contract_number`)) between 6 and 40)),
+  CONSTRAINT `chk_service_contracts_requested_all` CHECK ((`requested_all_services` in (0,1))),
+  CONSTRAINT `chk_service_contracts_customer_note` CHECK (((`customer_note` is null) or (char_length(trim(`customer_note`)) between 2 and 1000))),
+  CONSTRAINT `chk_service_contracts_internal_note` CHECK (((`internal_note` is null) or (char_length(trim(`internal_note`)) between 2 and 1000))),
+  CONSTRAINT `chk_service_contracts_term_period` CHECK (((`starts_at` is null) or (`ends_at` is null) or (`ends_at` > `starts_at`))),
+  CONSTRAINT `chk_service_contracts_term_months` CHECK (((`term_months` is null) or (`term_months` between 1 and 120))),
+  CONSTRAINT `chk_service_contracts_quoted_amount` CHECK (((`quoted_amount` is null) or (`quoted_amount` >= 0))),
+  CONSTRAINT `chk_service_contracts_quote_currency_pairing` CHECK ((((`quoted_amount` is null) and (`currency_id` is null)) or ((`quoted_amount` is not null) and (`currency_id` is not null)))),
+  CONSTRAINT `chk_service_contracts_acceptance_pairing` CHECK ((((`accepted_at` is null) and (`accepted_by_user_id` is null) and (`agreement_snapshot` is null) and (`agreement_hash` is null)) or ((`accepted_at` is not null) and (`accepted_by_user_id` is not null) and (`agreement_snapshot` is not null) and (`agreement_hash` is not null)))),
+  CONSTRAINT `chk_service_contracts_status_changed` CHECK ((`status_changed_at` >= `created_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contracts`
+--
+
+LOCK TABLES `service_contracts` WRITE;
+/*!40000 ALTER TABLE `service_contracts` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contracts` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_items`
+--
+
+DROP TABLE IF EXISTS `service_contract_items`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_items` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_contract_id` binary(16) NOT NULL,
+  `service_id` binary(16) NOT NULL,
+  `service_code_snapshot` varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `service_name_snapshot` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `entitlement_mode` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `included_visits` smallint unsigned DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_items_contract_service` (`service_contract_id`,`service_id`),
+  UNIQUE KEY `uq_service_contract_items_id_contract` (`id`,`service_contract_id`),
+  KEY `idx_service_contract_items_service` (`service_id`),
+  CONSTRAINT `fk_service_contract_items_contract` FOREIGN KEY (`service_contract_id`) REFERENCES `service_contracts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contract_items_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_service_contract_items_service_code` CHECK ((char_length(trim(`service_code_snapshot`)) between 2 and 80)),
+  CONSTRAINT `chk_service_contract_items_service_name` CHECK ((char_length(trim(`service_name_snapshot`)) between 2 and 160)),
+  CONSTRAINT `chk_service_contract_items_mode` CHECK ((`entitlement_mode` in (_utf8mb4'LIMITED_VISITS',_utf8mb4'UNLIMITED'))),
+  CONSTRAINT `chk_service_contract_items_visits` CHECK ((((`entitlement_mode` = _utf8mb4'LIMITED_VISITS') and (`included_visits` is not null) and (`included_visits` >= 1)) or ((`entitlement_mode` = _utf8mb4'UNLIMITED') and (`included_visits` is null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_items`
+--
+
+LOCK TABLES `service_contract_items` WRITE;
+/*!40000 ALTER TABLE `service_contract_items` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_items` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_status_history`
+--
+
+DROP TABLE IF EXISTS `service_contract_status_history`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_status_history` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_contract_id` binary(16) NOT NULL,
+  `from_status_id` tinyint unsigned DEFAULT NULL,
+  `to_status_id` tinyint unsigned NOT NULL,
+  `changed_by_user_id` binary(16) DEFAULT NULL,
+  `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `changed_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_contract_status_history_contract_time` (`service_contract_id`,`changed_at`),
+  KEY `idx_contract_status_history_to_status_time` (`to_status_id`,`changed_at`),
+  KEY `idx_contract_status_history_from_status` (`from_status_id`),
+  KEY `idx_contract_status_history_changed_by` (`changed_by_user_id`),
+  CONSTRAINT `fk_contract_status_history_contract` FOREIGN KEY (`service_contract_id`) REFERENCES `service_contracts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_contract_status_history_changed_by` FOREIGN KEY (`changed_by_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_contract_status_history_from_status` FOREIGN KEY (`from_status_id`) REFERENCES `service_contract_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_contract_status_history_to_status` FOREIGN KEY (`to_status_id`) REFERENCES `service_contract_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_contract_status_history_different` CHECK (((`from_status_id` is null) or (`from_status_id` <> `to_status_id`))),
+  CONSTRAINT `chk_contract_status_history_reason` CHECK (((`reason` is null) or (char_length(trim(`reason`)) between 2 and 500)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_status_history`
+--
+
+LOCK TABLES `service_contract_status_history` WRITE;
+/*!40000 ALTER TABLE `service_contract_status_history` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_status_history` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_acceptances`
+--
+
+DROP TABLE IF EXISTS `service_contract_acceptances`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_acceptances` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_contract_id` binary(16) NOT NULL,
+  `accepted_by_user_id` binary(16) NOT NULL,
+  `agreement_snapshot` json NOT NULL,
+  `agreement_hash` binary(32) NOT NULL,
+  `accepted_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_acceptances_contract` (`service_contract_id`),
+  KEY `idx_service_contract_acceptances_accepted_by` (`accepted_by_user_id`),
+  CONSTRAINT `fk_contract_acceptances_contract` FOREIGN KEY (`service_contract_id`) REFERENCES `service_contracts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_contract_acceptances_accepted_by` FOREIGN KEY (`accepted_by_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_acceptances`
+--
+
+LOCK TABLES `service_contract_acceptances` WRITE;
+/*!40000 ALTER TABLE `service_contract_acceptances` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_acceptances` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
