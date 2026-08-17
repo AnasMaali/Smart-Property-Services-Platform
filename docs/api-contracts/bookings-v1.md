@@ -740,7 +740,8 @@ Both are read-only, never reprice, and are entirely historical-snapshot based �
       "created_at": "2026-08-11T11:00:00+00:00",
       "status_changed_at": "2026-08-11T11:00:00+00:00",
       "completed_at": null,
-      "cancelled_at": null
+      "cancelled_at": null,
+      "refund_due": null
     }
   }
 }
@@ -751,6 +752,25 @@ Never returned by either endpoint: `payment_attempt_id`, `checkout_snapshot`,
 other provider/webhook internal. Every id is a UUID string (`App\Support\Uuid\UuidBinary::toString()`)
 — no raw `binary(16)` value is ever serialized. Every monetary value is a decimal string with 6
 fraction digits (`decimal(19,6)` column shape) — never a JSON number/float.
+
+### `refund_due`
+
+`refund_due` is `null` for every Booking except one currently `CANCELLED`. For a `CANCELLED`
+Booking it is `{ "percentage": 100, "amount": "150.000000", "execution": "MANUAL" }` — the exact
+same shape `POST /v1/bookings/{booking}/cancel` itself returns (see "Cancellation" above). It never
+exposes `payment_attempt_id` or any other payment/provider column — only the persisted percentage,
+decimal-string amount, and the constant `execution: "MANUAL"`.
+
+**This is a historical snapshot, not a live computation.** `App\Support\Booking\
+RefundEligibilityCalculator` is called exactly **once** per Booking, by `CancelBookingAction`, at
+the moment of the Booking's first real cancellation, from its appointment slot, paid amount, and
+`config('cancellation.*')` as it stood at that instant. The result is persisted immediately, in the
+same DB transaction as the cancellation itself, onto `bookings.cancellation_refund_percentage` /
+`cancellation_refund_amount`. Every later read of this field — this endpoint, `GET /v1/bookings`,
+the Admin Booking detail response (`admin-operations-v1.md`), and a retried/idempotent
+`POST .../cancel` call — returns that persisted snapshot verbatim and never recomputes it. If the
+company's cancellation policy config changes after a Booking was already cancelled, that change
+can never retroactively alter what an already-cancelled Booking is shown to owe.
 
 ## Not implemented in Phase 7A / 7B / 8A / 8B
 

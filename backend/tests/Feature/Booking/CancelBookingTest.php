@@ -254,6 +254,164 @@ class CancelBookingTest extends TestCase
                 ->count()
         );
     }
+
+    // A) Cancellation before appointment day snapshots 100% and a later
+    // policy config change never alters the persisted snapshot.
+    public function test_refund_snapshot_before_appointment_day_survives_a_later_policy_config_change(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-14 20:00:00');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response
+            ->assertStatus(200)
+            ->assertJsonPath('data.refund_due.percentage', 100);
+
+        $paidAmount = (string) DB::table('payment_attempts')->where('id', $payment->id)->value('confirmed_amount');
+        $expectedAmount = bcdiv(bcmul($paidAmount, '100', 6), '100', 6);
+        $this->assertSame($expectedAmount, $response->json('data.refund_due.amount'));
+
+        /*
+         * Persisted immediately, in the same transaction as the
+         * cancellation itself.
+         */
+        $row = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertSame(100, (int) $row->cancellation_refund_percentage);
+        $this->assertSame($expectedAmount, (string) $row->cancellation_refund_amount);
+
+        /*
+         * Company changes its cancellation policy AFTER this Booking was
+         * already cancelled.
+         */
+        config([
+            'cancellation.before_appointment_day_percentage' => 90,
+            'cancellation.appointment_day_percentage' => 50,
+        ]);
+
+        $rowAfterConfigChange = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertSame(100, (int) $rowAfterConfigChange->cancellation_refund_percentage);
+        $this->assertSame($expectedAmount, (string) $rowAfterConfigChange->cancellation_refund_amount);
+    }
+
+    // B) Cancellation on/after the appointment day snapshots 75% and a
+    // later policy config change never alters the persisted snapshot.
+    public function test_refund_snapshot_on_appointment_day_survives_a_later_policy_config_change(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-15 00:00:00');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response
+            ->assertStatus(200)
+            ->assertJsonPath('data.refund_due.percentage', 75);
+
+        config([
+            'cancellation.before_appointment_day_percentage' => 90,
+            'cancellation.appointment_day_percentage' => 50,
+        ]);
+
+        $row = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertSame(75, (int) $row->cancellation_refund_percentage);
+    }
+
+    // C) A retry after the policy config changed must return the ORIGINAL
+    // snapshot, not a fresh recalculation, and must not overwrite it in
+    // the database.
+    public function test_cancellation_retry_after_config_change_returns_original_snapshot_and_never_overwrites_it(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-14 20:00:00');
+
+        $first = $this->cancelBooking($customer['access_token'], $booking);
+        $first->assertStatus(200)->assertJsonPath('data.refund_due.percentage', 100);
+
+        $rowAfterFirst = DB::table('bookings')->where('id', $booking->id)->first();
+
+        config([
+            'cancellation.before_appointment_day_percentage' => 90,
+            'cancellation.appointment_day_percentage' => 50,
+        ]);
+
+        $retry = $this->cancelBooking($customer['access_token'], $booking);
+
+        $retry
+            ->assertStatus(200)
+            ->assertJsonPath('data.refund_due.percentage', 100)
+            ->assertJsonPath('data.refund_due.amount', $rowAfterFirst->cancellation_refund_amount);
+
+        $rowAfterRetry = DB::table('bookings')->where('id', $booking->id)->first();
+
+        $this->assertSame(
+            (int) $rowAfterFirst->cancellation_refund_percentage,
+            (int) $rowAfterRetry->cancellation_refund_percentage
+        );
+        $this->assertSame(
+            (string) $rowAfterFirst->cancellation_refund_amount,
+            (string) $rowAfterRetry->cancellation_refund_amount
+        );
+
+        /*
+         * Payment still SUCCESSFUL through the whole config-drift scenario.
+         */
+        $this->assertSame('SUCCESSFUL', $this->paymentStatus($payment));
+    }
+
+    // D) Snapshot amount is exact BCMath decimal arithmetic against the
+    // actual confirmed paid amount - never float rounding.
+    public function test_refund_snapshot_amount_matches_exact_decimal_arithmetic_of_the_paid_amount(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-15 08:00:00');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+        $response->assertStatus(200)->assertJsonPath('data.refund_due.percentage', 75);
+
+        $paidAmount = (string) DB::table('payment_attempts')->where('id', $payment->id)->value('confirmed_amount');
+        $expectedAmount = bcdiv(bcmul($paidAmount, '75', 6), '100', 6);
+
+        $this->assertSame($expectedAmount, $response->json('data.refund_due.amount'));
+
+        $row = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertSame($expectedAmount, (string) $row->cancellation_refund_amount);
+    }
+
+    // E) A non-cancelled Booking never has a refund snapshot.
+    public function test_non_cancelled_booking_has_no_refund_snapshot(): void
+    {
+        ['payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $row = DB::table('bookings')->where('id', $booking->id)->first();
+
+        $this->assertNull($row->cancellation_refund_percentage);
+        $this->assertNull($row->cancellation_refund_amount);
+    }
+
     public function test_cancellation_cancels_open_item_and_releases_active_technician_assignment(): void
 {
     $fixture = $this->bookingWithAssignableItem([

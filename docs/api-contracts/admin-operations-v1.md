@@ -132,6 +132,11 @@ from Phase 9A.
     assigned_at, released_at, release_reason, internal_note }`.
   - `total` — sum of every item's `line_total_amount`, identical computation to the customer
     presenter.
+  - `refund_due` — `null` unless the Booking is currently `CANCELLED`; otherwise `{ percentage,
+    amount, execution: "MANUAL" }`, read verbatim from the historical snapshot
+    (`bookings.cancellation_refund_percentage` / `cancellation_refund_amount`) `CancelBookingAction`
+    persisted at the moment of cancellation — never recomputed here. Identical to the customer read
+    API's `refund_due` — see `bookings-v1.md`'s `refund_due` section for the full contract.
 - **Query performance**: one query per section (status/currency/customer/location/slot/payment),
   one query for all Booking Items, one query for all their assignments (grouped in PHP) — never one
   query per item.

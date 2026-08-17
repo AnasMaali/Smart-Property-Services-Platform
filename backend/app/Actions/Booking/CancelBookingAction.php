@@ -6,6 +6,7 @@ use App\Support\Booking\BookingItemStatuses;
 use App\Support\Booking\BookingItemStatusMachine;
 use App\Support\Booking\BookingStatuses;
 use App\Support\Booking\BookingStatusMachine;
+use App\Support\Booking\RefundEligibilityCalculator;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Uuid\UuidBinary;
 use Carbon\CarbonImmutable;
@@ -29,7 +30,13 @@ final class CancelBookingAction
      * - cancels the parent Booking
      * - cancels every non-terminal Booking Item
      * - releases active Technician assignments
-     * - calculates the amount due for manual refund
+     * - calculates the amount due for manual refund exactly ONCE, at the
+     *   first real cancellation, and persists it as a historical snapshot
+     *   (`bookings.cancellation_refund_percentage` /
+     *   `cancellation_refund_amount`) - a retry reads that snapshot back
+     *   rather than recalculating it, so a later change to
+     *   `config('cancellation.*')` can never retroactively change what an
+     *   already-cancelled Booking is shown to owe
      *
      * It NEVER calls Stripe and NEVER changes payment_attempts status.
      *
@@ -236,63 +243,50 @@ final class CancelBookingAction
                     ]);
             }
 
-            /*
-             * Refund policy is based on the BUSINESS-LOCAL calendar day,
-             * not on "24 hours before appointment".
-             *
-             * Appointment timestamps are stored under the application's
-             * UTC convention, then converted to the configured business
-             * timezone before comparing calendar dates.
-             */
-            $businessTimezone = (string) config(
-                'cancellation.timezone',
-                'UTC'
-            );
-
             $storageTimezone = (string) config(
                 'app.timezone',
                 'UTC'
             );
 
-            $appointmentLocal = CarbonImmutable::parse(
-                (string) $slot->starts_at,
-                $storageTimezone
-            )->setTimezone($businessTimezone);
-
-            $cancelledLocal = CarbonImmutable::parse(
-                (string) $effectiveCancellationAt,
-                $storageTimezone
-            )->setTimezone($businessTimezone);
-
-            $appointmentDayStartsAt = $appointmentLocal->startOfDay();
-
-            $percentage = $cancelledLocal->lt($appointmentDayStartsAt)
-                ? (int) config(
-                    'cancellation.before_appointment_day_percentage',
-                    100
-                )
-                : (int) config(
-                    'cancellation.appointment_day_percentage',
-                    75
+            /*
+             * Refund eligibility is calculated exactly ONCE, at the first
+             * real cancellation, then persisted as a historical snapshot
+             * (`bookings.cancellation_refund_percentage` /
+             * `cancellation_refund_amount`). A later change to
+             * `config('cancellation.*')` must never change what an
+             * already-cancelled Booking is shown to owe - so a retry NEVER
+             * recalculates; it only reads the snapshot back. The
+             * Customer/Admin Booking read APIs (BookingPresenter /
+             * AdminBookingPresenter) read this same persisted snapshot,
+             * never App\Support\Booking\RefundEligibilityCalculator
+             * directly.
+             */
+            if ($currentStatus === 'CANCELLED') {
+                $refund = [
+                    'percentage' => (int) $booking->cancellation_refund_percentage,
+                    'amount' => (string) $booking->cancellation_refund_amount,
+                    'execution' => 'MANUAL',
+                ];
+            } else {
+                $paidAmount = (string) (
+                    $payment->confirmed_amount
+                    ?? $payment->requested_amount
                 );
 
-            $paidAmount = (string) (
-                $payment->confirmed_amount
-                ?? $payment->requested_amount
-            );
+                $refund = RefundEligibilityCalculator::calculate(
+                    (string) $slot->starts_at,
+                    (string) $effectiveCancellationAt,
+                    $paidAmount
+                );
 
-            /*
-             * Never use float arithmetic for money.
-             */
-            $refundAmount = bcdiv(
-                bcmul(
-                    $paidAmount,
-                    (string) $percentage,
-                    6
-                ),
-                '100',
-                6
-            );
+                DB::table('bookings')
+                    ->where('id', $bookingIdBinary)
+                    ->update([
+                        'cancellation_refund_percentage' => $refund['percentage'],
+                        'cancellation_refund_amount' => $refund['amount'],
+                        'updated_at' => $now->format('Y-m-d H:i:s.u'),
+                    ]);
+            }
 
             return $this->ok(
                 200,
@@ -308,11 +302,7 @@ final class CancelBookingAction
                             $storageTimezone
                         )->toISOString(),
                     ],
-                    'refund_due' => [
-                        'percentage' => $percentage,
-                        'amount' => $refundAmount,
-                        'execution' => 'MANUAL',
-                    ],
+                    'refund_due' => $refund,
                 ]
             );
         });

@@ -4,6 +4,8 @@ namespace Tests\Feature\Admin;
 
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Admin\Concerns\CreatesAdminFixtures;
 use Tests\TestCase;
 
@@ -16,6 +18,28 @@ class AdminBookingReadTest extends TestCase
     {
         parent::setUp();
         $this->setUpCheckoutFixtures();
+
+        config([
+            'cancellation.timezone' => 'UTC',
+            'cancellation.before_appointment_day_percentage' => 100,
+            'cancellation.appointment_day_percentage' => 75,
+        ]);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
+    }
+
+    private function cancelBooking(string $accessToken, object $booking)
+    {
+        return $this->postJson(
+            '/api/v1/bookings/'.UuidBinary::toString($booking->id).'/cancel',
+            [],
+            ['Authorization' => 'Bearer '.$accessToken]
+        );
     }
 
     // 1. Admin can list Bookings.
@@ -217,5 +241,104 @@ class AdminBookingReadTest extends TestCase
         $booking = $response->json('data.booking');
         $this->assertSame(36, strlen($booking['uuid']));
         $this->assertSame(36, strlen($booking['customer']['uuid']));
+    }
+
+    // 11. Non-cancelled Booking detail never claims a refund is due.
+    public function test_booking_detail_does_not_incorrectly_claim_a_refund_is_due_when_not_cancelled(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $fixture = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
+            ->assertStatus(200);
+
+        $data = $response->json('data.booking');
+        $this->assertArrayHasKey('refund_due', $data);
+        $this->assertNull($data['refund_due']);
+    }
+
+    // 12. Admin GET on a CANCELLED Booking exposes the same cancelled_at /
+    // refund_due information as the Customer read API, using the same
+    // RefundEligibilityCalculator and the Booking's original cancelled_at.
+    public function test_admin_can_view_refund_due_information_on_a_cancelled_booking(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $fixture = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        Carbon::setTestNow('2026-09-15 05:00:00');
+
+        $this->cancelBooking($fixture['customer']['access_token'], $booking)->assertStatus(200);
+
+        $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
+            ->assertStatus(200);
+
+        $data = $response->json('data.booking');
+
+        $this->assertSame('CANCELLED', $data['status']);
+        $this->assertNotNull($data['cancelled_at']);
+
+        $paidAmount = (string) DB::table('payment_attempts')->where('id', $fixture['payment']->id)->value('confirmed_amount');
+        $expectedRefund = bcdiv(bcmul($paidAmount, '75', 6), '100', 6);
+
+        $this->assertSame(75, $data['refund_due']['percentage']);
+        $this->assertSame($expectedRefund, $data['refund_due']['amount']);
+        $this->assertSame('MANUAL', $data['refund_due']['execution']);
+    }
+
+    // 13. Admin Booking detail refund_due never exposes provider/Stripe
+    // internals - it is strictly {percentage, amount, execution}.
+    public function test_admin_booking_detail_refund_due_never_leaks_payment_or_provider_internals(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $fixture = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        Carbon::setTestNow('2026-09-14 20:00:00');
+        $this->cancelBooking($fixture['customer']['access_token'], $booking)->assertStatus(200);
+
+        $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
+            ->assertStatus(200);
+
+        $refundDue = $response->json('data.booking.refund_due');
+        $this->assertSame(['percentage', 'amount', 'execution'], array_keys($refundDue));
+
+        $this->assertStringNotContainsString('client_secret', strtolower($response->getContent()));
+    }
+
+    // 14. Admin GET on a CANCELLED Booking keeps showing the ORIGINAL
+    // refund_due percentage/amount after the cancellation policy config
+    // changes - the read API must never recompute from current config.
+    public function test_admin_get_cancelled_booking_refund_due_survives_a_later_policy_config_change(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $fixture = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        Carbon::setTestNow('2026-09-14 20:00:00');
+
+        $this->cancelBooking($fixture['customer']['access_token'], $booking)->assertStatus(200);
+
+        $paidAmount = (string) DB::table('payment_attempts')->where('id', $fixture['payment']->id)->value('confirmed_amount');
+        $expectedAmount = bcdiv(bcmul($paidAmount, '100', 6), '100', 6);
+
+        config([
+            'cancellation.before_appointment_day_percentage' => 90,
+            'cancellation.appointment_day_percentage' => 50,
+        ]);
+
+        $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
+            ->assertStatus(200);
+
+        $this->assertSame(100, $response->json('data.booking.refund_due.percentage'));
+        $this->assertSame($expectedAmount, $response->json('data.booking.refund_due.amount'));
+        $this->assertSame('MANUAL', $response->json('data.booking.refund_due.execution'));
     }
 }

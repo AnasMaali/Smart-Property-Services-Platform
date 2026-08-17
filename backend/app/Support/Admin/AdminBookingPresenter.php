@@ -201,6 +201,33 @@ final class AdminBookingPresenter
             'status_changed_at' => Carbon::parse($row->status_changed_at)->toIso8601String(),
             'completed_at' => $row->completed_at === null ? null : Carbon::parse($row->completed_at)->toIso8601String(),
             'cancelled_at' => $row->cancelled_at === null ? null : Carbon::parse($row->cancelled_at)->toIso8601String(),
+            'refund_due' => $statusCode === 'CANCELLED' ? self::refundDuePayload($row) : null,
+        ];
+    }
+
+    /**
+     * Refund eligibility for an already-CANCELLED Booking only - read
+     * verbatim from the historical snapshot
+     * App\Actions\Booking\CancelBookingAction persisted at the moment of
+     * the Booking's first real cancellation
+     * (`bookings.cancellation_refund_percentage` /
+     * `cancellation_refund_amount`), identically to the customer-facing
+     * App\Support\Booking\BookingPresenter. Never recomputed here - a later
+     * change to `config('cancellation.*')` must never change what an
+     * already-cancelled Booking is shown to owe.
+     *
+     * @return array{percentage: int, amount: string, execution: 'MANUAL'}|null
+     */
+    private static function refundDuePayload(object $row): ?array
+    {
+        if ($row->cancellation_refund_percentage === null || $row->cancellation_refund_amount === null) {
+            return null;
+        }
+
+        return [
+            'percentage' => (int) $row->cancellation_refund_percentage,
+            'amount' => (string) $row->cancellation_refund_amount,
+            'execution' => 'MANUAL',
         ];
     }
 
