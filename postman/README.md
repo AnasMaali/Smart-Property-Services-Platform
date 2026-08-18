@@ -65,7 +65,7 @@ Registration collection's placeholders.
 
 ## Service Contracts collection
 
-`BLUE-V1-Contracts.postman_collection.json` covers the Phase 10B/10C/10D/10E/10F Service Contract
+`BLUE-V1-Contracts.postman_collection.json` covers the Phase 10B/10C/10D/10E/10F/11 Service Contract
 endpoints, customer and admin, in two folders (companion to `docs/api-contracts/contracts-v1.md`).
 Import it alongside the Properties collection, an Admin Authentication login (for
 `admin_access_token`), and the same `BLUE V1 Local` environment. `contract_service_uuid` must be set
@@ -73,8 +73,47 @@ manually to a real, active, `SUBSCRIPTION`-eligible service uuid (see
 `docs/api-contracts/contracts-v1.md` "CONTRACT eligibility") - it is not provided by the environment
 file, the same way Cart's `service_uuid` is not. Recommended order: Customer → Request Contract,
 Admin → Approve Contract (captures `contract_item_uuid`), Admin → Send For Acceptance, Customer →
-Accept Contract, Customer → Book Contract Service (needs `appointment_slot_uuid` from the Checkout
-collection's List Appointment Slots).
+Accept Contract, Customer → Create Contract Billing Checkout, Customer → Book Contract Service
+(needs `appointment_slot_uuid` from the Checkout collection's List Appointment Slots and requires the
+Contract to have already reached ACTIVE - see "Phase 11 billing activation flow" below).
+
+### Phase 11 billing activation flow
+
+As of Phase 11, Customer → Accept Contract no longer activates the Contract by itself - it only
+reaches `PENDING_PAYMENT`. A Stripe subscription Checkout must be completed before the Contract (and
+its billing row) becomes `ACTIVE` and Customer → Book Contract Service will accept it. Full manual
+sequence:
+
+1. Customer → **Request Contract**
+2. Admin → **Approve Contract** — must include the Phase 11 billing terms in the request body
+   (`billing_interval`: `MONTHLY` or `YEARLY`, `recurring_amount`, `billing_currency_code`); this is
+   what creates the `service_contract_billings` row (`PENDING_CHECKOUT`).
+3. Admin → **Send For Acceptance**
+4. Customer → **Accept Contract** — Contract moves REQUESTED-path status to `PENDING_PAYMENT`, not
+   `ACTIVE`.
+5. Customer → **Create Contract Billing Checkout** — captures `contract_billing_checkout_session_id`
+   and `contract_billing_checkout_url` into the environment automatically. No request body: the
+   customer never supplies amount, interval, currency, or any Stripe id - all of it comes from the
+   frozen billing snapshot from step 2.
+6. Open `{{contract_billing_checkout_url}}` in a browser and complete Stripe **test-mode** Checkout
+   (card `4242 4242 4242 4242`, any future expiry, any CVC/postal code).
+7. Stripe delivers real webhooks (`checkout.session.completed`, `customer.subscription.created`,
+   `invoice.paid`, ...) to `POST /v1/contracts/billing/webhooks/stripe`. This is a **separate**
+   webhook endpoint from the Payment collection's, with its own signing secret
+   (`STRIPE_CONTRACT_BILLING_WEBHOOK_SECRET`) - like that collection, this one intentionally does not
+   include a webhook request, since a valid Stripe signature cannot be produced from Postman. Locally
+   this requires either the Stripe CLI (`stripe listen --forward-to
+   localhost:8000/api/v1/contracts/billing/webhooks/stripe`, which also prints the signing secret to
+   set) or a tunnel plus a Dashboard-registered test-mode endpoint pointed at the same route.
+8. Once `invoice.paid` is processed, Get My Contract / Get Contract (Admin) will show the Contract as
+   `ACTIVE` and billing as `ACTIVE`.
+9. Customer → **Book Contract Service** now succeeds - no new customer PaymentAttempt is created for
+   it; the CONTRACT Booking is authorized purely by the now-ACTIVE billing subscription.
+
+Required `.env` values for this flow beyond the base `STRIPE_SECRET_KEY`:
+`STRIPE_CONTRACT_BILLING_WEBHOOK_SECRET`, `CONTRACT_BILLING_CHECKOUT_SUCCESS_URL`,
+`CONTRACT_BILLING_CHECKOUT_CANCEL_URL`. `STRIPE_PUBLISHABLE_KEY` is not needed for this flow (Contract
+Billing uses Stripe's hosted Checkout page, never Stripe.js/Elements server-side).
 
 ## 1. Start the backend
 

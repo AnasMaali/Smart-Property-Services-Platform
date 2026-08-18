@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Contract\Concerns;
 
+use App\Support\Contract\Billing\Gateway\ContractBillingGateway;
+use App\Support\Contract\Billing\Gateway\FakeContractBillingGateway;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
@@ -135,16 +137,123 @@ trait CreatesContractFixtures
                     'included_visits' => 2,
                 ],
             ],
+            // BLUE V1 Phase 11 - required recurring Stripe Billing terms.
+            'billing_interval' => 'MONTHLY',
+            'recurring_amount' => '99.000000',
+            'billing_currency_code' => 'AED',
         ], $overrides);
     }
 
     /**
-     * Builds a full ACTIVE Service Contract with one LIMITED_VISITS covered
-     * service, ready for CreateContractBookingAction to consume - request ->
-     * approve -> send-for-acceptance -> accept, exactly the real Admin/
-     * Customer flow, never a shortcut direct-DB insert of the final ACTIVE
-     * row, so every layer's own transition logic is exercised by every test
-     * that reuses this builder.
+     * The FakeContractBillingGateway singleton bound for the "testing"
+     * environment (see App\Providers\ContractBillingServiceProvider) -
+     * resolving it through the container guarantees tests configure the
+     * exact same instance every Contract Billing Action uses.
+     */
+    private function fakeBillingGateway(): FakeContractBillingGateway
+    {
+        return app(ContractBillingGateway::class);
+    }
+
+    private function contractBillingCheckoutHttp(string $accessToken, string $contractUuid): TestResponse
+    {
+        return $this->postJson('/api/v1/contracts/'.$contractUuid.'/billing/checkout', [], ['Authorization' => 'Bearer '.$accessToken]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function fakeContractBillingWebhookPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'event_id' => 'evt_contract_billing_'.UuidBinary::generate(),
+            'event_type' => 'invoice.paid',
+            'contract_billing_uuid' => null,
+            'stripe_subscription_id' => null,
+            'stripe_customer_id' => null,
+            'stripe_checkout_session_id' => null,
+            'stripe_price_id' => null,
+            'stripe_product_id' => null,
+            'subscription_status' => null,
+            'cancel_at_period_end' => null,
+            'invoice_paid' => null,
+            'current_period_start' => null,
+            'current_period_end' => null,
+            'cancel_at' => null,
+            'canceled_at' => null,
+        ], $overrides);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function postContractBillingWebhook(array $payload, ?string $signatureOverride = null): TestResponse
+    {
+        $body = json_encode($payload, JSON_THROW_ON_ERROR);
+        $signature = $signatureOverride ?? FakeContractBillingGateway::sign($body);
+
+        return $this->call('POST', '/api/v1/contracts/billing/webhooks/stripe', [], [], [], [
+            'HTTP_X_FAKE_SIGNATURE' => $signature,
+            'CONTENT_TYPE' => 'application/json',
+        ], $body);
+    }
+
+    private function billingRow(string $contractUuid): ?object
+    {
+        return DB::table('service_contract_billings')->where('service_contract_id', UuidBinary::toBinary($contractUuid))->first();
+    }
+
+    private function billingStatusCode(string $contractUuid): ?string
+    {
+        return DB::table('service_contract_billings')
+            ->join('service_contract_billing_statuses', 'service_contract_billing_statuses.id', '=', 'service_contract_billings.status_id')
+            ->where('service_contract_billings.service_contract_id', UuidBinary::toBinary($contractUuid))
+            ->value('service_contract_billing_statuses.code');
+    }
+
+    /**
+     * Drives a PENDING_PAYMENT Contract through Stripe subscription Checkout
+     * (against the Fake gateway) and both the `checkout.session.completed`
+     * and authoritative `invoice.paid` webhooks - the real customer +
+     * Stripe flow, never a shortcut direct-DB write - so the Contract
+     * reaches ACTIVE with `service_contract_billings.status_id` = ACTIVE.
+     *
+     * @return array{checkout_session_id: string, stripe_subscription_id: string}
+     */
+    private function activateContractBilling(string $accessToken, string $contractUuid): array
+    {
+        $checkout = $this->contractBillingCheckoutHttp($accessToken, $contractUuid)->assertStatus(201);
+        $sessionId = $checkout->json('data.billing.checkout_session_id');
+        $subscriptionId = 'sub_test_'.UuidBinary::generate();
+
+        $this->postContractBillingWebhook($this->fakeContractBillingWebhookPayload([
+            'event_type' => 'checkout.session.completed',
+            'stripe_checkout_session_id' => $sessionId,
+            'stripe_subscription_id' => $subscriptionId,
+            'stripe_customer_id' => 'cus_test_'.UuidBinary::generate(),
+        ]))->assertStatus(200);
+
+        $this->postContractBillingWebhook($this->fakeContractBillingWebhookPayload([
+            'event_type' => 'invoice.paid',
+            'stripe_subscription_id' => $subscriptionId,
+            'invoice_paid' => true,
+            'current_period_start' => now()->toDateTimeString(),
+            'current_period_end' => now()->addMonth()->toDateTimeString(),
+        ]))->assertStatus(200);
+
+        return ['checkout_session_id' => $sessionId, 'stripe_subscription_id' => $subscriptionId];
+    }
+
+    /**
+     * Builds a full ACTIVE Service Contract (Contract status ACTIVE, billing
+     * status ACTIVE) with one LIMITED_VISITS covered service, ready for
+     * CreateContractBookingAction to consume - request -> approve ->
+     * send-for-acceptance -> accept -> billing checkout -> Stripe webhooks,
+     * exactly the real Admin/Customer/Stripe flow (BLUE V1 Phase 11), never
+     * a shortcut direct-DB insert of the final ACTIVE row, so every layer's
+     * own transition logic is exercised by every test that reuses this
+     * builder.
      *
      * @return array{customer: array{user_uuid: string, access_token: string}, admin: array{user_uuid: string, access_token: string}, property_uuid: string, service: array{uuid: string, slug: string}, contract: object, item: object}
      */
@@ -175,6 +284,8 @@ trait CreatesContractFixtures
         $this->adminSendContractForAcceptance($admin['access_token'], $contractUuid)->assertStatus(200);
 
         $this->acceptContractHttp($customer['access_token'], $contractUuid)->assertStatus(200);
+
+        $this->activateContractBilling($customer['access_token'], $contractUuid);
 
         $contract = $this->contractRow($contractUuid);
         $item = $this->contractItemRows($contractUuid)->first();

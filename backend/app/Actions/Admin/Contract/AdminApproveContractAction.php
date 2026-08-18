@@ -6,6 +6,8 @@ use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
 use App\Support\Admin\AdminContractPresenter;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Contract\Billing\ContractBillingStatuses;
+use App\Support\Contract\Billing\Gateway\ContractBillingGateway;
 use App\Support\Contract\ContractStatuses;
 use App\Support\Contract\ContractStatusMachine;
 use App\Support\Pricing\ServiceCapabilities;
@@ -14,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Admin finalization of a requested Service Contract (POST
@@ -25,17 +28,41 @@ use InvalidArgumentException;
  * safe idempotent no-op (V1 has no "amend an approved contract" endpoint -
  * items are write-once).
  *
+ * BLUE V1 Phase 11: this is also the one place a `service_contract_billings`
+ * row is ever created - the Admin's billing_interval/recurring_amount/
+ * billing_currency_code become an immutable commercial snapshot the exact
+ * same way service_contract_items already are. The row starts
+ * PENDING_CHECKOUT with no billing-provider references at all; nothing
+ * here ever calls the billing provider (this file must never reference it
+ * by name - see tests\Feature\Admin\AdminFinancialIsolationTest) -
+ * App\Actions\Contract\Billing\CreateContractBillingCheckoutAction is the
+ * only place a provider-side subscription checkout is created, once the
+ * customer has accepted and the Contract has reached PENDING_PAYMENT.
+ *
  * Audit logging mirrors App\Actions\Admin\Technician\
  * AdminAssignTechnicianAction: a deliberate, immediate second write AFTER
  * the domain transaction has already committed, and only ever for the real
  * REQUESTED -> APPROVED transition - never for the idempotent no-op path -
  * so a retried call never produces a duplicate audit row.
+ *
+ * Legacy-data backstop (Phase 11 migration safety): every APPROVED Contract
+ * is structurally guaranteed to already have a `service_contract_billings`
+ * row - either this Action just created one (the real transition, above),
+ * or `database/phase11_contract_billing_migration.sql`'s preflight
+ * assertion already refused to run unless every pre-existing APPROVED/
+ * PENDING_CUSTOMER_ACCEPTANCE/ACTIVE/SUSPENDED Contract had one backfilled
+ * first. The already-APPROVED idempotent-return branch below still
+ * re-checks this explicitly rather than trusting that invariant blindly -
+ * if it is ever somehow violated (a corrupted row, a manual DB edit), this
+ * Action reports it and returns a conflict instead of silently returning a
+ * `200` for a Contract that can never reach PENDING_PAYMENT/ACTIVE.
  */
 class AdminApproveContractAction
 {
     use BuildsCartResult;
 
     public function __construct(
+        private readonly ContractBillingGateway $billingGateway,
         private readonly ContractStatusMachine $machine = new ContractStatusMachine,
         private readonly ServiceCapabilities $capabilities = new ServiceCapabilities,
     ) {}
@@ -63,6 +90,20 @@ class AdminApproveContractAction
             }
 
             if ($this->machine->isInStatus($contract, 'APPROVED')) {
+                $hasBilling = DB::table('service_contract_billings')->where('service_contract_id', $contract->id)->exists();
+
+                if (! $hasBilling) {
+                    // See class docblock "Legacy-data backstop" - structurally
+                    // unreachable once the Phase 11 migration's preflight
+                    // assertion has run, but never silently treated as a
+                    // successful no-op if it somehow happens anyway.
+                    report(new RuntimeException(
+                        'Data inconsistency: Service Contract '.UuidBinary::toString($contract->id).' is APPROVED but has no service_contract_billings row.'
+                    ));
+
+                    return $this->conflict('This contract is missing its billing configuration and cannot be processed. Contact support.');
+                }
+
                 return $this->ok(200, 'Service contract already approved.', ['contract' => AdminContractPresenter::detail($contract)]);
             }
 
@@ -116,6 +157,12 @@ class AdminApproveContractAction
                 }
             }
 
+            $billingCurrency = DB::table('currencies')->where('code', $data['billing_currency_code'])->where('is_active', 1)->first(['id']);
+
+            if ($billingCurrency === null) {
+                return $this->unprocessable('The selected billing currency is invalid or inactive.', ['billing_currency_code' => [$data['billing_currency_code']]]);
+            }
+
             $now = now();
             $timestamp = $now->format('Y-m-d H:i:s.u');
 
@@ -142,6 +189,18 @@ class AdminApproveContractAction
                     'updated_at' => $timestamp,
                 ]);
             }
+
+            DB::table('service_contract_billings')->insert([
+                'id' => UuidBinary::toBinary(UuidBinary::generate()),
+                'service_contract_id' => $contract->id,
+                'provider_code' => $this->billingGateway->providerCode(),
+                'status_id' => ContractBillingStatuses::id('PENDING_CHECKOUT'),
+                'billing_interval' => $data['billing_interval'],
+                'recurring_amount' => $data['recurring_amount'],
+                'currency_id' => $billingCurrency->id,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
 
             $this->machine->transitionToApproved($contract, $now);
 

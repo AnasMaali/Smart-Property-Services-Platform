@@ -2,6 +2,7 @@
 
 namespace App\Support\Contract;
 
+use App\Support\Contract\Billing\ContractBillingPresenter;
 use App\Support\Property\PropertyPresenter;
 use App\Support\Uuid\UuidBinary;
 use Carbon\CarbonInterface;
@@ -103,6 +104,7 @@ final class ContractPresenter
                 'accepted' => $contract->accepted_at !== null,
                 'accepted_at' => $contract->accepted_at === null ? null : Carbon::parse($contract->accepted_at)->toIso8601String(),
             ],
+            'billing' => ContractBillingPresenter::customerView($contract->id),
             'bookings' => $bookings->map(fn (object $booking): array => [
                 'uuid' => UuidBinary::toString($booking->id),
                 'booking_number' => $booking->booking_number,

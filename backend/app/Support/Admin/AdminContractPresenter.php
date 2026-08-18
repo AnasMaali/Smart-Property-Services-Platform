@@ -2,6 +2,7 @@
 
 namespace App\Support\Admin;
 
+use App\Support\Contract\Billing\ContractBillingPresenter;
 use App\Support\Contract\ContractEntitlementCalculator;
 use App\Support\Contract\ContractPresenter;
 use App\Support\Property\PropertyPresenter;
@@ -144,6 +145,7 @@ final class AdminContractPresenter
                 'accepted_at' => $contract->accepted_at === null ? null : Carbon::parse($contract->accepted_at)->toIso8601String(),
                 'accepted_by_user_uuid' => $contract->accepted_by_user_id === null ? null : UuidBinary::toString($contract->accepted_by_user_id),
             ],
+            'billing' => ContractBillingPresenter::adminView($contract->id),
             'status_history' => $history->map(fn (object $row): array => [
                 'from_status' => $row->from_code,
                 'to_status' => $row->to_code,

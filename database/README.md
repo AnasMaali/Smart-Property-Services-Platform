@@ -7,7 +7,7 @@ This directory contains the MySQL database schema for the BLUE property-services
 - Database name: `blue_db`
 - Database engine: MySQL
 - Recommended version: MySQL 8.0+
-- Total tables: 79
+- Total tables: 82 (includes BLUE V1 Phase 11 Service Contract Stripe Billing: `service_contract_billing_statuses`, `service_contract_billings`, `service_contract_billing_webhook_events` - see `phase11_contract_billing_migration.sql`)
 - Character set: `utf8mb4`
 - Version 1 currency: UAE Dirham (`AED`)
 - Currency symbol: `د.إ`

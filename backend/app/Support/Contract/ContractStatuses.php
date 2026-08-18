@@ -9,7 +9,8 @@ use RuntimeException;
  * Resolves service_contract_statuses.id by code instead of hardcoding
  * numeric lookup ids anywhere in Contract Actions - mirrors
  * App\Support\Booking\BookingStatuses exactly. The seeded lifecycle codes
- * (BLUE V1 Phase 10B) are REQUESTED, APPROVED, PENDING_CUSTOMER_ACCEPTANCE,
+ * (BLUE V1 Phase 10B, extended by Phase 11 "PENDING_PAYMENT") are
+ * REQUESTED, APPROVED, PENDING_CUSTOMER_ACCEPTANCE, PENDING_PAYMENT,
  * ACTIVE, SUSPENDED, EXPIRED, CANCELLED - see database/blue_v1_seed.sql
  * "31. SERVICE CONTRACT STATUSES".
  */

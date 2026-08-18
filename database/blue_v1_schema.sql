@@ -1092,14 +1092,17 @@ CREATE TABLE `customer_profiles` (
   `user_id` binary(16) NOT NULL,
   `property_relationship_type_id` smallint unsigned NOT NULL,
   `area_id` int unsigned NOT NULL,
+  `stripe_customer_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`user_id`),
+  UNIQUE KEY `uq_customer_profiles_stripe_customer` (`stripe_customer_id`),
   KEY `idx_customer_profiles_relationship_type` (`property_relationship_type_id`),
   KEY `idx_customer_profiles_area_id` (`area_id`),
   CONSTRAINT `fk_customer_profiles_area` FOREIGN KEY (`area_id`) REFERENCES `areas` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_customer_profiles_relationship_type` FOREIGN KEY (`property_relationship_type_id`) REFERENCES `property_relationship_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_customer_profiles_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
+  CONSTRAINT `fk_customer_profiles_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_customer_profiles_stripe_customer` CHECK (((`stripe_customer_id` is null) or (char_length(trim(`stripe_customer_id`)) between 1 and 191)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -2290,6 +2293,213 @@ CREATE TABLE `service_contract_acceptances` (
 LOCK TABLES `service_contract_acceptances` WRITE;
 /*!40000 ALTER TABLE `service_contract_acceptances` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_contract_acceptances` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_billing_statuses`
+--
+-- BLUE V1 Phase 11 - the recurring Stripe Billing lifecycle of one Service
+-- Contract's subscription (service_contract_billings.status_id), distinct
+-- from service_contract_statuses (the Contract's own operational status).
+--
+
+DROP TABLE IF EXISTS `service_contract_billing_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_billing_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_billing_statuses_code` (`code`),
+  KEY `idx_service_contract_billing_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_service_contract_billing_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_service_contract_billing_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_service_contract_billing_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_service_contract_billing_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_billing_statuses`
+--
+
+LOCK TABLES `service_contract_billing_statuses` WRITE;
+/*!40000 ALTER TABLE `service_contract_billing_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_billing_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_billings`
+--
+-- BLUE V1 Phase 11 - exactly one recurring Stripe subscription-billing
+-- record per Service Contract, created by App\Actions\Admin\Contract\
+-- AdminApproveContractAction with an immutable billing_interval /
+-- recurring_amount / currency_id commercial snapshot, PENDING_CHECKOUT,
+-- no Stripe references yet. `chk_service_contract_billings_cancel_at` /
+-- `_cancelled_at` allow a 1-second tolerance against `created_at`: Stripe's
+-- own `cancel_at`/`canceled_at` are whole-second Unix timestamps
+-- (App\Support\Contract\Billing\Gateway\StripeContractBillingGateway::tsToDatetime()
+-- has no fractional part), while `created_at` is datetime(6) - without the
+-- tolerance, a cancellation genuinely reported by Stripe as happening in
+-- the same wall-clock second the row was created could be rejected purely
+-- from truncation, never from a real ordering problem. Every Stripe
+-- reference column is populated
+-- only once the corresponding Stripe object exists (see
+-- App\Actions\Contract\Billing\ProcessContractBillingWebhookAction).
+--
+-- `provider_cancellation_requested_at` / `_last_attempt_at` /
+-- `_attempt_count` (BLUE V1 Phase 11 durable-retry hardening): together
+-- these make the outbound provider-side Subscription cancellation durable
+-- across a provider outage - `_requested_at` is stamped exactly once, in
+-- the SAME transaction as the parent Contract's own CANCELLED transition
+-- (App\Actions\Admin\Contract\AdminCancelContractAction), and stays set
+-- until the eventual customer.subscription.deleted webhook sets
+-- `cancelled_at`; App\Actions\Contract\Billing\
+-- RetryPendingContractBillingCancellationsAction
+-- (`contracts:retry-pending-billing-cancellations`) keeps re-attempting
+-- delivery for any row where a request is pending but not yet reconciled.
+--
+-- `billing_suspended_at` (BLUE V1 Phase 11 billing-suspension recovery):
+-- set only by App\Actions\Contract\Billing\
+-- SuspendContractsPastDueBillingAction, in the same transaction as the
+-- Contract's ACTIVE -> SUSPENDED transition, and cleared automatically once
+-- billing recovers (App\Actions\Contract\Billing\
+-- ProcessContractBillingWebhookAction::handleInvoicePaid()). Deliberately
+-- left NULL by a manual Admin suspension (App\Actions\Admin\Contract\
+-- AdminSuspendContractAction) - this is the one durable marker that keeps
+-- an automatic billing recovery from ever reactivating a Contract an Admin
+-- suspended on purpose.
+--
+
+DROP TABLE IF EXISTS `service_contract_billings`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_billings` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_contract_id` binary(16) NOT NULL,
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `billing_interval` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `recurring_amount` decimal(19,6) NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `stripe_customer_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stripe_subscription_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stripe_checkout_session_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stripe_checkout_url` varchar(500) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stripe_price_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `stripe_product_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `current_period_start` datetime(6) DEFAULT NULL,
+  `current_period_end` datetime(6) DEFAULT NULL,
+  `past_due_since` datetime(6) DEFAULT NULL,
+  `cancel_at` datetime(6) DEFAULT NULL,
+  `cancelled_at` datetime(6) DEFAULT NULL,
+  `provider_cancellation_requested_at` datetime(6) DEFAULT NULL,
+  `provider_cancellation_last_attempt_at` datetime(6) DEFAULT NULL,
+  `provider_cancellation_attempt_count` int unsigned NOT NULL DEFAULT '0',
+  `billing_suspended_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_billings_contract` (`service_contract_id`),
+  UNIQUE KEY `uq_service_contract_billings_subscription` (`stripe_subscription_id`),
+  UNIQUE KEY `uq_service_contract_billings_checkout_session` (`stripe_checkout_session_id`),
+  KEY `idx_service_contract_billings_status` (`status_id`,`updated_at`),
+  KEY `idx_service_contract_billings_currency` (`currency_id`),
+  KEY `idx_service_contract_billings_past_due` (`status_id`,`past_due_since`),
+  KEY `idx_service_contract_billings_customer` (`stripe_customer_id`),
+  KEY `idx_service_contract_billings_provider_cancel_pending` (`provider_cancellation_requested_at`,`cancelled_at`),
+  CONSTRAINT `fk_service_contract_billings_contract` FOREIGN KEY (`service_contract_id`) REFERENCES `service_contracts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contract_billings_status` FOREIGN KEY (`status_id`) REFERENCES `service_contract_billing_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_contract_billings_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_service_contract_billings_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_service_contract_billings_interval` CHECK ((`billing_interval` in (_utf8mb4'MONTHLY',_utf8mb4'YEARLY'))),
+  CONSTRAINT `chk_service_contract_billings_amount` CHECK ((`recurring_amount` > 0)),
+  CONSTRAINT `chk_service_contract_billings_customer_id` CHECK (((`stripe_customer_id` is null) or (char_length(trim(`stripe_customer_id`)) between 1 and 191))),
+  CONSTRAINT `chk_service_contract_billings_subscription_id` CHECK (((`stripe_subscription_id` is null) or (char_length(trim(`stripe_subscription_id`)) between 1 and 191))),
+  CONSTRAINT `chk_service_contract_billings_checkout_session_id` CHECK (((`stripe_checkout_session_id` is null) or (char_length(trim(`stripe_checkout_session_id`)) between 1 and 191))),
+  CONSTRAINT `chk_service_contract_billings_price_id` CHECK (((`stripe_price_id` is null) or (char_length(trim(`stripe_price_id`)) between 1 and 191))),
+  CONSTRAINT `chk_service_contract_billings_product_id` CHECK (((`stripe_product_id` is null) or (char_length(trim(`stripe_product_id`)) between 1 and 191))),
+  CONSTRAINT `chk_service_contract_billings_period` CHECK (((`current_period_start` is null) or (`current_period_end` is null) or (`current_period_end` > `current_period_start`))),
+  CONSTRAINT `chk_service_contract_billings_past_due_since` CHECK (((`past_due_since` is null) or (`past_due_since` >= `created_at`))),
+  CONSTRAINT `chk_service_contract_billings_cancel_at` CHECK (((`cancel_at` is null) or (`cancel_at` >= (`created_at` - INTERVAL 1 SECOND)))),
+  CONSTRAINT `chk_service_contract_billings_cancelled_at` CHECK (((`cancelled_at` is null) or (`cancelled_at` >= (`created_at` - INTERVAL 1 SECOND)))),
+  CONSTRAINT `chk_service_contract_billings_provider_cancel_requested_at` CHECK (((`provider_cancellation_requested_at` is null) or (`provider_cancellation_requested_at` >= `created_at`))),
+  CONSTRAINT `chk_service_contract_billings_provider_cancel_last_attempt_at` CHECK (((`provider_cancellation_last_attempt_at` is null) or (`provider_cancellation_requested_at` is not null and `provider_cancellation_last_attempt_at` >= `provider_cancellation_requested_at`))),
+  CONSTRAINT `chk_service_contract_billings_billing_suspended_at` CHECK (((`billing_suspended_at` is null) or (`billing_suspended_at` >= `created_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_billings`
+--
+
+LOCK TABLES `service_contract_billings` WRITE;
+/*!40000 ALTER TABLE `service_contract_billings` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_billings` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_contract_billing_webhook_events`
+--
+-- BLUE V1 Phase 11 - the inbound Stripe Contract Billing webhook ledger
+-- (App\Actions\Contract\Billing\ProcessContractBillingWebhookAction),
+-- structurally identical to `payment_webhook_events` but fully separate -
+-- a Subscription/Invoice/Checkout-Session event is never mixed with a
+-- PaymentIntent one. Reuses `payment_webhook_event_statuses` (RECEIVED /
+-- PROCESSED / IGNORED / FAILED) rather than duplicating that lookup table,
+-- since the technical webhook-processing lifecycle is identical for both
+-- domains.
+--
+
+DROP TABLE IF EXISTS `service_contract_billing_webhook_events`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_contract_billing_webhook_events` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_event_id` varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `service_contract_billing_id` binary(16) DEFAULT NULL,
+  `event_type` varchar(100) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_object_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `payload_hash` binary(32) NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `processing_attempt_count` int unsigned NOT NULL DEFAULT '0',
+  `received_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `processed_at` datetime(6) DEFAULT NULL,
+  `last_error_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `last_error_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_contract_billing_webhook_events_provider_event` (`provider_code`,`provider_event_id`),
+  KEY `idx_service_contract_billing_webhook_events_billing` (`service_contract_billing_id`),
+  KEY `idx_service_contract_billing_webhook_events_object_ref` (`provider_object_reference`),
+  KEY `idx_service_contract_billing_webhook_events_status_received` (`status_id`,`received_at`),
+  KEY `idx_service_contract_billing_webhook_events_received_at` (`received_at`),
+  CONSTRAINT `fk_contract_billing_webhook_events_billing` FOREIGN KEY (`service_contract_billing_id`) REFERENCES `service_contract_billings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_contract_billing_webhook_events_status` FOREIGN KEY (`status_id`) REFERENCES `payment_webhook_event_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_contract_billing_webhook_events_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_contract_billing_webhook_events_provider_event_id` CHECK ((char_length(trim(`provider_event_id`)) between 1 and 191)),
+  CONSTRAINT `chk_contract_billing_webhook_events_event_type` CHECK ((char_length(trim(`event_type`)) between 1 and 100)),
+  CONSTRAINT `chk_contract_billing_webhook_events_last_error_code` CHECK (((`last_error_code` is null) or (char_length(trim(`last_error_code`)) between 1 and 100))),
+  CONSTRAINT `chk_contract_billing_webhook_events_last_error_message` CHECK (((`last_error_message` is null) or (char_length(trim(`last_error_message`)) between 2 and 500))),
+  CONSTRAINT `chk_contract_billing_webhook_events_processed_at` CHECK (((`processed_at` is null) or (`processed_at` >= `received_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_contract_billing_webhook_events`
+--
+
+LOCK TABLES `service_contract_billing_webhook_events` WRITE;
+/*!40000 ALTER TABLE `service_contract_billing_webhook_events` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_contract_billing_webhook_events` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

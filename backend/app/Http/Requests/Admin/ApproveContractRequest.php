@@ -18,6 +18,13 @@ use App\Http\Requests\ApiFormRequest;
  * time and must never be re-resolved automatically later, so there is no
  * server-side "just copy every eligible service" shortcut for the Admin to
  * opt into.
+ *
+ * BLUE V1 Phase 11 adds the required recurring Stripe Billing terms
+ * (billing_interval / recurring_amount / currency_code) the Admin defines
+ * at this exact moment - these become the immutable commercial snapshot on
+ * `service_contract_billings` (see AdminApproveContractAction). The
+ * customer never supplies any of these three fields anywhere in this API -
+ * only an Admin, only here.
  */
 class ApproveContractRequest extends ApiFormRequest
 {
@@ -47,6 +54,11 @@ class ApproveContractRequest extends ApiFormRequest
 
             'quoted_amount' => ['nullable', 'numeric', 'min:0'],
             'currency_code' => ['nullable', 'string', 'size:3'],
+
+            // BLUE V1 Phase 11 - required recurring Stripe Billing terms.
+            'billing_interval' => ['required', 'string', 'in:MONTHLY,YEARLY'],
+            'recurring_amount' => ['required', 'numeric', 'min:0.01'],
+            'billing_currency_code' => ['required', 'string', 'size:3'],
 
             'internal_note' => ['nullable', 'string', 'min:2', 'max:1000'],
         ];

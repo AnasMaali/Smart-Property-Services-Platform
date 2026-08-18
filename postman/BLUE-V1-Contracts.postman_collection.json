@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "1d6a7b3e-2f9c-4e5a-8b1d-3c7e9f4a2b56",
     "name": "BLUE V1 - Service Contracts",
-    "description": "BLUE V1 Phase 10B/10C/10D/10E/10F Service Contract endpoints (customer + admin), generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Contract, backend/app/Http/Controllers/Api/V1/Admin/Contract, backend/app/Actions/Contract, backend/app/Actions/Admin/Contract, and verified against backend/tests/Feature/Contract/* and backend/tests/Feature/Admin/AdminContractTest.php. See docs/api-contracts/contracts-v1.md for the full written contract.\n\nTypical end-to-end flow: Customer Request Contract -> Admin Approve Contract -> Admin Send For Acceptance -> Customer Accept Contract -> Customer Book Contract Service. Run the Properties collection first to obtain a property_uuid, and the Admin Authentication collection to obtain admin_access_token.",
+    "description": "BLUE V1 Phase 10B/10C/10D/10E/10F/11 Service Contract endpoints (customer + admin), generated from the actual implementation in backend/routes/api.php, backend/app/Http/Controllers/Api/V1/Contract, backend/app/Http/Controllers/Api/V1/Admin/Contract, backend/app/Actions/Contract, backend/app/Actions/Admin/Contract, and verified against backend/tests/Feature/Contract/* and backend/tests/Feature/Admin/AdminContractTest.php. See docs/api-contracts/contracts-v1.md for the full written contract.\n\nTypical end-to-end flow: Customer Request Contract -> Admin Approve Contract (with billing terms) -> Admin Send For Acceptance -> Customer Accept Contract (-> PENDING_PAYMENT) -> Customer Create Contract Billing Checkout -> customer completes Stripe Checkout -> Stripe webhook activates Contract/Billing (ACTIVE) -> Customer Book Contract Service. Run the Properties collection first to obtain a property_uuid, and the Admin Authentication collection to obtain admin_access_token.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -68,9 +68,46 @@
             "method": "POST",
             "header": [],
             "url": { "raw": "{{base_url}}/contracts/{{contract_uuid}}/accept", "host": ["{{base_url}}"], "path": ["contracts", "{{contract_uuid}}", "accept"] },
-            "description": "Only works for the owning customer, only from PENDING_CUSTOMER_ACCEPTANCE. Idempotent. Transitions to ACTIVE."
+            "description": "Only works for the owning customer, only from PENDING_CUSTOMER_ACCEPTANCE. Idempotent. Transitions to PENDING_PAYMENT (BLUE V1 Phase 11) - customer acceptance no longer grants Contract Booking entitlement by itself; run Create Contract Billing Checkout next, then complete Stripe Checkout, for the Contract to reach ACTIVE."
           },
           "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"] } }],
+          "response": []
+        },
+        {
+          "name": "Create Contract Billing Checkout",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/contracts/{{contract_uuid}}/billing/checkout",
+              "host": ["{{base_url}}"],
+              "path": ["contracts", "{{contract_uuid}}", "billing", "checkout"]
+            },
+            "description": "BLUE V1 Phase 11. No request body - the customer never supplies recurring_amount, billing_interval, currency, or any Stripe Customer/Product/Price/Subscription id; every one of those comes from the server-authoritative `service_contract_billings` snapshot Admin approval already froze. Only works from PENDING_PAYMENT with billing still PENDING_CHECKOUT or INCOMPLETE. Returns 201 with a freshly created Stripe Checkout Session on first call, or 200 with the same not-yet-completed session if called again before it resolves (idempotent - no second Stripe Checkout Session or Customer is ever created)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 201', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "var json = pm.response.json();",
+                  "pm.test('success is true', function () { pm.expect(json.success).to.eql(true); });",
+                  "pm.test('data.billing.checkout_session_id exists', function () { pm.expect(json.data && json.data.billing && json.data.billing.checkout_session_id).to.exist; });",
+                  "pm.test('data.billing.checkout_url exists', function () { pm.expect(json.data && json.data.billing && json.data.billing.checkout_url).to.exist; });",
+                  "if (json.data && json.data.billing) {",
+                  "    pm.environment.set('contract_billing_checkout_session_id', json.data.billing.checkout_session_id);",
+                  "    pm.environment.set('contract_billing_checkout_url', json.data.billing.checkout_url);",
+                  "}"
+                ]
+              }
+            }
+          ],
           "response": []
         },
         {

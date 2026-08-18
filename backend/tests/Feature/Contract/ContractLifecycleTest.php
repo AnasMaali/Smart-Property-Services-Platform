@@ -135,7 +135,7 @@ class ContractLifecycleTest extends TestCase
         $response = $this->acceptContractHttp($ctx['customer']['access_token'], $ctx['contract_uuid']);
 
         $response->assertStatus(200);
-        $this->assertSame('ACTIVE', $response->json('data.contract.status'));
+        $this->assertSame('PENDING_PAYMENT', $response->json('data.contract.status'));
         $this->assertTrue($response->json('data.contract.acceptance.accepted'));
     }
 
@@ -158,7 +158,7 @@ class ContractLifecycleTest extends TestCase
         $second = $this->acceptContractHttp($ctx['customer']['access_token'], $ctx['contract_uuid']);
 
         $second->assertStatus(200);
-        $this->assertSame('ACTIVE', $second->json('data.contract.status'));
+        $this->assertSame('PENDING_PAYMENT', $second->json('data.contract.status'));
 
         $acceptanceRows = DB::table('service_contract_acceptances')
             ->where('service_contract_id', UuidBinary::toBinary($ctx['contract_uuid']))

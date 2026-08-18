@@ -2,6 +2,7 @@
 
 namespace App\Actions\Admin\Contract;
 
+use App\Actions\Contract\Billing\CancelContractBillingSubscriptionAction;
 use App\Actions\Contract\Concerns\AppliesContractExpiry;
 use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
@@ -17,20 +18,48 @@ use InvalidArgumentException;
 /**
  * Cancels a Service Contract (POST /v1/admin/contracts/{contract}/cancel,
  * BLUE V1 Phase 10E) - reachable from any non-terminal status (REQUESTED,
- * APPROVED, PENDING_CUSTOMER_ACCEPTANCE, ACTIVE, SUSPENDED). Already
- * CANCELLED is a safe idempotent no-op; EXPIRED is not cancellable (it is
- * already terminal). Existing Bookings created while the Contract was
- * ACTIVE are never touched - cancellation only stops *new* CONTRACT
- * Bookings (see App\Actions\Contract\CreateContractBookingAction, which
- * only ever accepts ACTIVE). Audit logging only fires for the real
+ * APPROVED, PENDING_CUSTOMER_ACCEPTANCE, PENDING_PAYMENT, ACTIVE,
+ * SUSPENDED). Already CANCELLED is a safe idempotent no-op; EXPIRED is not
+ * cancellable (it is already terminal). Existing Bookings created while the
+ * Contract was ACTIVE are never touched - cancellation only stops *new*
+ * CONTRACT Bookings (see App\Actions\Contract\CreateContractBookingAction,
+ * which only ever accepts ACTIVE). Audit logging only fires for the real
  * transition.
+ *
+ * BLUE V1 Phase 11 "CANCELLATION" (hardened for provider outages): the
+ * operational Contract is cancelled immediately, in the same DB transaction
+ * as before - the recurring-billing provider is never involved in, and can
+ * never block or delay, that. The durable intent to also cancel the
+ * provider-side Subscription is recorded in that SAME transaction (see
+ * App\Actions\Contract\Billing\
+ * CancelContractBillingSubscriptionAction::markCancellationRequested()) -
+ * this class never itself reads a billing-provider-specific column or
+ * names the provider (see that Action's docblock for why: Admin operations
+ * source must never reference the billing provider by name). Only AFTER
+ * that transaction commits does it make one best-effort delivery attempt
+ * (CancelContractBillingSubscriptionAction::handle(), never inside the
+ * transaction - a provider outage must never roll back an Admin's
+ * cancellation, and a failed/ambiguous attempt must never lose the request
+ * either). Fired ONLY on the real transition, never on the idempotent
+ * already-CANCELLED no-op path above - a repeated Admin cancel call is
+ * deliberately NOT how a failed delivery gets retried; that is the sole job
+ * of App\Actions\Contract\Billing\RetryPendingContractBillingCancellationsAction
+ * (`contracts:retry-pending-billing-cancellations`), which keeps retrying
+ * for as long as the durably-recorded request stays unreconciled. This
+ * never writes service_contract_billings.status_id itself - only the
+ * eventual provider webhook (App\Actions\Contract\Billing\
+ * ProcessContractBillingWebhookAction) does that, so this side channel can
+ * never race or conflict with it.
  */
 class AdminCancelContractAction
 {
     use AppliesContractExpiry;
     use BuildsCartResult;
 
-    public function __construct(private readonly ContractStatusMachine $machine = new ContractStatusMachine) {}
+    public function __construct(
+        private readonly CancelContractBillingSubscriptionAction $cancelBillingSubscription,
+        private readonly ContractStatusMachine $machine = new ContractStatusMachine,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -78,6 +107,13 @@ class AdminCancelContractAction
                 'changed_at' => $timestamp,
             ]);
 
+            // Durably records the cancellation intent in the SAME
+            // transaction as the Contract's own CANCELLED transition above -
+            // see class docblock and CancelContractBillingSubscriptionAction's
+            // docblock. A commit failure below rolls this back together with
+            // the Contract transition, so the two can never disagree.
+            $this->cancelBillingSubscription->markCancellationRequested($contract->id, $now);
+
             $transitioned = true;
 
             $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
@@ -87,6 +123,17 @@ class AdminCancelContractAction
 
         if ($transitioned) {
             AdminAuditLogger::record($request, $actor, 'CONTRACT_CANCELLED', 'SERVICE_CONTRACT', $contractUuid, ['reason' => $reason]);
+
+            // Best-effort, fire-and-forget FIRST delivery attempt for the
+            // durably-recorded request above - see class docblock.
+            // Deliberately outside the domain transaction and never allowed
+            // to affect the HTTP response either way. If this attempt fails
+            // or times out, the request stays durably pending (it was
+            // already committed above) and
+            // App\Actions\Contract\Billing\RetryPendingContractBillingCancellationsAction
+            // picks it up later - this call is only ever the FIRST attempt,
+            // never the only one.
+            $this->cancelBillingSubscription->handle($contractIdBinary);
         }
 
         return $result;

@@ -1933,11 +1933,19 @@ VALUES
     TRUE
 ),
 (
-    'ACTIVE',
-    'Active',
-    'The customer has accepted the Contract and it is currently within its term.',
+    'PENDING_PAYMENT',
+    'Pending Payment',
+    'The customer has accepted the Contract terms and must complete Stripe subscription checkout before it activates.',
     FALSE,
     4,
+    TRUE
+),
+(
+    'ACTIVE',
+    'Active',
+    'The customer has accepted the Contract, its Stripe subscription''s first invoice was paid, and it is currently within its term.',
+    FALSE,
+    5,
     TRUE
 ),
 (
@@ -1945,7 +1953,7 @@ VALUES
     'Suspended',
     'The Contract has been temporarily suspended by an Admin; it does not authorize new Bookings.',
     FALSE,
-    5,
+    6,
     TRUE
 ),
 (
@@ -1953,7 +1961,7 @@ VALUES
     'Expired',
     'The Contract term has ended.',
     TRUE,
-    6,
+    7,
     TRUE
 ),
 (
@@ -1961,13 +1969,79 @@ VALUES
     'Cancelled',
     'The Contract was cancelled by an Admin.',
     TRUE,
-    7,
+    8,
     TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
     description = new.description,
     is_terminal = new.is_terminal,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 32. SERVICE CONTRACT BILLING STATUSES
+-- Recurring Stripe subscription-billing lifecycle of one Service
+-- Contract (service_contract_billings.status_id, BLUE V1 Phase 11).
+-- Distinct from service_contract_statuses (the Contract's own
+-- operational status) - see App\Support\Contract\Billing\
+-- ContractBillingStatuses.
+-- =============================================================
+
+INSERT INTO service_contract_billing_statuses (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'PENDING_CHECKOUT',
+    'Pending Checkout',
+    'The billing terms are frozen but the customer has not yet started (or completed) Stripe Checkout.',
+    1,
+    TRUE
+),
+(
+    'INCOMPLETE',
+    'Incomplete',
+    'Stripe Checkout completed and a Subscription exists, but no invoice has been confirmed paid yet.',
+    2,
+    TRUE
+),
+(
+    'ACTIVE',
+    'Active',
+    'The subscription''s most recent invoice was paid; new Contract Bookings are authorized.',
+    3,
+    TRUE
+),
+(
+    'PAST_DUE',
+    'Past Due',
+    'The most recent renewal invoice failed; Stripe is retrying automatically. New Contract Bookings are blocked.',
+    4,
+    TRUE
+),
+(
+    'CANCEL_AT_PERIOD_END',
+    'Cancel At Period End',
+    'The subscription is scheduled to stop at the current paid period''s end; still authorizes Bookings until then.',
+    5,
+    TRUE
+),
+(
+    'CANCELLED',
+    'Cancelled',
+    'The Stripe subscription was cancelled (by the Admin, the customer, or Stripe itself); terminal.',
+    6,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
     display_order = new.display_order,
     is_active = new.is_active;
 

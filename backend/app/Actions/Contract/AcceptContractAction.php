@@ -20,12 +20,24 @@ use InvalidArgumentException;
  * checkout_snapshot / checkout_snapshot_hash's "freeze what was agreed to,
  * hash it" pattern via App\Support\Payment\CanonicalJson).
  *
+ * BLUE V1 Phase 11: acceptance alone no longer activates the Contract or
+ * grants Contract Booking entitlement. It only records the agreement
+ * snapshot/hash exactly as before and transitions
+ * PENDING_CUSTOMER_ACCEPTANCE -> PENDING_PAYMENT - the Contract only
+ * becomes ACTIVE once App\Actions\Contract\Billing\
+ * ProcessContractBillingWebhookAction observes authoritative Stripe proof
+ * that the subscription's first invoice was paid (see
+ * App\Support\Contract\ContractStatusMachine::transitionToActive()). A
+ * Contract sitting PENDING_PAYMENT authorizes no CONTRACT Booking - see
+ * App\Actions\Contract\CreateContractBookingAction, which only ever accepts
+ * ACTIVE.
+ *
  * Idempotent two ways: (1) an application-level check - a Contract already
- * ACTIVE with an existing acceptance row is a safe no-op that returns the
- * same result; (2) a DB backstop -
- * UNIQUE(service_contract_id) on `service_contract_acceptances` resolves the
- * narrow window where two concurrent accept calls both reach the insert,
- * exactly like
+ * PENDING_PAYMENT or further along (ACTIVE/SUSPENDED/EXPIRED) with an
+ * existing acceptance row is a safe no-op that returns the current state;
+ * (2) a DB backstop - UNIQUE(service_contract_id) on
+ * `service_contract_acceptances` resolves the narrow window where two
+ * concurrent accept calls both reach the insert, exactly like
  * App\Actions\Booking\CreateBookingFromSuccessfulPaymentAction::resolveInsertRace().
  */
 class AcceptContractAction
@@ -61,7 +73,11 @@ class AcceptContractAction
                     return $this->notFound('Service contract not found.');
                 }
 
-                if ($this->machine->isInStatus($contract, 'ACTIVE')) {
+                if ($contract->accepted_at !== null) {
+                    // Already accepted (PENDING_PAYMENT or further along -
+                    // ACTIVE/SUSPENDED/EXPIRED/CANCELLED) - a safe, idempotent
+                    // no-op that returns the current state rather than
+                    // re-recording acceptance or re-transitioning.
                     return $this->ok(200, 'Service contract already accepted.', ['contract' => ContractPresenter::detail($contract, now())]);
                 }
 
@@ -105,7 +121,7 @@ class AcceptContractAction
                     'created_at' => $timestamp,
                 ]);
 
-                $this->machine->transitionToActive($contract, $now);
+                $this->machine->transitionToPendingPayment($contract, $now);
 
                 DB::table('service_contracts')->where('id', $contract->id)->update([
                     'accepted_at' => $timestamp,
@@ -119,15 +135,15 @@ class AcceptContractAction
                     'id' => UuidBinary::toBinary(UuidBinary::generate()),
                     'service_contract_id' => $contract->id,
                     'from_status_id' => ContractStatuses::id('PENDING_CUSTOMER_ACCEPTANCE'),
-                    'to_status_id' => ContractStatuses::id('ACTIVE'),
+                    'to_status_id' => ContractStatuses::id('PENDING_PAYMENT'),
                     'changed_by_user_id' => $userIdBinary,
-                    'reason' => 'Customer accepted contract terms.',
+                    'reason' => 'Customer accepted contract terms; awaiting Stripe subscription payment.',
                     'changed_at' => $timestamp,
                 ]);
 
                 $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
 
-                return $this->ok(200, 'Service contract accepted successfully.', ['contract' => ContractPresenter::detail($updated, $now)]);
+                return $this->ok(200, 'Service contract accepted successfully; complete billing checkout to activate it.', ['contract' => ContractPresenter::detail($updated, $now)]);
             });
         } catch (UniqueConstraintViolationException) {
             $refreshed = DB::table('service_contracts')->where('id', $contractIdBinary)->first();

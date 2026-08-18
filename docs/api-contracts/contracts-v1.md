@@ -1,4 +1,4 @@
-# BLUE V1 — Phase 10B/10C/10D/10E/10F Service Contracts Contract
+# BLUE V1 — Phase 10B/10C/10D/10E/10F/11 Service Contracts Contract
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
@@ -15,9 +15,12 @@ eligible services". A contract-covered service may later be consumed into a real
 **CONTRACT Booking** with no new customer Payment — see `docs/api-contracts/bookings-v1.md` §"Booking
 source: STANDARD vs CONTRACT" for how that Booking reuses the existing fulfillment system unchanged.
 
-**Out of scope in V1**: Stripe subscriptions, automatic recurring billing, an e-signature provider.
-The Contract's own commercial value (`quoted_amount`/`currency`) is a manual, Admin-entered figure;
-collecting payment for it is an operational process outside this API.
+**BLUE V1 Phase 11** adds real recurring Stripe Billing (Checkout `mode=subscription` +
+Subscriptions + Invoices) for a Contract's commercial value — see "Stripe Billing (Phase 11)"
+below. **Still out of scope in V1**: an e-signature provider, and any billing provider other than
+Stripe. `quoted_amount`/`currency` on `service_contracts` remain a separate, informational
+Admin-entered figure — the actual recurring charge lives on `service_contract_billings`
+(`recurring_amount`/`billing_interval`/currency), frozen at Admin-approval time.
 
 ## CONTRACT eligibility
 
@@ -31,12 +34,18 @@ this is checked, at both request time (`RequestContractAction`) and approval tim
 ## Lifecycle (`service_contract_statuses`)
 
 ```
-REQUESTED -> APPROVED -> PENDING_CUSTOMER_ACCEPTANCE -> ACTIVE -> SUSPENDED
-                                                            |
-                                                            v (lazy, term-ended)
-                                                          EXPIRED
-{REQUESTED, APPROVED, PENDING_CUSTOMER_ACCEPTANCE, ACTIVE, SUSPENDED} -> CANCELLED
+REQUESTED -> APPROVED -> PENDING_CUSTOMER_ACCEPTANCE -> PENDING_PAYMENT -> ACTIVE -> SUSPENDED
+                                                                              |
+                                                                              v (lazy, term-ended)
+                                                                            EXPIRED
+{REQUESTED, APPROVED, PENDING_CUSTOMER_ACCEPTANCE, PENDING_PAYMENT, ACTIVE, SUSPENDED} -> CANCELLED
 ```
+
+**BLUE V1 Phase 11**: customer acceptance (`POST /v1/contracts/{contract}/accept`) no longer
+activates the Contract by itself — it only reaches `PENDING_PAYMENT`. `PENDING_PAYMENT -> ACTIVE`
+fires exactly once, only from `App\Actions\Contract\Billing\ProcessContractBillingWebhookAction`,
+on authoritative Stripe proof (`invoice.paid`) that the subscription's first invoice was paid. A
+Contract sitting in `PENDING_PAYMENT` grants no CONTRACT Booking entitlement.
 
 `App\Support\Contract\ContractStatusMachine` is the one place `service_contracts.status_id` is ever
 written, mirroring `App\Support\Booking\BookingStatusMachine` exactly: every method requires the
@@ -125,9 +134,11 @@ No e-signature provider in V1 — "acceptance" is the authenticated customer's o
 their own `PENDING_CUSTOMER_ACCEPTANCE` Contract. Persists an immutable agreement snapshot + SHA-256
 hash (`service_contract_acceptances`, `App\Support\Payment\CanonicalJson`, the same pattern
 `payment_attempts.checkout_snapshot`/`checkout_snapshot_hash` already uses) and transitions to
-`ACTIVE`. Idempotent two ways: an already-`ACTIVE` Contract with an existing acceptance row returns
-the same `200` result; `UNIQUE(service_contract_id)` on `service_contract_acceptances` is the DB
-backstop for a concurrent retry race. `409` from any other status.
+`PENDING_PAYMENT` (Phase 11 — **not** `ACTIVE`; see "Lifecycle" above). Idempotent two ways: a
+Contract that already has an acceptance row (`PENDING_PAYMENT` or further along) returns the same
+`200` result with its current status; `UNIQUE(service_contract_id)` on
+`service_contract_acceptances` is the DB backstop for a concurrent retry race. `409` from any other
+status.
 
 ### `POST /v1/contracts/{contract}/services/{contractItem}/book`
 
@@ -138,8 +149,68 @@ backstop for a concurrent retry race. `409` from any other status.
 Consumes one entitlement unit into a real Booking. See
 `docs/api-contracts/bookings-v1.md` for the full CONTRACT Booking flow and entitlement-safety rules.
 Only ever succeeds when: the Contract is `ACTIVE` (after a lazy expiry check), the current date is
-`>= starts_at`, the `{contractItem}` belongs to `{contract}`, the entitlement is not exhausted, and
-the appointment slot has remaining capacity.
+`>= starts_at`, `service_contract_billings.status_id` currently authorizes new Bookings (`ACTIVE` or
+`CANCEL_AT_PERIOD_END` — Phase 11), the `{contractItem}` belongs to `{contract}`, the entitlement is
+not exhausted, and the appointment slot has remaining capacity. A Contract billing sitting
+`PENDING_CHECKOUT`, `INCOMPLETE`, or `PAST_DUE` blocks new Bookings even when the Contract row itself
+already reads `ACTIVE`.
+
+## Stripe Billing (Phase 11)
+
+Once an Admin approves a Contract (see "approve" below), the customer must complete a Stripe
+Checkout subscription before the Contract activates:
+
+```
+accept -> PENDING_PAYMENT -> POST .../billing/checkout -> Stripe Checkout (mode=subscription)
+    -> checkout.session.completed (links Subscription, billing -> INCOMPLETE)
+    -> invoice.paid (authoritative) -> billing -> ACTIVE, Contract PENDING_PAYMENT -> ACTIVE
+```
+
+### `POST /v1/contracts/{contract}/billing/checkout`
+
+`auth.customer`. No request body — every monetary/provider value (amount, currency, interval,
+Stripe Price/Product) comes from the immutable `service_contract_billings` snapshot the Admin froze
+at approval time; the customer can never influence any of it. Requires the Contract to be
+`PENDING_PAYMENT` and its billing row to be `PENDING_CHECKOUT` or `INCOMPLETE`. Safe to call more
+than once — a not-yet-completed Checkout Session is resumed (returns the same
+`checkout_session_id`/`checkout_url`, no new Stripe call) rather than creating a second one.
+Returns:
+
+```json
+{ "billing": { "checkout_session_id": "cs_...", "checkout_url": "https://checkout.stripe.com/..." } }
+```
+
+### `POST /v1/contracts/billing/webhooks/stripe`
+
+Deliberately outside `auth.customer` — the caller is Stripe's server, authenticated by signature
+only (`STRIPE_CONTRACT_BILLING_WEBHOOK_SECRET`, a **separate** secret from the Booking PaymentIntent
+webhook's). Handles `checkout.session.completed`, `customer.subscription.created`,
+`customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
+`invoice.payment_failed`, `invoice.payment_action_required`. Only `invoice.paid` may activate
+billing/the Contract — every Subscription/Checkout-Session event only links references and syncs
+period/cancellation metadata, never activates. Deduplicated and idempotent via
+`service_contract_billing_webhook_events` (`UNIQUE(provider_code, provider_event_id)`), exactly
+mirroring the existing Payment webhook ledger. Out-of-order/terminal-state protected: a `CANCELLED`
+billing row, or a Contract no longer `PENDING_PAYMENT`/`ACTIVE`, is never resurrected by a late
+event.
+
+### Billing statuses (`service_contract_billing_statuses`)
+
+`PENDING_CHECKOUT -> INCOMPLETE -> ACTIVE -> {PAST_DUE, CANCEL_AT_PERIOD_END, CANCELLED}`.
+`PAST_DUE` blocks new Contract Bookings immediately (see the `book` endpoint above); a later
+`invoice.paid` restores `ACTIVE`. If billing stays `PAST_DUE` beyond `CONTRACT_BILLING_GRACE_DAYS`
+(default 3), the maintenance command `php artisan contracts:suspend-past-due-billing` escalates the
+Contract itself `ACTIVE -> SUSPENDED` (Stripe's own automatic retries are never re-implemented here).
+
+### Cancellation
+
+`POST /v1/admin/contracts/{contract}/cancel` cancels the operational Contract immediately (as
+before) and, if a linked Stripe Subscription exists and is not already known-`CANCELLED` locally,
+fires exactly one best-effort `cancelSubscription()` request after that transaction commits —
+scheduled via Stripe's own `cancel_at` (set to the Contract's `ends_at` at Checkout-creation time),
+so Stripe can never keep billing a customer past the Contract's own term. The eventual
+`customer.subscription.deleted` webhook — never this call's return value — is what reconciles
+`service_contract_billings.status_id` to `CANCELLED`.
 
 ## Admin endpoints
 
@@ -172,6 +243,9 @@ review a freshly-approved Contract before actually notifying the customer.
   ],
   "quoted_amount": "1200.000000",
   "currency_code": "AED",
+  "billing_interval": "MONTHLY",
+  "recurring_amount": "99.000000",
+  "billing_currency_code": "AED",
   "internal_note": "optional"
 }
 ```
@@ -182,6 +256,12 @@ service" shortcut, by design (see "All services" resolution above). `422` if any
 not `SUBSCRIPTION`-eligible or the `included_visits`/`entitlement_mode` pairing is invalid.
 Already-`APPROVED` is a safe idempotent no-op (V1 has no "amend an approved contract" endpoint —
 items are write-once).
+
+**BLUE V1 Phase 11**: `billing_interval` (`MONTHLY`/`YEARLY`), `recurring_amount`, and
+`billing_currency_code` are now required. This is the one place a `service_contract_billings` row is
+ever created — `PENDING_CHECKOUT`, no Stripe references, an immutable commercial snapshot exactly
+like `service_contract_items`. The customer never supplies any of these three fields anywhere in
+this API.
 
 ### Idempotency & audit
 
@@ -195,8 +275,12 @@ convention exactly.
 ## Schema
 
 See `database/blue_v1_schema.sql` for full DDL: `service_contract_statuses`, `service_contracts`,
-`service_contract_items`, `service_contract_status_history`, `service_contract_acceptances`. Contract
-→ Booking linkage lives on `bookings` itself — see `docs/api-contracts/bookings-v1.md`.
+`service_contract_items`, `service_contract_status_history`, `service_contract_acceptances`, and
+(Phase 11) `service_contract_billing_statuses`, `service_contract_billings`,
+`service_contract_billing_webhook_events`, plus `customer_profiles.stripe_customer_id`. Contract →
+Booking linkage lives on `bookings` itself — see `docs/api-contracts/bookings-v1.md`. The Phase 11
+additive migration lives at `database/phase11_contract_billing_migration.sql` and has not yet been
+applied to any environment.
 
 ## Regression
 

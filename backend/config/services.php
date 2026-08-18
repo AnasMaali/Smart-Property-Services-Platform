@@ -52,6 +52,14 @@ return [
         'secret_key' => env('STRIPE_SECRET_KEY'),
         'publishable_key' => env('STRIPE_PUBLISHABLE_KEY'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+
+        // BLUE V1 Phase 11 Service Contract Billing (Stripe Subscriptions)
+        // webhook endpoint - a DIFFERENT Stripe webhook endpoint than the
+        // Booking PaymentIntent one above, so Stripe issues it its own,
+        // separate signing secret. Reuses the same account 'secret_key'
+        // above for API calls (creating Checkout Sessions/Customers) -
+        // only the webhook secret is endpoint-specific.
+        'contract_billing_webhook_secret' => env('STRIPE_CONTRACT_BILLING_WEBHOOK_SECRET'),
     ],
 
 ];

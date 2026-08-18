@@ -10,6 +10,7 @@ use App\Support\Booking\BookingSources;
 use App\Support\Booking\BookingStatuses;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Contract\Billing\ContractBillingStatuses;
 use App\Support\Contract\ContractStatusMachine;
 use App\Support\Payment\CanonicalJson;
 use App\Support\Pricing\PricingSchemeRepository;
@@ -44,8 +45,32 @@ use InvalidArgumentException;
  * the true fact that no further amount is due for a visit already paid for
  * by the Contract.
  *
- * Lock order: SERVICE_CONTRACT -> SERVICE_CONTRACT_ITEM -> (new) CART ->
- * APPOINTMENT_SLOT -> APPOINTMENT_HOLD -> BOOKING. This is disjoint from
+ * BLUE V1 Phase 11 adds one more precondition between the term check and
+ * the entitlement item lookup: `service_contract_billings.status_id` must
+ * currently authorize new Bookings (App\Support\Contract\Billing\
+ * ContractBillingStatuses::authorizesBooking() - ACTIVE or
+ * CANCEL_AT_PERIOD_END only). A Contract's operational status alone is no
+ * longer sufficient - PENDING_PAYMENT, INCOMPLETE, and PAST_DUE billing all
+ * block new CONTRACT Bookings even though the Contract row itself may
+ * already read ACTIVE (PAST_DUE in particular: the Contract is deliberately
+ * NOT suspended on the first failed renewal - see
+ * App\Actions\Contract\Billing\SuspendContractsPastDueBillingAction's
+ * grace-period docblock - so this booking-time billing check is the actual
+ * enforcement point, not a Contract-status transition). This billing read
+ * is `lockForUpdate()`, exactly mirroring App\Actions\Contract\Billing\
+ * ProcessContractBillingWebhookAction's own SERVICE_CONTRACT ->
+ * SERVICE_CONTRACT_BILLING lock order (a strict prefix of this Action's own
+ * chain below, so the two can never deadlock against each other) - a
+ * concurrent webhook delivery that is mid-transaction degrading this same
+ * billing row (e.g. an in-flight invoice.payment_failed) is therefore
+ * either fully applied before this read (this Action then correctly sees
+ * and enforces the new status) or fully after it (serialized behind this
+ * Action's own row lock) - never observed half-applied or via a stale
+ * snapshot.
+ *
+ * Lock order: SERVICE_CONTRACT -> SERVICE_CONTRACT_BILLING ->
+ * SERVICE_CONTRACT_ITEM -> (new) CART -> APPOINTMENT_SLOT ->
+ * APPOINTMENT_HOLD -> BOOKING. This is disjoint from
  * every existing lock chain: SERVICE_CONTRACT/SERVICE_CONTRACT_ITEM are a
  * new root nothing else in the codebase locks, and the CART this Action
  * locks is one it creates itself inside this same transaction - no other
@@ -124,6 +149,12 @@ class CreateContractBookingAction
 
             if ($contract->starts_at === null || $now->lessThan(Carbon::parse($contract->starts_at))) {
                 return $this->conflict("This contract's term has not started yet.");
+            }
+
+            $billing = DB::table('service_contract_billings')->where('service_contract_id', $contract->id)->lockForUpdate()->first(['status_id']);
+
+            if ($billing === null || ! ContractBillingStatuses::authorizesBooking(ContractBillingStatuses::code((int) $billing->status_id))) {
+                return $this->conflict('This contract\'s billing is not currently active.');
             }
 
             $item = DB::table('service_contract_items')

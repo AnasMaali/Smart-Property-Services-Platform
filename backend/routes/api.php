@@ -44,6 +44,8 @@ use App\Http\Controllers\Api\V1\Checkout\GetCheckoutController;
 use App\Http\Controllers\Api\V1\Checkout\ReleaseAppointmentHoldController;
 use App\Http\Controllers\Api\V1\Checkout\SaveCheckoutLocationController;
 use App\Http\Controllers\Api\V1\Contract\AcceptContractController;
+use App\Http\Controllers\Api\V1\Contract\Billing\ContractBillingWebhookController;
+use App\Http\Controllers\Api\V1\Contract\Billing\CreateContractBillingCheckoutController;
 use App\Http\Controllers\Api\V1\Contract\CreateContractBookingController;
 use App\Http\Controllers\Api\V1\Contract\GetContractController;
 use App\Http\Controllers\Api\V1\Contract\ListContractsController;
@@ -121,11 +123,22 @@ Route::middleware('auth.customer')->group(function () {
     Route::get('/v1/contracts/{contract}', GetContractController::class);
     Route::post('/v1/contracts/{contract}/accept', AcceptContractController::class);
     Route::post('/v1/contracts/{contract}/services/{contractItem}/book', CreateContractBookingController::class);
+
+    // BLUE V1 Phase 11 - Service Contract Stripe Billing (Subscriptions).
+    // No request body: every monetary/provider value is server-authoritative
+    // - see CreateContractBillingCheckoutController.
+    Route::post('/v1/contracts/{contract}/billing/checkout', CreateContractBillingCheckoutController::class);
 });
 
 // Deliberately outside the auth.customer group - the caller is the payment
 // provider's server, authenticated by webhook signature only.
 Route::post('/v1/payments/webhooks/stripe', PaymentWebhookController::class);
+
+// BLUE V1 Phase 11 - a SEPARATE Stripe webhook endpoint (own signing
+// secret) from the one above: Subscription/Invoice/Checkout Session
+// events only, never a PaymentIntent one. Deliberately outside the
+// auth.customer group for the same reason as the Payment webhook above.
+Route::post('/v1/contracts/billing/webhooks/stripe', ContractBillingWebhookController::class);
 
 // BLUE V1 Phase 9A - Admin authentication & authorization foundation.
 // A valid Customer access token never grants access to these routes, and a
