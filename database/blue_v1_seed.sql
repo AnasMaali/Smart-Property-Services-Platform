@@ -1,7 +1,7 @@
 -- =============================================================
 -- BLUE — Smart Property Services Platform
 -- Version 1 Database Seed Data
--- Database: blue_db
+-- Database: target database selected by the mysql client
 -- MySQL Version: 8.0+
 -- Character Set: utf8mb4
 --
@@ -10,7 +10,6 @@
 -- technicians, services, prices, or production data.
 -- =============================================================
 
-USE blue_db;
 
 SET NAMES utf8mb4
 COLLATE utf8mb4_0900_ai_ci;
