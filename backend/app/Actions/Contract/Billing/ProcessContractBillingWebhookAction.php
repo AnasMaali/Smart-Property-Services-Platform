@@ -9,6 +9,7 @@ use App\Support\Contract\Billing\Gateway\NormalizedContractBillingEvent;
 use App\Support\Contract\ContractStatuses;
 use App\Support\Contract\ContractStatusMachine;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
@@ -103,13 +104,31 @@ class ProcessContractBillingWebhookAction
         $event = $this->gateway->parseWebhook($verified->providerEvent);
         $payloadHash = hash('sha256', $rawBody, binary: true);
 
-        $ledger = $this->ledgerEntry($event, $payloadHash);
+        $transactionResult = DB::transaction(function () use ($event, $payloadHash): array {
+            $ledger = $this->ledgerEntry($event, $payloadHash);
 
-        if ($ledger['alreadyProcessed']) {
+            if ($ledger['alreadyProcessed']) {
+                return [
+                    'alreadyProcessed' => true,
+                    'pendingCancelAtScheduleContractId' => null,
+                    'failedToResolve' => false,
+                ];
+            }
+
+            $pendingCancelAtScheduleContractId = $this->process($event, $ledger['id']);
+
+            return [
+                'alreadyProcessed' => false,
+                'pendingCancelAtScheduleContractId' => $pendingCancelAtScheduleContractId,
+                'failedToResolve' => $this->ledgerFailedToResolve($ledger['id']),
+            ];
+        });
+
+        if ($transactionResult['alreadyProcessed']) {
             return $this->ok(200, 'Webhook already processed.', []);
         }
 
-        $pendingCancelAtScheduleContractId = DB::transaction(fn (): ?string => $this->process($event, $ledger['id']));
+        $pendingCancelAtScheduleContractId = $transactionResult['pendingCancelAtScheduleContractId'];
 
         if ($pendingCancelAtScheduleContractId !== null) {
             // Best-effort, fire-and-forget - see class docblock "Term-end
@@ -120,7 +139,7 @@ class ProcessContractBillingWebhookAction
             $this->scheduleCancelAt->handle($pendingCancelAtScheduleContractId);
         }
 
-        if ($this->ledgerFailedToResolve($ledger['id'])) {
+        if ($transactionResult['failedToResolve']) {
             // Real-Stripe-test-mode-verified out-of-order gap: BILLING_RECORD_NOT_FOUND
             // means resolveBilling() could not match this event to any local
             // row YET - most commonly an invoice.paid delivered before
@@ -159,10 +178,22 @@ class ProcessContractBillingWebhookAction
         $timestamp = $now->format('Y-m-d H:i:s.u');
         $providerCode = $this->gateway->providerCode();
 
-        $existing = DB::table('service_contract_billing_webhook_events')
+        // Probe without a locking read first. If the row already exists,
+        // re-read that concrete row under FOR UPDATE so only one delivery
+        // can process a retryable RECEIVED/FAILED event at a time. Avoiding
+        // FOR UPDATE on the missing-key path also avoids taking an
+        // unnecessary gap/next-key lock before the unique INSERT claim.
+        $existingId = DB::table('service_contract_billing_webhook_events')
             ->where('provider_code', $providerCode)
             ->where('provider_event_id', $event->providerEventId)
-            ->first(['id', 'status_id']);
+            ->value('id');
+
+        $existing = $existingId === null
+            ? null
+            : DB::table('service_contract_billing_webhook_events')
+                ->where('id', $existingId)
+                ->lockForUpdate()
+                ->first(['id', 'status_id']);
 
         if ($existing !== null) {
             $processedStatusId = $this->webhookStatusId('PROCESSED');
@@ -181,20 +212,59 @@ class ProcessContractBillingWebhookAction
 
         $idBinary = UuidBinary::toBinary(UuidBinary::generate());
 
-        DB::table('service_contract_billing_webhook_events')->insert([
-            'id' => $idBinary,
-            'provider_code' => $providerCode,
-            'provider_event_id' => $event->providerEventId,
-            'service_contract_billing_id' => null,
-            'event_type' => $event->eventType,
-            'provider_object_reference' => $event->stripeSubscriptionId,
-            'payload_hash' => $payloadHash,
-            'status_id' => $this->webhookStatusId('RECEIVED'),
-            'processing_attempt_count' => 1,
-            'received_at' => $timestamp,
-            'created_at' => $timestamp,
-            'updated_at' => $timestamp,
-        ]);
+        try {
+            DB::table('service_contract_billing_webhook_events')->insert([
+                'id' => $idBinary,
+                'provider_code' => $providerCode,
+                'provider_event_id' => $event->providerEventId,
+                'service_contract_billing_id' => null,
+                'event_type' => $event->eventType,
+                'provider_object_reference' => $event->stripeSubscriptionId,
+                'payload_hash' => $payloadHash,
+                'status_id' => $this->webhookStatusId('RECEIVED'),
+                'processing_attempt_count' => 1,
+                'received_at' => $timestamp,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
+        } catch (UniqueConstraintViolationException $e) {
+            if (! str_contains($e->getMessage(), 'provider_event')) {
+                throw $e;
+            }
+
+            // Another concurrent delivery won the unique INSERT race.
+            // Do NOT recurse through the earlier non-locking probe: under
+            // InnoDB REPEATABLE READ that probe may still see the original
+            // transaction snapshot. A locking read is a current read and
+            // waits for the winning transaction before inspecting the row.
+            $existing = DB::table('service_contract_billing_webhook_events')
+                ->where('provider_code', $providerCode)
+                ->where('provider_event_id', $event->providerEventId)
+                ->lockForUpdate()
+                ->first(['id', 'status_id']);
+
+            if ($existing === null) {
+                throw $e;
+            }
+
+            $processedStatusId = $this->webhookStatusId('PROCESSED');
+            $ignoredStatusId = $this->webhookStatusId('IGNORED');
+
+            if (
+                (int) $existing->status_id === $processedStatusId
+                || (int) $existing->status_id === $ignoredStatusId
+            ) {
+                return ['id' => $existing->id, 'alreadyProcessed' => true];
+            }
+
+            DB::table('service_contract_billing_webhook_events')
+                ->where('id', $existing->id)
+                ->increment('processing_attempt_count', 1, [
+                    'updated_at' => $timestamp,
+                ]);
+
+            return ['id' => $existing->id, 'alreadyProcessed' => false];
+        }
 
         return ['id' => $idBinary, 'alreadyProcessed' => false];
     }

@@ -405,6 +405,75 @@ class ContractBillingTest extends TestCase
         $this->assertCount(1, $this->fakeBillingGateway()->createCheckoutCalls);
     }
 
+    /**
+     * Once the local billing lifecycle has reached INCOMPLETE, a provider
+     * Subscription may already exist. A later customer retry must therefore
+     * never call the provider to create another Checkout Session, even when
+     * no local checkout_session_id is available to resume.
+     */
+    public function test_incomplete_billing_can_never_start_a_second_checkout(): void
+    {
+        $ctx = $this->pendingPaymentContract();
+        $billing = $this->billingRow($ctx['contract_uuid']);
+
+        $incompleteStatusId = (int) DB::table('service_contract_billing_statuses')
+            ->where('code', 'INCOMPLETE')
+            ->value('id');
+
+        DB::table('service_contract_billings')
+            ->where('id', $billing->id)
+            ->update([
+                'status_id' => $incompleteStatusId,
+                'stripe_checkout_session_id' => null,
+                'stripe_checkout_url' => null,
+                'updated_at' => now()->format('Y-m-d H:i:s.u'),
+            ]);
+
+        $this->assertCount(0, $this->fakeBillingGateway()->createCheckoutCalls);
+
+        $this->contractBillingCheckoutHttp(
+            $ctx['customer']['access_token'],
+            $ctx['contract_uuid']
+        )->assertStatus(409);
+
+        $this->assertCount(0, $this->fakeBillingGateway()->createCheckoutCalls);
+        $this->assertSame('INCOMPLETE', $this->billingStatusCode($ctx['contract_uuid']));
+    }
+
+    /**
+     * Webhook-order safety: a Subscription id may become known while the
+     * local row still reads PENDING_CHECKOUT. The presence of that provider
+     * Subscription id is itself sufficient proof that creating a new
+     * Checkout Session would risk creating a duplicate Subscription.
+     */
+    public function test_pending_checkout_with_linked_subscription_can_never_start_another_checkout(): void
+    {
+        $ctx = $this->pendingPaymentContract();
+        $billing = $this->billingRow($ctx['contract_uuid']);
+        $subscriptionId = 'sub_already_linked_'.UuidBinary::generate();
+
+        DB::table('service_contract_billings')
+            ->where('id', $billing->id)
+            ->update([
+                'stripe_subscription_id' => $subscriptionId,
+                'updated_at' => now()->format('Y-m-d H:i:s.u'),
+            ]);
+
+        $this->assertSame('PENDING_CHECKOUT', $this->billingStatusCode($ctx['contract_uuid']));
+        $this->assertCount(0, $this->fakeBillingGateway()->createCheckoutCalls);
+
+        $this->contractBillingCheckoutHttp(
+            $ctx['customer']['access_token'],
+            $ctx['contract_uuid']
+        )->assertStatus(409);
+
+        $this->assertCount(0, $this->fakeBillingGateway()->createCheckoutCalls);
+        $this->assertSame(
+            $subscriptionId,
+            $this->billingRow($ctx['contract_uuid'])->stripe_subscription_id
+        );
+    }
+
     public function test_definitive_checkout_failure_leaves_billing_row_untouched(): void
     {
         $ctx = $this->pendingPaymentContract();

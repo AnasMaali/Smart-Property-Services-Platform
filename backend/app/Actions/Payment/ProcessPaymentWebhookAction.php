@@ -11,6 +11,7 @@ use App\Support\Payment\Gateway\NormalizedPaymentOutcome;
 use App\Support\Payment\Gateway\PaymentGateway;
 use App\Support\Payment\PaymentAttemptStateMachine;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -66,15 +67,27 @@ class ProcessPaymentWebhookAction
         $event = $this->gateway->parseWebhook($verified->providerEvent);
         $payloadHash = hash('sha256', $rawBody, binary: true);
 
-        $ledger = $this->ledgerEntry($event, $payloadHash);
+        $transactionResult = DB::transaction(function () use ($event, $payloadHash): array {
+            $ledger = $this->ledgerEntry($event, $payloadHash);
 
-        if ($ledger['alreadyProcessed']) {
+            if ($ledger['alreadyProcessed']) {
+                return [
+                    'alreadyProcessed' => true,
+                    'resolvedAttemptId' => null,
+                ];
+            }
+
+            return [
+                'alreadyProcessed' => false,
+                'resolvedAttemptId' => $this->process($event, $ledger['id']),
+            ];
+        });
+
+        if ($transactionResult['alreadyProcessed']) {
             return $this->ok(200, 'Webhook already processed.', []);
         }
 
-        $resolvedAttemptId = DB::transaction(function () use ($event, $ledger): ?string {
-            return $this->process($event, $ledger['id']);
-        });
+        $resolvedAttemptId = $transactionResult['resolvedAttemptId'];
 
         if ($resolvedAttemptId !== null) {
             $this->attemptBookingConversion($resolvedAttemptId);
@@ -115,10 +128,21 @@ class ProcessPaymentWebhookAction
         $timestamp = $now->format('Y-m-d H:i:s.u');
         $providerCode = $this->gateway->providerCode();
 
-        $existing = DB::table('payment_webhook_events')
+        // Probe without a locking read first. If the row already exists,
+        // re-read that concrete row under FOR UPDATE so only one delivery
+        // can process a retryable event at a time. The missing-key path goes
+        // directly to the unique INSERT claim instead of locking its gap.
+        $existingId = DB::table('payment_webhook_events')
             ->where('provider_code', $providerCode)
             ->where('provider_event_id', $event->providerEventId)
-            ->first(['id', 'status_id']);
+            ->value('id');
+
+        $existing = $existingId === null
+            ? null
+            : DB::table('payment_webhook_events')
+                ->where('id', $existingId)
+                ->lockForUpdate()
+                ->first(['id', 'status_id']);
 
         if ($existing !== null) {
             $processedStatusId = $this->webhookStatusId('PROCESSED');
@@ -137,20 +161,59 @@ class ProcessPaymentWebhookAction
 
         $idBinary = UuidBinary::toBinary(UuidBinary::generate());
 
-        DB::table('payment_webhook_events')->insert([
-            'id' => $idBinary,
-            'provider_code' => $providerCode,
-            'provider_event_id' => $event->providerEventId,
-            'payment_attempt_id' => null,
-            'event_type' => $event->eventType,
-            'provider_transaction_reference' => $event->providerTransactionReference,
-            'payload_hash' => $payloadHash,
-            'status_id' => $this->webhookStatusId('RECEIVED'),
-            'processing_attempt_count' => 1,
-            'received_at' => $timestamp,
-            'created_at' => $timestamp,
-            'updated_at' => $timestamp,
-        ]);
+        try {
+            DB::table('payment_webhook_events')->insert([
+                'id' => $idBinary,
+                'provider_code' => $providerCode,
+                'provider_event_id' => $event->providerEventId,
+                'payment_attempt_id' => null,
+                'event_type' => $event->eventType,
+                'provider_transaction_reference' => $event->providerTransactionReference,
+                'payload_hash' => $payloadHash,
+                'status_id' => $this->webhookStatusId('RECEIVED'),
+                'processing_attempt_count' => 1,
+                'received_at' => $timestamp,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
+        } catch (UniqueConstraintViolationException $e) {
+            if (! str_contains($e->getMessage(), 'provider_event')) {
+                throw $e;
+            }
+
+            // Another concurrent delivery won the unique INSERT race.
+            // Do NOT recurse through the earlier non-locking probe: under
+            // InnoDB REPEATABLE READ that probe may still see the original
+            // transaction snapshot. Read the concrete winning row using a
+            // locking/current read instead.
+            $existing = DB::table('payment_webhook_events')
+                ->where('provider_code', $providerCode)
+                ->where('provider_event_id', $event->providerEventId)
+                ->lockForUpdate()
+                ->first(['id', 'status_id']);
+
+            if ($existing === null) {
+                throw $e;
+            }
+
+            $processedStatusId = $this->webhookStatusId('PROCESSED');
+            $ignoredStatusId = $this->webhookStatusId('IGNORED');
+
+            if (
+                (int) $existing->status_id === $processedStatusId
+                || (int) $existing->status_id === $ignoredStatusId
+            ) {
+                return ['id' => $existing->id, 'alreadyProcessed' => true];
+            }
+
+            DB::table('payment_webhook_events')
+                ->where('id', $existing->id)
+                ->increment('processing_attempt_count', 1, [
+                    'updated_at' => $timestamp,
+                ]);
+
+            return ['id' => $existing->id, 'alreadyProcessed' => false];
+        }
 
         return ['id' => $idBinary, 'alreadyProcessed' => false];
     }

@@ -28,9 +28,11 @@ use InvalidArgumentException;
  * to the calling customer, is currently PENDING_PAYMENT (implies an
  * accepted agreement already exists - PENDING_PAYMENT is structurally only
  * reachable via App\Actions\Contract\AcceptContractAction), and its billing
- * row is still PENDING_CHECKOUT or INCOMPLETE (never ACTIVE / PAST_DUE /
- * CANCEL_AT_PERIOD_END / CANCELLED - any of those means a Subscription
- * already exists or the Contract is terminal).
+ * row is still PENDING_CHECKOUT. INCOMPLETE / ACTIVE / PAST_DUE /
+ * CANCEL_AT_PERIOD_END / CANCELLED are never allowed to start another
+ * Checkout because a Subscription may already exist. A linked
+ * stripe_subscription_id is also an explicit stop condition even if an
+ * out-of-order webhook left the local status temporarily PENDING_CHECKOUT.
  *
  * Two-transaction shape, exactly mirroring
  * App\Actions\Payment\CreatePaymentAttemptAction: Transaction A locks the
@@ -125,15 +127,22 @@ class CreateContractBillingCheckoutAction
 
         $billingStatusCode = ContractBillingStatuses::code((int) $billing->status_id);
 
-        if (! in_array($billingStatusCode, ['PENDING_CHECKOUT', 'INCOMPLETE'], true)) {
+        if ($billingStatusCode !== 'PENDING_CHECKOUT') {
             return ['error' => $this->conflict('This contract already has a Stripe subscription in progress or active.')];
         }
 
-        if ($billing->stripe_checkout_session_id !== null && $billingStatusCode === 'PENDING_CHECKOUT') {
-            // Resume: a Checkout Session already exists and has not been
-            // completed (checkout.session.completed would have moved
-            // billing to INCOMPLETE) or superseded - return it unchanged,
-            // no Stripe call.
+        if ($billing->stripe_subscription_id !== null) {
+            // A provider webhook may link the Subscription before the local
+            // Checkout Session response is persisted. Once a Subscription
+            // exists, never create another Checkout Session as a recovery
+            // mechanism: Stripe API v1 idempotency keys are not permanent.
+            return ['error' => $this->conflict('This contract already has a Stripe subscription in progress or active.')];
+        }
+
+        if ($billing->stripe_checkout_session_id !== null) {
+            // Resume the one existing not-yet-completed Checkout Session.
+            // No provider call and therefore no possibility of creating a
+            // second Subscription.
             return ['error' => $this->ok(200, 'Billing checkout already in progress.', [
                 'billing' => [
                     'checkout_session_id' => $billing->stripe_checkout_session_id,
