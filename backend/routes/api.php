@@ -68,16 +68,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 
-Route::post('/v1/auth/register', RegisterController::class);
-Route::post('/v1/auth/verify-phone', VerifyPhoneController::class);
-Route::post('/v1/auth/resend-otp', ResendOtpController::class);
-Route::post('/v1/auth/login', LoginController::class);
-Route::post('/v1/auth/refresh', RefreshController::class);
+Route::post('/v1/auth/register', RegisterController::class)->middleware('throttle:auth-register');
+Route::post('/v1/auth/verify-phone', VerifyPhoneController::class)->middleware('throttle:auth-otp-verify');
+Route::post('/v1/auth/resend-otp', ResendOtpController::class)->middleware('throttle:auth-otp-issue');
+Route::post('/v1/auth/login', LoginController::class)->middleware('throttle:auth-login');
+Route::post('/v1/auth/refresh', RefreshController::class)->middleware('throttle:auth-refresh');
 Route::post('/v1/auth/logout', LogoutController::class);
 Route::post('/v1/auth/logout-all', LogoutAllController::class);
-Route::post('/v1/auth/forgot-password', ForgotPasswordController::class);
-Route::post('/v1/auth/verify-password-reset-otp', VerifyPasswordResetOtpController::class);
-Route::post('/v1/auth/reset-password', ResetPasswordController::class);
+Route::post('/v1/auth/forgot-password', ForgotPasswordController::class)->middleware('throttle:auth-otp-issue');
+Route::post('/v1/auth/verify-password-reset-otp', VerifyPasswordResetOtpController::class)->middleware('throttle:auth-otp-verify');
+Route::post('/v1/auth/reset-password', ResetPasswordController::class)->middleware('throttle:auth-reset');
 
 Route::middleware('auth.customer')->group(function () {
     Route::post('/v1/auth/change-password', ChangePasswordController::class);
@@ -152,7 +152,7 @@ Route::post('/v1/contracts/billing/webhooks/stripe', ContractBillingWebhookContr
 // LogoutAllAction only require a valid session belonging to an ACTIVE user
 // and never check role, so they already work unchanged for Admin sessions.
 Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('throttle:5,1');
-Route::post('/v1/admin/auth/refresh', AdminRefreshController::class);
+Route::post('/v1/admin/auth/refresh', AdminRefreshController::class)->middleware('throttle:auth-refresh');
 
 Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/me', AdminMeController::class);

@@ -473,4 +473,49 @@ class LoginTest extends TestCase
         $countAfter = DB::table('auth_sessions')->where('user_id', UuidBinary::toBinary($customer['user_uuid']))->count();
         $this->assertSame(0, $countAfter);
     }
+
+    public function test_repeated_failed_login_attempts_are_rate_limited(): void
+    {
+        $customer = $this->createCustomer();
+
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $response = $this->postJson('/api/v1/auth/login', $this->loginPayload($customer, [
+                'password' => 'WrongPassw0rd',
+            ]));
+
+            $this->assertNotSame(429, $response->status());
+        }
+
+        $this->postJson('/api/v1/auth/login', $this->loginPayload($customer, [
+            'password' => 'WrongPassw0rd',
+        ]))->assertStatus(429);
+    }
+
+
+    public function test_same_phone_is_rate_limited_even_when_source_ip_changes(): void
+    {
+        $customer = $this->createCustomer();
+
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $response = $this
+                ->withServerVariables([
+                    'REMOTE_ADDR' => '198.51.100.'.$attempt,
+                ])
+                ->postJson('/api/v1/auth/login', $this->loginPayload($customer, [
+                    'password' => 'WrongPassw0rd',
+                ]));
+
+            $this->assertNotSame(429, $response->status());
+        }
+
+        $this
+            ->withServerVariables([
+                'REMOTE_ADDR' => '203.0.113.250',
+            ])
+            ->postJson('/api/v1/auth/login', $this->loginPayload($customer, [
+                'password' => 'WrongPassw0rd',
+            ]))
+            ->assertStatus(429);
+    }
+
 }
