@@ -54,6 +54,29 @@ class RemoveCartItemTest extends TestCase
         $this->assertDatabaseHas('cart_items', ['id' => UuidBinary::toBinary($itemUuid)]);
     }
 
+
+    public function test_unknown_item_uuid_returns_not_found_on_remove(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->removeCartItem(
+            $customer['access_token'],
+            UuidBinary::generate()
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
+    public function test_malformed_item_uuid_returns_clean_not_found_on_remove(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->removeCartItem(
+            $customer['access_token'],
+            'not-a-uuid'
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
     public function test_requires_auth(): void
     {
         $this->deleteJson('/api/v1/cart/items/'.UuidBinary::generate())

@@ -313,6 +313,68 @@ class CreatePaymentTest extends TestCase
         $this->getPayment($customer['access_token'], UuidBinary::generate())->assertStatus(404);
     }
 
+
+    public function test_malformed_payment_uuid_returns_clean_not_found(): void
+    {
+        $customer = $this->readyForPaymentCustomer();
+
+        $this->getPayment(
+            $customer['access_token'],
+            'not-a-uuid'
+        )->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Payment not found.',
+            ]);
+    }
+
+    public function test_foreign_and_unknown_payment_are_publicly_indistinguishable(): void
+    {
+        $owner = $this->readyForPaymentCustomer();
+        $stranger = $this->createAuthenticatedCartCustomer();
+
+        $created = $this->createPayment(
+            $owner['access_token'],
+            (string) Str::uuid()
+        );
+
+        $foreignPaymentUuid = $created->json('data.payment.uuid');
+
+        $foreign = $this->getPayment(
+            $stranger['access_token'],
+            $foreignPaymentUuid
+        );
+
+        $unknown = $this->getPayment(
+            $stranger['access_token'],
+            UuidBinary::generate()
+        );
+
+        $foreign->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Payment not found.',
+            ]);
+
+        $unknown->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Payment not found.',
+            ]);
+
+        $this->assertSame(
+            $foreign->json('message'),
+            $unknown->json('message')
+        );
+    }
+
+    public function test_get_payment_requires_authentication(): void
+    {
+        $this->getJson(
+            '/api/v1/payments/'.UuidBinary::generate()
+        )->assertStatus(401);
+    }
+
     public function test_get_payment_response_never_leaks_hashes_or_snapshot(): void
     {
         $customer = $this->readyForPaymentCustomer();

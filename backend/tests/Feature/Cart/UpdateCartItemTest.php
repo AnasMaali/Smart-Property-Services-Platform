@@ -131,6 +131,19 @@ class UpdateCartItemTest extends TestCase
         $this->assertDatabaseHas('cart_items', ['id' => UuidBinary::toBinary($itemUuid), 'quantity' => 1]);
     }
 
+
+    public function test_malformed_item_uuid_returns_clean_not_found_on_update(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->updateCartItem(
+            $customer['access_token'],
+            'not-a-uuid',
+            ['quantity' => 2]
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
     public function test_unknown_item_uuid_returns_not_found(): void
     {
         $customer = $this->createAuthenticatedCartCustomer();

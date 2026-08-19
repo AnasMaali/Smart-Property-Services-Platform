@@ -211,4 +211,110 @@ class PropertyTest extends TestCase
         $this->assertSame(36, strlen($uuid));
         $this->assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $uuid);
     }
+
+    public function test_property_list_never_includes_another_customers_property(): void
+    {
+        $owner = $this->createAuthenticatedCartCustomer();
+        $ownersProperty = $this->createProperty($owner['access_token']);
+
+        $stranger = $this->createAuthenticatedCartCustomer();
+        $strangersProperty = $this->createProperty($stranger['access_token']);
+
+        $response = $this->listProperties($stranger['access_token']);
+
+        $response->assertStatus(200);
+
+        $uuids = collect($response->json('data.properties'))
+            ->pluck('uuid')
+            ->all();
+
+        $this->assertContains($strangersProperty['uuid'], $uuids);
+        $this->assertNotContains($ownersProperty['uuid'], $uuids);
+    }
+
+    public function test_foreign_customer_update_returns_404_and_does_not_mutate_property(): void
+    {
+        $owner = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($owner['access_token']);
+
+        $before = $this->propertyRow($property['uuid']);
+        $originalLabel = $before->label;
+
+        $stranger = $this->createAuthenticatedCartCustomer();
+
+        $this->updatePropertyHttp(
+            $stranger['access_token'],
+            $property['uuid'],
+            ['label' => 'Unauthorized mutation']
+        )->assertStatus(404);
+
+        $after = $this->propertyRow($property['uuid']);
+
+        $this->assertSame($originalLabel, $after->label);
+        $this->assertSame(1, (int) $after->is_active);
+    }
+
+    public function test_foreign_customer_cannot_archive_another_customers_property(): void
+    {
+        $owner = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($owner['access_token']);
+
+        $stranger = $this->createAuthenticatedCartCustomer();
+
+        $response = $this->deletePropertyHttp(
+            $stranger['access_token'],
+            $property['uuid']
+        );
+
+        $response->assertStatus(404)
+            ->assertJson(['success' => false]);
+
+        $row = $this->propertyRow($property['uuid']);
+
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row->is_active);
+    }
+
+    public function test_update_with_malformed_uuid_returns_clean_404_json(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->updatePropertyHttp(
+            $customer['access_token'],
+            'not-a-uuid',
+            ['label' => 'Should never update']
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
+    public function test_archive_with_malformed_uuid_returns_clean_404_json(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->deletePropertyHttp(
+            $customer['access_token'],
+            'not-a-uuid'
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
+    public function test_unknown_valid_property_uuid_is_indistinguishable_for_update_and_archive(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $unknownUuid = (string) Str::uuid();
+
+        $this->updatePropertyHttp(
+            $customer['access_token'],
+            $unknownUuid,
+            ['label' => 'Does not exist']
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+
+        $this->deletePropertyHttp(
+            $customer['access_token'],
+            $unknownUuid
+        )->assertStatus(404)
+            ->assertJson(['success' => false]);
+    }
+
 }
