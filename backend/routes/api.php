@@ -151,7 +151,7 @@ Route::post('/v1/contracts/billing/webhooks/stripe', ContractBillingWebhookContr
 // /v1/auth/logout and /v1/auth/logout-all routes above - LogoutAction and
 // LogoutAllAction only require a valid session belonging to an ACTIVE user
 // and never check role, so they already work unchanged for Admin sessions.
-Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('throttle:5,1');
+Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('throttle:admin-auth-login');
 Route::post('/v1/admin/auth/refresh', AdminRefreshController::class)->middleware('throttle:auth-refresh');
 
 Route::middleware('auth.admin')->group(function () {

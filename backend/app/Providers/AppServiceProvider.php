@@ -73,6 +73,21 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // Brute-force protection for Admin/Super Admin login. Keep the
+        // identity bucket independent of source IP so rotating through
+        // multiple IP addresses cannot bypass protection for one account.
+        // The separate IP bucket also limits phone-number enumeration and
+        // distributed credential spraying from one source.
+        RateLimiter::for('admin-auth-login', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(5)
+                    ->by('admin-auth-login-identity:'.$identityKey($request, ['phone_number'])),
+
+                Limit::perMinute(20)
+                    ->by('admin-auth-login-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Account-creation flooding protection.
         RateLimiter::for('auth-register', function (Request $request) use ($identityKey, $ipKey): array {
             return [

@@ -302,6 +302,32 @@ class AdminLoginTest extends TestCase
         $sixthAttempt->assertStatus(429);
     }
 
+    public function test_same_admin_phone_is_rate_limited_even_when_source_ip_changes(): void
+    {
+        $admin = $this->createUser(['ADMIN']);
+
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $response = $this
+                ->withServerVariables([
+                    'REMOTE_ADDR' => '198.51.100.'.$attempt,
+                ])
+                ->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin, [
+                    'password' => 'WrongPassw0rd',
+                ]));
+
+            $this->assertNotSame(429, $response->status());
+        }
+
+        $this
+            ->withServerVariables([
+                'REMOTE_ADDR' => '203.0.113.250',
+            ])
+            ->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin, [
+                'password' => 'WrongPassw0rd',
+            ]))
+            ->assertStatus(429);
+    }
+
     public function test_successful_login_is_not_broken_by_rate_limiting(): void
     {
         $admin = $this->createUser(['ADMIN']);
