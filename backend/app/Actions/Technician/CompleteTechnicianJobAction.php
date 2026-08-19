@@ -4,6 +4,8 @@ namespace App\Actions\Technician;
 
 use App\Actions\Booking\TransitionBookingItemStatusAction;
 use App\Actions\Technician\Concerns\TechnicianJobPreconditions;
+use App\Support\Admin\AdminMutationAuthorizationOutcome;
+use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Technician\TechnicianJobOutcome;
 use App\Support\Technician\TechnicianJobResult;
@@ -39,6 +41,7 @@ class CompleteTechnicianJobAction
     public function __construct(
     private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
     private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
+    private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
 ) {}
 
     /**
@@ -62,16 +65,24 @@ class CompleteTechnicianJobAction
         $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
 
         $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason, $afterMutation): TechnicianJobResult {
+            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+            if ($authorization === AdminMutationAuthorizationOutcome::ACTOR_NOT_FOUND) {
+                return new TechnicianJobResult(
+                    TechnicianJobOutcome::ACTOR_NOT_FOUND
+                );
+            }
+
+            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                return new TechnicianJobResult(
+                    TechnicianJobOutcome::ACTOR_NOT_AUTHORIZED
+                );
+            }
+
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
                 return new TechnicianJobResult(TechnicianJobOutcome::ITEM_NOT_FOUND);
-            }
-
-            $actorRejection = $this->rejectUnauthorizedActor($actorIdBinary);
-
-            if ($actorRejection !== null) {
-                return $actorRejection;
             }
 
             $itemStatusCode = BookingItemStatuses::code((int) $item->status_id);

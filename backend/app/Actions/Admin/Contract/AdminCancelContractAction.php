@@ -6,6 +6,8 @@ use App\Actions\Contract\Billing\CancelContractBillingSubscriptionAction;
 use App\Actions\Contract\Concerns\AppliesContractExpiry;
 use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminMutationAuthorizationOutcome;
+use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Admin\AdminContractPresenter;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Contract\ContractStatuses;
@@ -59,6 +61,7 @@ class AdminCancelContractAction
     public function __construct(
         private readonly CancelContractBillingSubscriptionAction $cancelBillingSubscription,
         private readonly ContractStatusMachine $machine = new ContractStatusMachine,
+        private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
     ) {}
 
     /**
@@ -76,6 +79,12 @@ class AdminCancelContractAction
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
         $result = DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary, $reason, &$transitioned): array {
+            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                return $this->forbidden();
+            }
+
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -145,4 +154,18 @@ class AdminCancelContractAction
 
         return $result;
     }
+
+    /**
+     * @return array{success: bool, status: int, message: string, data: null}
+     */
+    private function forbidden(): array
+    {
+        return [
+            'success' => false,
+            'status' => 403,
+            'message' => 'You are not authorized to perform this action.',
+            'data' => null,
+        ];
+    }
+
 }

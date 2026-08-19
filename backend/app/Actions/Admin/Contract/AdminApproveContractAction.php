@@ -4,6 +4,8 @@ namespace App\Actions\Admin\Contract;
 
 use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminMutationAuthorizationOutcome;
+use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Admin\AdminContractPresenter;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Contract\Billing\ContractBillingStatuses;
@@ -65,6 +67,7 @@ class AdminApproveContractAction
         private readonly ContractBillingGateway $billingGateway,
         private readonly ContractStatusMachine $machine = new ContractStatusMachine,
         private readonly ServiceCapabilities $capabilities = new ServiceCapabilities,
+        private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
     ) {}
 
     /**
@@ -82,6 +85,12 @@ class AdminApproveContractAction
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
         return DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary, $data): array {
+            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                return $this->forbidden();
+            }
+
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -227,4 +236,18 @@ class AdminApproveContractAction
             return $this->ok(200, 'Service contract approved successfully.', ['contract' => AdminContractPresenter::detail($updated)]);
         });
     }
+
+    /**
+     * @return array{success: bool, status: int, message: string, data: null}
+     */
+    private function forbidden(): array
+    {
+        return [
+            'success' => false,
+            'status' => 403,
+            'message' => 'You are not authorized to perform this action.',
+            'data' => null,
+        ];
+    }
+
 }

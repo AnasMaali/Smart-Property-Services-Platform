@@ -3,6 +3,8 @@
 namespace App\Actions\Technician;
 use App\Actions\Booking\SyncBookingStatusFromItemsAction;
 use App\Actions\Booking\TransitionBookingItemStatusAction;
+use App\Support\Admin\AdminMutationAuthorizationOutcome;
+use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Technician\TechnicianAssignmentOutcome;
 use App\Support\Technician\TechnicianAssignmentResult;
@@ -80,6 +82,7 @@ class AssignTechnicianToBookingItemAction
     public function __construct(
         private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
         private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
+        private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
     ) {}
 
     public function assign(
@@ -101,6 +104,20 @@ class AssignTechnicianToBookingItemAction
             $internalNote,
             $afterMutation
         ): TechnicianAssignmentResult {
+            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+            if ($authorization === AdminMutationAuthorizationOutcome::ACTOR_NOT_FOUND) {
+                return new TechnicianAssignmentResult(
+                    TechnicianAssignmentOutcome::ACTOR_NOT_FOUND
+                );
+            }
+
+            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                return new TechnicianAssignmentResult(
+                    TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED
+                );
+            }
+
             $item = DB::table('booking_items')
                 ->where('id', $itemIdBinary)
                 ->lockForUpdate()
@@ -150,8 +167,7 @@ class AssignTechnicianToBookingItemAction
 
             $eligibility = $this->validateEligibility(
                 $item,
-                $technicianIdBinary,
-                $actorIdBinary
+                $technicianIdBinary
             );
 
             if ($eligibility instanceof TechnicianAssignmentResult) {
@@ -249,6 +265,20 @@ class AssignTechnicianToBookingItemAction
 
         try {
             return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $releaseReason, $internalNote, $afterMutation): TechnicianAssignmentResult {
+                $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+                if ($authorization === AdminMutationAuthorizationOutcome::ACTOR_NOT_FOUND) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ACTOR_NOT_FOUND
+                    );
+                }
+
+                if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED
+                    );
+                }
+
                 $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
                 if ($item === null) {
@@ -276,7 +306,7 @@ class AssignTechnicianToBookingItemAction
                     );
                 }
 
-                $eligibility = $this->validateEligibility($item, $technicianIdBinary, $actorIdBinary);
+                $eligibility = $this->validateEligibility($item, $technicianIdBinary);
 
                 if ($eligibility instanceof TechnicianAssignmentResult) {
                     return $eligibility;
@@ -335,7 +365,7 @@ class AssignTechnicianToBookingItemAction
      *
      * @return TechnicianAssignmentResult|array{0: int}
      */
-    private function validateEligibility(object $item, string $technicianIdBinary, string $actorIdBinary): TechnicianAssignmentResult|array
+    private function validateEligibility(object $item, string $technicianIdBinary): TechnicianAssignmentResult|array
     {
         $technician = DB::table('technicians')->where('id', $technicianIdBinary)->lockForUpdate()->first();
 
@@ -347,23 +377,6 @@ class AssignTechnicianToBookingItemAction
 
         if ((int) $isAssignable !== 1) {
             return new TechnicianAssignmentResult(TechnicianAssignmentOutcome::TECHNICIAN_NOT_ELIGIBLE);
-        }
-
-        $actorExists = DB::table('users')->where('id', $actorIdBinary)->exists();
-
-        if (! $actorExists) {
-            return new TechnicianAssignmentResult(TechnicianAssignmentOutcome::ACTOR_NOT_FOUND);
-        }
-
-        $actorIsAdmin = DB::table('user_roles')
-            ->join('roles', 'roles.id', '=', 'user_roles.role_id')
-            ->where('user_roles.user_id', $actorIdBinary)
-            ->where('roles.is_active', 1)
-            ->whereIn('roles.code', ['ADMIN', 'SUPER_ADMIN'])
-            ->exists();
-
-        if (! $actorIsAdmin) {
-            return new TechnicianAssignmentResult(TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED);
         }
 
         $requiredSpecializationIds = $this->requiredSpecializationIds($item->service_id);

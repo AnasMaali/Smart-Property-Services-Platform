@@ -4,6 +4,8 @@ namespace App\Actions\Admin\Contract;
 
 use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminMutationAuthorizationOutcome;
+use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Admin\AdminContractPresenter;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Contract\ContractStatuses;
@@ -29,7 +31,10 @@ class AdminSendContractForAcceptanceAction
 {
     use BuildsCartResult;
 
-    public function __construct(private readonly ContractStatusMachine $machine = new ContractStatusMachine) {}
+    public function __construct(
+        private readonly ContractStatusMachine $machine = new ContractStatusMachine,
+        private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -45,6 +50,12 @@ class AdminSendContractForAcceptanceAction
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
         return DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary): array {
+            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
+
+            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                return $this->forbidden();
+            }
+
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -87,4 +98,18 @@ class AdminSendContractForAcceptanceAction
             return $this->ok(200, 'Service contract sent for customer acceptance.', ['contract' => AdminContractPresenter::detail($updated)]);
         });
     }
+
+    /**
+     * @return array{success: bool, status: int, message: string, data: null}
+     */
+    private function forbidden(): array
+    {
+        return [
+            'success' => false,
+            'status' => 403,
+            'message' => 'You are not authorized to perform this action.',
+            'data' => null,
+        ];
+    }
+
 }

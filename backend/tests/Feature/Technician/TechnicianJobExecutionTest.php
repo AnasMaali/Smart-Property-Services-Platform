@@ -560,6 +560,91 @@ class TechnicianJobExecutionTest extends TestCase
         );
     }
 
+
+    public function test_deactivated_admin_cannot_start_work_when_domain_action_is_called_directly(): void
+    {
+        $job = $this->assignedJobFixture();
+
+        DB::table('users')
+            ->where('id', UuidBinary::toBinary($job['admin']))
+            ->update([
+                'account_status_id' => (int) DB::table('user_account_statuses')
+                    ->where('code', 'DEACTIVATED')
+                    ->value('id'),
+            ]);
+
+        $result = $this->startAction()->start(
+            $job['itemUuid'],
+            $job['technician']['uuid'],
+            $job['admin'],
+            'Attempted by deactivated Admin.'
+        );
+
+        $this->assertSame(
+            TechnicianJobOutcome::ACTOR_NOT_AUTHORIZED,
+            $result->outcome
+        );
+
+        $this->assertSame(
+            'ASSIGNED',
+            $this->itemStatusCode($job['fixture']['item']->id)
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('booking_item_status_history')
+                ->where('booking_item_id', $job['fixture']['item']->id)
+                ->where(
+                    'to_status_id',
+                    BookingItemStatuses::id('IN_PROGRESS')
+                )
+                ->count()
+        );
+    }
+
+    public function test_admin_role_removal_blocks_direct_complete_work_domain_call(): void
+    {
+        $job = $this->startedJobFixture();
+
+        DB::table('user_roles')
+            ->where('user_id', UuidBinary::toBinary($job['admin']))
+            ->delete();
+
+        $result = $this->completeAction()->complete(
+            $job['itemUuid'],
+            $job['technician']['uuid'],
+            $job['admin'],
+            'Attempted after Admin role removal.'
+        );
+
+        $this->assertSame(
+            TechnicianJobOutcome::ACTOR_NOT_AUTHORIZED,
+            $result->outcome
+        );
+
+        $this->assertSame(
+            'IN_PROGRESS',
+            $this->itemStatusCode($job['fixture']['item']->id)
+        );
+
+        $this->assertNull(
+            DB::table('booking_items')
+                ->where('id', $job['fixture']['item']->id)
+                ->value('completed_at')
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('booking_item_status_history')
+                ->where('booking_item_id', $job['fixture']['item']->id)
+                ->where(
+                    'to_status_id',
+                    BookingItemStatuses::id('COMPLETED')
+                )
+                ->count()
+        );
+    }
+
     public function test_start_failure_rolls_back_everything(): void
     {
         $job = $this->assignedJobFixture();

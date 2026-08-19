@@ -17,38 +17,6 @@ use Illuminate\Support\Facades\DB;
 trait TechnicianJobPreconditions
 {
     /**
-     * Actor authorization mirrors
-     * App\Actions\Technician\AssignTechnicianToBookingItemAction exactly:
-     * technicians have no system accounts in BLUE V1
-     * (docs/03-features-and-requirements/07-technician-assignment.md), so the
-     * only valid caller of Start/Complete Work is an authenticated ADMIN or
-     * SUPER_ADMIN acting on the Technician's behalf. Returns null when the
-     * actor is authorized, otherwise the rejection result to return
-     * immediately.
-     */
-    private function rejectUnauthorizedActor(string $actorIdBinary): ?TechnicianJobResult
-    {
-        $actorExists = DB::table('users')->where('id', $actorIdBinary)->exists();
-
-        if (! $actorExists) {
-            return new TechnicianJobResult(TechnicianJobOutcome::ACTOR_NOT_FOUND);
-        }
-
-        $actorIsAdmin = DB::table('user_roles')
-            ->join('roles', 'roles.id', '=', 'user_roles.role_id')
-            ->where('user_roles.user_id', $actorIdBinary)
-            ->where('roles.is_active', 1)
-            ->whereIn('roles.code', ['ADMIN', 'SUPER_ADMIN'])
-            ->exists();
-
-        if (! $actorIsAdmin) {
-            return new TechnicianJobResult(TechnicianJobOutcome::ACTOR_NOT_AUTHORIZED);
-        }
-
-        return null;
-    }
-
-    /**
      * The Booking Item's current active primary assignment - mirrors
      * AssignTechnicianToBookingItemAction::activePrimaryAssignment() exactly.
      * A plain (non-locking) read is intentional and sufficient: both this

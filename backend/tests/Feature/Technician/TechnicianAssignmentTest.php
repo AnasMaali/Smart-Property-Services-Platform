@@ -689,6 +689,85 @@ class TechnicianAssignmentTest extends TestCase
         );
     }
 
+
+    public function test_deactivated_admin_cannot_assign_when_domain_action_is_called_directly(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+        $technician = $this->createEligibleTechnician(
+            $fixture['specialization_id']
+        );
+        $admin = $this->createAdminUser();
+
+        DB::table('users')
+            ->where('id', UuidBinary::toBinary($admin))
+            ->update([
+                'account_status_id' => (int) DB::table('user_account_statuses')
+                    ->where('code', 'DEACTIVATED')
+                    ->value('id'),
+            ]);
+
+        $result = $this->action()->assign(
+            UuidBinary::toString($fixture['item']->id),
+            $technician['uuid'],
+            $admin
+        );
+
+        $this->assertSame(
+            TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED,
+            $result->outcome
+        );
+
+        $this->assertNull(
+            $this->activeAssignmentForItem($fixture['item'])
+        );
+
+        $freshItem = DB::table('booking_items')
+            ->where('id', $fixture['item']->id)
+            ->first();
+
+        $this->assertSame(
+            'PENDING_ASSIGNMENT',
+            DB::table('booking_item_statuses')
+                ->where('id', $freshItem->status_id)
+                ->value('code')
+        );
+    }
+
+    public function test_admin_role_removal_blocks_direct_assignment_domain_call(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+        $technician = $this->createEligibleTechnician(
+            $fixture['specialization_id']
+        );
+        $admin = $this->createAdminUser();
+
+        DB::table('user_roles')
+            ->where('user_id', UuidBinary::toBinary($admin))
+            ->delete();
+
+        $result = $this->action()->assign(
+            UuidBinary::toString($fixture['item']->id),
+            $technician['uuid'],
+            $admin
+        );
+
+        $this->assertSame(
+            TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED,
+            $result->outcome
+        );
+
+        $this->assertNull(
+            $this->activeAssignmentForItem($fixture['item'])
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->count()
+        );
+    }
+
     public function test_assignment_failure_rolls_back_everything(): void
     {
         $fixture = $this->bookingWithAssignableItem();
