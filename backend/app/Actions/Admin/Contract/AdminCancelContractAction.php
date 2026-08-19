@@ -75,7 +75,7 @@ class AdminCancelContractAction
         $transitioned = false;
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
-        $result = DB::transaction(function () use ($contractIdBinary, $actorIdBinary, $reason, &$transitioned): array {
+        $result = DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary, $reason, &$transitioned): array {
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -114,6 +114,15 @@ class AdminCancelContractAction
             // the Contract transition, so the two can never disagree.
             $this->cancelBillingSubscription->markCancellationRequested($contract->id, $now);
 
+            AdminAuditLogger::record(
+                $request,
+                $actor,
+                'CONTRACT_CANCELLED',
+                'SERVICE_CONTRACT',
+                $contractUuid,
+                ['reason' => $reason]
+            );
+
             $transitioned = true;
 
             $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
@@ -122,8 +131,6 @@ class AdminCancelContractAction
         });
 
         if ($transitioned) {
-            AdminAuditLogger::record($request, $actor, 'CONTRACT_CANCELLED', 'SERVICE_CONTRACT', $contractUuid, ['reason' => $reason]);
-
             // Best-effort, fire-and-forget FIRST delivery attempt for the
             // durably-recorded request above - see class docblock.
             // Deliberately outside the domain transaction and never allowed

@@ -39,11 +39,11 @@ use RuntimeException;
  * only place a provider-side subscription checkout is created, once the
  * customer has accepted and the Contract has reached PENDING_PAYMENT.
  *
- * Audit logging mirrors App\Actions\Admin\Technician\
- * AdminAssignTechnicianAction: a deliberate, immediate second write AFTER
- * the domain transaction has already committed, and only ever for the real
- * REQUESTED -> APPROVED transition - never for the idempotent no-op path -
- * so a retried call never produces a duplicate audit row.
+ * Security audit logging is part of the SAME database transaction as the
+ * privileged REQUESTED -> APPROVED mutation. If the audit row cannot be
+ * written, the Contract mutation is rolled back too, so an Admin state
+ * change can never commit without its corresponding audit record. The
+ * idempotent already-APPROVED path performs neither write.
  *
  * Legacy-data backstop (Phase 11 migration safety): every APPROVED Contract
  * is structurally guaranteed to already have a `service_contract_billings`
@@ -79,10 +79,9 @@ class AdminApproveContractAction
             return $this->notFound('Service contract not found.');
         }
 
-        $transitioned = false;
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
-        $result = DB::transaction(function () use ($contractIdBinary, $actorIdBinary, $data, &$transitioned): array {
+        return DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary, $data): array {
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -214,19 +213,18 @@ class AdminApproveContractAction
                 'changed_at' => $timestamp,
             ]);
 
-            $transitioned = true;
+            AdminAuditLogger::record(
+                $request,
+                $actor,
+                'CONTRACT_APPROVED',
+                'SERVICE_CONTRACT',
+                $contractUuid,
+                ['services_count' => count($data['services'])]
+            );
 
             $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
 
             return $this->ok(200, 'Service contract approved successfully.', ['contract' => AdminContractPresenter::detail($updated)]);
         });
-
-        if ($transitioned) {
-            AdminAuditLogger::record($request, $actor, 'CONTRACT_APPROVED', 'SERVICE_CONTRACT', $contractUuid, [
-                'services_count' => count($data['services']),
-            ]);
-        }
-
-        return $result;
     }
 }

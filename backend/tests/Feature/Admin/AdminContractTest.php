@@ -4,6 +4,7 @@ namespace Tests\Feature\Admin;
 
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
 use Tests\TestCase;
 
@@ -165,4 +166,248 @@ class AdminContractTest extends TestCase
         $logs = $this->auditLogsFor($contractUuid);
         $this->assertTrue($logs->contains(fn ($log) => $log->action_code === 'CONTRACT_CANCELLED'));
     }
+
+    public function test_customer_token_cannot_invoke_other_admin_contract_mutations(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $service = $this->createSubscriptionEligibleService();
+
+        $created = $this->requestContract($customer['access_token'], [
+            'property_uuid' => $property['uuid'],
+            'all_services' => false,
+            'service_uuids' => [$service['uuid']],
+        ])->assertStatus(201);
+
+        $contractUuid = $created->json('data.contract.uuid');
+
+        foreach ([
+            'send-for-acceptance',
+            'suspend',
+            'cancel',
+        ] as $operation) {
+            $this->postJson(
+                '/api/v1/admin/contracts/'.$contractUuid.'/'.$operation,
+                ['reason' => 'Unauthorized customer mutation.'],
+                ['Authorization' => 'Bearer '.$customer['access_token']]
+            )->assertStatus(401);
+        }
+    }
+
+    public function test_malformed_admin_contract_mutation_uuids_return_clean_404(): void
+    {
+        $admin = $this->createAndLoginAdmin();
+        $service = $this->createSubscriptionEligibleService();
+
+        $cases = [
+            'approve' => $this->approveContractPayload($service['uuid']),
+            'send-for-acceptance' => [],
+            'suspend' => ['reason' => 'QA suspend.'],
+            'cancel' => ['reason' => 'QA cancel.'],
+        ];
+
+        foreach ($cases as $operation => $payload) {
+            $this->postJson(
+                '/api/v1/admin/contracts/not-a-uuid/'.$operation,
+                $payload,
+                ['Authorization' => 'Bearer '.$admin['access_token']]
+            )->assertStatus(404)
+                ->assertJson([
+                    'success' => false,
+                    'message' => 'Service contract not found.',
+                ]);
+        }
+    }
+
+    public function test_unknown_admin_contract_mutation_uuids_return_clean_404(): void
+    {
+        $admin = $this->createAndLoginAdmin();
+        $service = $this->createSubscriptionEligibleService();
+
+        $cases = [
+            'approve' => $this->approveContractPayload($service['uuid']),
+            'send-for-acceptance' => [],
+            'suspend' => ['reason' => 'QA suspend.'],
+            'cancel' => ['reason' => 'QA cancel.'],
+        ];
+
+        foreach ($cases as $operation => $payload) {
+            $this->postJson(
+                '/api/v1/admin/contracts/'.UuidBinary::generate().'/'.$operation,
+                $payload,
+                ['Authorization' => 'Bearer '.$admin['access_token']]
+            )->assertStatus(404)
+                ->assertJson([
+                    'success' => false,
+                    'message' => 'Service contract not found.',
+                ]);
+        }
+    }
+
+    public function test_contract_audit_actor_is_derived_from_authenticated_admin_not_request_body(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $service = $this->createSubscriptionEligibleService();
+
+        $created = $this->requestContract($customer['access_token'], [
+            'property_uuid' => $property['uuid'],
+            'all_services' => false,
+            'service_uuids' => [$service['uuid']],
+        ])->assertStatus(201);
+
+        $contractUuid = $created->json('data.contract.uuid');
+
+        $realAdmin = $this->createAndLoginAdmin();
+        $spoofedAdmin = $this->createAndLoginAdmin();
+
+        $payload = $this->approveContractPayload($service['uuid']);
+        $payload['admin_user_id'] = $spoofedAdmin['user_uuid'];
+        $payload['actor_uuid'] = $spoofedAdmin['user_uuid'];
+        $payload['changed_by_user_id'] = $spoofedAdmin['user_uuid'];
+
+        $this->adminApproveContract(
+            $realAdmin['access_token'],
+            $contractUuid,
+            $payload
+        )->assertStatus(200);
+
+        $audit = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $contractUuid)
+            ->where('action_code', 'CONTRACT_APPROVED')
+            ->first();
+
+        $this->assertNotNull($audit);
+
+        $this->assertSame(
+            UuidBinary::toBinary($realAdmin['user_uuid']),
+            $audit->admin_user_id
+        );
+
+        $this->assertNotSame(
+            UuidBinary::toBinary($spoofedAdmin['user_uuid']),
+            $audit->admin_user_id
+        );
+    }
+
+    public function test_send_for_acceptance_retry_does_not_duplicate_audit_log(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $service = $this->createSubscriptionEligibleService();
+
+        $created = $this->requestContract($customer['access_token'], [
+            'property_uuid' => $property['uuid'],
+            'all_services' => false,
+            'service_uuids' => [$service['uuid']],
+        ])->assertStatus(201);
+
+        $contractUuid = $created->json('data.contract.uuid');
+        $admin = $this->createAndLoginAdmin();
+
+        $this->adminApproveContract(
+            $admin['access_token'],
+            $contractUuid,
+            $this->approveContractPayload($service['uuid'])
+        )->assertStatus(200);
+
+        $this->adminSendContractForAcceptance(
+            $admin['access_token'],
+            $contractUuid
+        )->assertStatus(200);
+
+        $this->adminSendContractForAcceptance(
+            $admin['access_token'],
+            $contractUuid
+        )->assertStatus(200);
+
+        $count = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $contractUuid)
+            ->where('action_code', 'CONTRACT_SENT_FOR_ACCEPTANCE')
+            ->count();
+
+        $this->assertSame(1, $count);
+    }
+
+    public function test_suspend_retry_does_not_duplicate_audit_log(): void
+    {
+        $ctx = $this->activeContractWithItem();
+        $contractUuid = UuidBinary::toString($ctx['contract']->id);
+
+        $this->adminSuspendContract(
+            $ctx['admin']['access_token'],
+            $contractUuid,
+            ['reason' => 'QA suspend.']
+        )->assertStatus(200);
+
+        $this->adminSuspendContract(
+            $ctx['admin']['access_token'],
+            $contractUuid,
+            ['reason' => 'QA suspend retry.']
+        )->assertStatus(200);
+
+        $count = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $contractUuid)
+            ->where('action_code', 'CONTRACT_SUSPENDED')
+            ->count();
+
+        $this->assertSame(1, $count);
+    }
+
+    public function test_cancel_retry_does_not_duplicate_audit_log(): void
+    {
+        $ctx = $this->activeContractWithItem();
+        $contractUuid = UuidBinary::toString($ctx['contract']->id);
+
+        $this->adminCancelContract(
+            $ctx['admin']['access_token'],
+            $contractUuid,
+            ['reason' => 'QA cancel.']
+        )->assertStatus(200);
+
+        $this->adminCancelContract(
+            $ctx['admin']['access_token'],
+            $contractUuid,
+            ['reason' => 'QA cancel retry.']
+        )->assertStatus(200);
+
+        $count = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $contractUuid)
+            ->where('action_code', 'CONTRACT_CANCELLED')
+            ->count();
+
+        $this->assertSame(1, $count);
+    }
+
+    public function test_rejected_contract_mutation_writes_no_success_audit_log(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $service = $this->createSubscriptionEligibleService();
+
+        $created = $this->requestContract($customer['access_token'], [
+            'property_uuid' => $property['uuid'],
+            'all_services' => false,
+            'service_uuids' => [$service['uuid']],
+        ])->assertStatus(201);
+
+        $contractUuid = $created->json('data.contract.uuid');
+        $admin = $this->createAndLoginAdmin();
+
+        // REQUESTED cannot be suspended.
+        $this->adminSuspendContract(
+            $admin['access_token'],
+            $contractUuid,
+            ['reason' => 'This mutation must be rejected.']
+        )->assertStatus(409);
+
+        $count = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $contractUuid)
+            ->where('action_code', 'CONTRACT_SUSPENDED')
+            ->count();
+
+        $this->assertSame(0, $count);
+    }
+
+
 }

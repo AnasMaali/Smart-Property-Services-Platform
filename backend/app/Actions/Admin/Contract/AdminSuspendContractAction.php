@@ -24,7 +24,8 @@ use InvalidArgumentException;
  * Lazy-expires the Contract first (see App\Actions\Contract\Concerns\
  * AppliesContractExpiry) so a Contract whose term has already ended is
  * correctly reported as "cannot be suspended" rather than being suspended
- * past its own expiry. Audit logging only fires for the real transition.
+ * past its own expiry. Audit logging only fires for the real transition
+ * and commits atomically with that privileged state change.
  */
 class AdminSuspendContractAction
 {
@@ -44,10 +45,9 @@ class AdminSuspendContractAction
             return $this->notFound('Service contract not found.');
         }
 
-        $transitioned = false;
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
-        $result = DB::transaction(function () use ($contractIdBinary, $actorIdBinary, $reason, &$transitioned): array {
+        return DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary, $reason): array {
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -79,17 +79,18 @@ class AdminSuspendContractAction
                 'changed_at' => $timestamp,
             ]);
 
-            $transitioned = true;
+            AdminAuditLogger::record(
+                $request,
+                $actor,
+                'CONTRACT_SUSPENDED',
+                'SERVICE_CONTRACT',
+                $contractUuid,
+                ['reason' => $reason]
+            );
 
             $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
 
             return $this->ok(200, 'Service contract suspended successfully.', ['contract' => AdminContractPresenter::detail($updated)]);
         });
-
-        if ($transitioned) {
-            AdminAuditLogger::record($request, $actor, 'CONTRACT_SUSPENDED', 'SERVICE_CONTRACT', $contractUuid, ['reason' => $reason]);
-        }
-
-        return $result;
     }
 }

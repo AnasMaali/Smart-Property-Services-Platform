@@ -15,20 +15,13 @@ use Illuminate\Support\Facades\DB;
  * outcome mapping) - only a real state change is audited, so a retried call
  * never produces a duplicate row.
  *
- * Deliberately a second, immediate write after the domain Action's own
- * transaction has already committed - not a shared transaction with it.
- * This mirrors the existing
- * App\Actions\Booking\CreateBookingFromSuccessfulPaymentAction /
- * ProcessPaymentWebhookAction precedent in this codebase (a best-effort
- * follow-up write kept deliberately outside the domain transaction so a
- * problem in it can never roll back or block already-committed domain
- * state). `admin_audit_logs` has no foreign key or trigger tying it to the
- * mutation it describes, so the schema does not require - and Phase 9B does
- * not attempt to fake - single-transaction atomicity between the two: a
- * crash in the narrow window between the domain commit and this insert
- * would leave the mutation applied but unaudited, a residual gap reported
- * rather than silently ignored (see the Phase 9B implementation report
- * "Audit Logging").
+ * This logger deliberately does not open or commit a transaction itself.
+ * Transaction ownership belongs to the privileged domain Action calling it.
+ * Security-sensitive Service Contract mutations invoke record() inside the
+ * same database transaction as their state/history writes, making the
+ * mutation and its audit row atomic. Older Admin operational wrappers may
+ * still invoke the logger as a post-commit follow-up where their documented
+ * lifecycle intentionally uses that model.
  *
  * Only the actor's own server-resolved identity
  * (`$request->attributes->get('auth_user')`, never a request field) is ever

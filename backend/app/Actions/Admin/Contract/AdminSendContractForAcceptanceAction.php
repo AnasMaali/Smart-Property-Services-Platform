@@ -22,7 +22,8 @@ use InvalidArgumentException;
  * required route surface lists both explicitly and an Admin may legitimately
  * want to review a freshly-approved contract before actually notifying the
  * customer. Audit logging only fires for the real transition, never the
- * idempotent no-op - see App\Actions\Admin\Contract\AdminApproveContractAction.
+ * idempotent no-op, and is committed atomically with that transition - see
+ * App\Actions\Admin\Contract\AdminApproveContractAction.
  */
 class AdminSendContractForAcceptanceAction
 {
@@ -41,10 +42,9 @@ class AdminSendContractForAcceptanceAction
             return $this->notFound('Service contract not found.');
         }
 
-        $transitioned = false;
         $actorIdBinary = UuidBinary::toBinary($actor->id);
 
-        $result = DB::transaction(function () use ($contractIdBinary, $actorIdBinary, &$transitioned): array {
+        return DB::transaction(function () use ($request, $contractUuid, $actor, $contractIdBinary, $actorIdBinary): array {
             $contract = DB::table('service_contracts')->where('id', $contractIdBinary)->lockForUpdate()->first();
 
             if ($contract === null) {
@@ -74,17 +74,17 @@ class AdminSendContractForAcceptanceAction
                 'changed_at' => $timestamp,
             ]);
 
-            $transitioned = true;
+            AdminAuditLogger::record(
+                $request,
+                $actor,
+                'CONTRACT_SENT_FOR_ACCEPTANCE',
+                'SERVICE_CONTRACT',
+                $contractUuid
+            );
 
             $updated = DB::table('service_contracts')->where('id', $contract->id)->first();
 
             return $this->ok(200, 'Service contract sent for customer acceptance.', ['contract' => AdminContractPresenter::detail($updated)]);
         });
-
-        if ($transitioned) {
-            AdminAuditLogger::record($request, $actor, 'CONTRACT_SENT_FOR_ACCEPTANCE', 'SERVICE_CONTRACT', $contractUuid);
-        }
-
-        return $result;
     }
 }
