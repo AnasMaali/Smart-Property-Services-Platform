@@ -145,7 +145,11 @@ Route::post('/v1/contracts/billing/webhooks/stripe', ContractBillingWebhookContr
 // valid Admin access token never grants access to the auth.customer routes
 // above: AuthenticateAdmin/AuthenticateCustomer each re-check current role
 // membership in the database on every request, independent of any `role`
-// claim embedded in the token itself.
+// claim embedded in the token itself, AND require the backing session's own
+// client_type_id to be ADMIN_WEB / a mobile type respectively. The
+// client_type check is what keeps this boundary intact even for a user who
+// holds both a Customer and an Admin role at once - role membership alone
+// would let that user's mobile-issued token work here too.
 //
 // Admin logout / logout-all deliberately reuse the existing
 // /v1/auth/logout and /v1/auth/logout-all routes above - LogoutAction and

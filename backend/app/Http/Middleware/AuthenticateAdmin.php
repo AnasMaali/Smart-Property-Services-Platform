@@ -30,6 +30,16 @@ use Symfony\Component\HttpFoundation\Response;
  * very next request using that token is rejected here even though the token
  * itself is still cryptographically valid and unexpired.
  *
+ * Also requires the backing session's own client_type_id to be ADMIN_WEB.
+ * Role membership alone is not a sufficient boundary: a user who holds both
+ * CUSTOMER and an Admin role would otherwise be able to use an access token
+ * issued by the ordinary Customer mobile login (MOBILE_IOS/MOBILE_ANDROID)
+ * against Admin routes, since that check only looks at live role rows, not
+ * at how the presented session was issued. Checking client_type_id off the
+ * server-side auth_sessions row (never the JWT's own `client` claim, which
+ * is unauthenticated caller-controlled-at-issuance data) is what actually
+ * enforces the Admin-Web-only boundary documented in routes/api.php.
+ *
  * On success, the resolved User and AuthSession models are attached to the
  * request as `auth_user` / `auth_session`, and the caller's currently active
  * Admin role codes as `auth_admin_roles` (e.g. ['ADMIN'] or ['ADMIN',
@@ -40,6 +50,8 @@ class AuthenticateAdmin
     private const GENERIC_INVALID_MESSAGE = 'This session is invalid or has expired.';
 
     private const ADMIN_ROLE_CODES = ['ADMIN', 'SUPER_ADMIN'];
+
+    private const CLIENT_TYPE_CODE = 'ADMIN_WEB';
 
     public function __construct(private readonly JwtTokenService $jwtTokenService) {}
 
@@ -91,6 +103,14 @@ class AuthenticateAdmin
             ->all();
 
         if ($activeAdminRoleCodes === []) {
+            return $this->reject();
+        }
+
+        $clientType = DB::table('auth_client_types')
+            ->where('id', $session->client_type_id)
+            ->first();
+
+        if ($clientType === null || ! $clientType->is_active || $clientType->code !== self::CLIENT_TYPE_CODE) {
             return $this->reject();
         }
 

@@ -211,6 +211,35 @@ class RefreshTest extends TestCase
         ]);
     }
 
+    public function test_session_expiring_exactly_now_is_rejected_with_generic_response(): void
+    {
+        $customer = $this->createCustomer();
+        $session = $this->loginCustomer($customer);
+
+        $boundary = now();
+
+        DB::table('auth_sessions')
+            ->where('id', UuidBinary::toBinary($session['session_uuid']))
+            ->update([
+                'created_at' => $boundary->copy()->subDays(31),
+                'expires_at' => $boundary,
+            ]);
+
+        Carbon::setTestNow($boundary);
+
+        try {
+            $response = $this->refresh($session['refresh_token']);
+        } finally {
+            Carbon::setTestNow(null);
+        }
+
+        $response->assertStatus(422)->assertExactJson([
+            'success' => false,
+            'message' => self::GENERIC_MESSAGE,
+            'data' => null,
+        ]);
+    }
+
     // 6. Inactive/non-ACTIVE user rejected.
     public function test_non_active_user_is_rejected_with_generic_response(): void
     {
@@ -309,6 +338,55 @@ class RefreshTest extends TestCase
             ->update(['client_type_id' => $this->clientTypeId('ADMIN_WEB')]);
 
         $response = $this->refresh($session['refresh_token']);
+
+        $response->assertStatus(422)->assertExactJson([
+            'success' => false,
+            'message' => self::GENERIC_MESSAGE,
+            'data' => null,
+        ]);
+    }
+
+    public function test_admin_refresh_token_is_rejected_by_customer_refresh_endpoint(): void
+    {
+        // End-to-end complement of test_non_mobile_client_type_is_rejected_
+        // with_generic_response above: that test hand-sets client_type_id
+        // to prove the rejection rule exists, this one drives a refresh
+        // token genuinely issued by the real Admin login endpoint through
+        // the Customer /refresh endpoint, proving the two client boundaries
+        // cannot be crossed end-to-end.
+        $now = now();
+        $userUuid = UuidBinary::generate();
+        $phoneNumber = '+971523009999';
+
+        DB::table('users')->insert([
+            'id' => UuidBinary::toBinary($userUuid),
+            'phone_number' => $phoneNumber,
+            'email' => 'admin.refresh.cross@example.com',
+            'password_hash' => Hash::make('Passw0rd123'),
+            'account_status_id' => $this->accountStatusId('ACTIVE'),
+            'phone_verified_at' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('user_profiles')->insert([
+            'user_id' => UuidBinary::toBinary($userUuid),
+            'full_name' => 'Cross Admin',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('user_roles')->insert([
+            'user_id' => UuidBinary::toBinary($userUuid),
+            'role_id' => $this->roleId('ADMIN'),
+            'assigned_by_user_id' => null,
+            'assigned_at' => $now,
+        ]);
+
+        $login = $this->postJson('/api/v1/admin/auth/login', [
+            'phone_number' => $phoneNumber,
+            'password' => 'Passw0rd123',
+        ])->assertStatus(200);
+
+        $response = $this->refresh($login->json('data.refresh_token'));
 
         $response->assertStatus(422)->assertExactJson([
             'success' => false,

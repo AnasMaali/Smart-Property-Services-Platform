@@ -30,10 +30,22 @@ use Symfony\Component\HttpFoundation\Response;
  * On success, the resolved User and AuthSession models are attached to the
  * request as `auth_user` / `auth_session` attributes for the controller to
  * pass into its Action.
+ *
+ * Also requires the backing session's own client_type_id to be one of the
+ * mobile client types. Role membership alone is not a sufficient boundary:
+ * a user who holds both an Admin role and CUSTOMER would otherwise be able
+ * to use an access token issued by the Admin Web login (ADMIN_WEB) against
+ * these customer routes, since the role check below only looks at live
+ * role rows, not at how the presented session was issued. Checking
+ * client_type_id off the server-side auth_sessions row (never the JWT's
+ * own `client` claim) is what actually enforces the Customer-mobile-only
+ * boundary documented in routes/api.php.
  */
 class AuthenticateCustomer
 {
     private const GENERIC_INVALID_MESSAGE = 'This session is invalid or has expired.';
+
+    private const CLIENT_TYPE_CODES = ['MOBILE_IOS', 'MOBILE_ANDROID'];
 
     public function __construct(private readonly JwtTokenService $jwtTokenService) {}
 
@@ -84,6 +96,14 @@ class AuthenticateCustomer
             ->exists();
 
         if (! $hasActiveCustomerRole) {
+            return $this->reject();
+        }
+
+        $clientType = DB::table('auth_client_types')
+            ->where('id', $session->client_type_id)
+            ->first();
+
+        if ($clientType === null || ! $clientType->is_active || ! in_array($clientType->code, self::CLIENT_TYPE_CODES, true)) {
             return $this->reject();
         }
 

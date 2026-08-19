@@ -149,4 +149,53 @@ class AdminMutationAuthorizerTest extends TestCase
             $result
         );
     }
+
+    public function test_dual_role_actor_stays_authorized_when_only_one_role_membership_is_removed(): void
+    {
+        $admin = $this->createAndLoginAdmin([
+            'ADMIN',
+            'SUPER_ADMIN',
+        ]);
+
+        $adminRoleId = DB::table('roles')
+            ->where('code', 'ADMIN')
+            ->value('id');
+
+        DB::table('user_roles')
+            ->where('user_id', UuidBinary::toBinary($admin['user_uuid']))
+            ->where('role_id', $adminRoleId)
+            ->delete();
+
+        $result = $this->authorizer()->checkBinary(
+            UuidBinary::toBinary($admin['user_uuid'])
+        );
+
+        $this->assertSame(
+            AdminMutationAuthorizationOutcome::AUTHORIZED,
+            $result
+        );
+    }
+
+    public function test_dual_role_actor_is_rejected_when_both_roles_are_globally_deactivated(): void
+    {
+        $admin = $this->createAndLoginAdmin([
+            'ADMIN',
+            'SUPER_ADMIN',
+        ]);
+
+        DB::table('roles')
+            ->whereIn('code', ['ADMIN', 'SUPER_ADMIN'])
+            ->update([
+                'is_active' => 0,
+            ]);
+
+        $result = $this->authorizer()->checkBinary(
+            UuidBinary::toBinary($admin['user_uuid'])
+        );
+
+        $this->assertSame(
+            AdminMutationAuthorizationOutcome::ACTOR_NOT_AUTHORIZED,
+            $result
+        );
+    }
 }

@@ -93,6 +93,64 @@ class AdminAuthorizationTest extends TestCase
         ];
     }
 
+    /**
+     * Creates a user with the given roles and logs it in through the real
+     * Customer mobile HTTP login endpoint, regardless of which roles are
+     * given - used to obtain a MOBILE_IOS-backed access token for a user
+     * who also holds an Admin role, to prove that role membership alone is
+     * not what keeps that token off Admin routes.
+     *
+     * @param  array<int, string>  $roleCodes
+     * @return array{user_uuid: string, access_token: string, session_uuid: string}
+     */
+    private function loginAsMobileCustomer(array $roleCodes): array
+    {
+        self::$sequence++;
+
+        $userUuid = UuidBinary::generate();
+        $phoneNumber = '+97150501'.str_pad((string) self::$sequence, 4, '0', STR_PAD_LEFT);
+        $now = now();
+
+        DB::table('users')->insert([
+            'id' => UuidBinary::toBinary($userUuid),
+            'phone_number' => $phoneNumber,
+            'email' => 'admin.authz.mobile.'.self::$sequence.'@example.com',
+            'password_hash' => Hash::make('Passw0rd123'),
+            'account_status_id' => $this->accountStatusId('ACTIVE'),
+            'phone_verified_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        DB::table('user_profiles')->insert([
+            'user_id' => UuidBinary::toBinary($userUuid),
+            'full_name' => 'Test Dual-Role Actor',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        foreach ($roleCodes as $roleCode) {
+            DB::table('user_roles')->insert([
+                'user_id' => UuidBinary::toBinary($userUuid),
+                'role_id' => $this->roleId($roleCode),
+                'assigned_by_user_id' => null,
+                'assigned_at' => $now,
+            ]);
+        }
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'phone_number' => $phoneNumber,
+            'password' => 'Passw0rd123',
+            'client_type' => 'MOBILE_IOS',
+        ])->assertStatus(200);
+
+        return [
+            'user_uuid' => $userUuid,
+            'access_token' => $login->json('data.access_token'),
+            'session_uuid' => $login->json('data.session_uuid'),
+        ];
+    }
+
     private function getMe(?string $token): TestResponse
     {
         return $token === null
@@ -129,6 +187,40 @@ class AdminAuthorizationTest extends TestCase
         $customer = $this->loginAs(['CUSTOMER']);
 
         $response = $this->getMe($customer['access_token']);
+
+        $response->assertStatus(401)->assertExactJson([
+            'success' => false,
+            'message' => self::GENERIC_SESSION_MESSAGE,
+        ]);
+    }
+
+    public function test_customer_mobile_token_from_dual_role_user_is_denied_by_auth_admin_middleware(): void
+    {
+        // A user holding both CUSTOMER and ADMIN would pass the role check
+        // AuthenticateAdmin performs, so this proves the middleware's
+        // client_type_id === ADMIN_WEB check is what actually rejects a
+        // token that was issued by the ordinary Customer mobile login
+        // rather than the Admin login endpoint.
+        $dualRole = $this->loginAsMobileCustomer(['CUSTOMER', 'ADMIN']);
+
+        $response = $this->getMe($dualRole['access_token']);
+
+        $response->assertStatus(401)->assertExactJson([
+            'success' => false,
+            'message' => self::GENERIC_SESSION_MESSAGE,
+        ]);
+    }
+
+    public function test_admin_web_token_from_dual_role_user_is_denied_by_auth_customer_middleware(): void
+    {
+        // Mirrors the previous test in the opposite direction: a user
+        // holding both ADMIN and CUSTOMER would pass AuthenticateCustomer's
+        // CUSTOMER role check, so this proves AuthenticateCustomer's
+        // client_type_id-in-mobile-types check is what actually keeps an
+        // Admin-Web-issued token off customer routes.
+        $dualRole = $this->loginAs(['ADMIN', 'CUSTOMER']);
+
+        $response = $this->getJson('/api/v1/bookings', ['Authorization' => "Bearer {$dualRole['access_token']}"]);
 
         $response->assertStatus(401)->assertExactJson([
             'success' => false,
@@ -188,6 +280,38 @@ class AdminAuthorizationTest extends TestCase
             ->assertStatus(200);
 
         $response = $this->getMe($admin['access_token']);
+
+        $response->assertStatus(401)->assertExactJson([
+            'success' => false,
+            'message' => self::GENERIC_SESSION_MESSAGE,
+        ]);
+    }
+
+    public function test_session_expiring_exactly_now_is_denied_by_auth_admin_middleware(): void
+    {
+        $admin = $this->loginAs(['ADMIN']);
+
+        // A few minutes ahead of login, not the exact login instant: the
+        // auth_sessions.expires_at > created_at check constraint forbids
+        // setting expires_at to the same instant as created_at. Staying
+        // within a few minutes keeps the access token's own exp claim -
+        // checked by firebase/php-jwt against PHP's real clock, never
+        // Carbon::setTestNow (see test_expired_access_token_is_denied above)
+        // - valid, since only Carbon's virtual "now" moves here, not the
+        // real wall clock the JWT library reads.
+        $boundary = now()->addMinutes(5);
+
+        DB::table('auth_sessions')
+            ->where('id', UuidBinary::toBinary($admin['session_uuid']))
+            ->update(['expires_at' => $boundary]);
+
+        \Illuminate\Support\Carbon::setTestNow($boundary);
+
+        try {
+            $response = $this->getMe($admin['access_token']);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow(null);
+        }
 
         $response->assertStatus(401)->assertExactJson([
             'success' => false,
