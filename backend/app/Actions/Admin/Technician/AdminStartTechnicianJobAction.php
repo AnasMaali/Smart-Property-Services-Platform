@@ -44,7 +44,24 @@ final class AdminStartTechnicianJobAction
             return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
         }
 
-        $result = $this->action->start($bookingItemUuid, $technicianUuid, $actor->id, $reason);
+        $result = $this->action->start(
+            $bookingItemUuid,
+            $technicianUuid,
+            $actor->id,
+            $reason,
+            function ($mutation) use ($request, $actor, $bookingItemUuid): void {
+                AdminAuditLogger::record(
+                    $request,
+                    $actor,
+                    'BOOKING_ITEM_WORK_STARTED',
+                    'BOOKING_ITEM',
+                    $bookingItemUuid,
+                    [
+                        'technician_uuid' => $mutation->technicianUuid,
+                    ]
+                );
+            }
+        );
 
         $response = match ($result->outcome) {
             TechnicianJobOutcome::STARTED => $this->ok(200, 'Work started.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid), 'status' => $result->itemStatusTo]),
@@ -57,12 +74,6 @@ final class AdminStartTechnicianJobAction
             // start() never actually returns COMPLETED/ALREADY_COMPLETED - kept only for match exhaustiveness over the shared TechnicianJobOutcome enum.
             default => $this->conflict('This Booking Item cannot start work from its current status.'),
         };
-
-        if ($result->outcome === TechnicianJobOutcome::STARTED) {
-            AdminAuditLogger::record($request, $actor, 'BOOKING_ITEM_WORK_STARTED', 'BOOKING_ITEM', $bookingItemUuid, [
-                'technician_uuid' => $result->technicianUuid,
-            ]);
-        }
 
         return $response;
     }

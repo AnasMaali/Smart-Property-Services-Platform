@@ -16,12 +16,15 @@ use Illuminate\Support\Facades\DB;
  * never produces a duplicate row.
  *
  * This logger deliberately does not open or commit a transaction itself.
- * Transaction ownership belongs to the privileged domain Action calling it.
- * Security-sensitive Service Contract mutations invoke record() inside the
- * same database transaction as their state/history writes, making the
- * mutation and its audit row atomic. Older Admin operational wrappers may
- * still invoke the logger as a post-commit follow-up where their documented
- * lifecycle intentionally uses that model.
+ * Transaction ownership belongs to the privileged domain mutation that
+ * calls it. Security-sensitive Admin mutations invoke record() before that
+ * transaction commits, making the mutation and its audit row atomic.
+ *
+ * Technician mutations preserve their required Booking Item lock ordering by
+ * exposing an internal afterMutation callback that executes inside the
+ * Booking Item transaction. Parent Booking aggregation still runs only after
+ * that transaction commits, exactly as required by
+ * SyncBookingStatusFromItemsAction's deadlock-avoidance policy.
  *
  * Only the actor's own server-resolved identity
  * (`$request->attributes->get('auth_user')`, never a request field) is ever

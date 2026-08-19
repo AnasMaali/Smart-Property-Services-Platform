@@ -42,7 +42,25 @@ final class AdminAssignTechnicianAction
             return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
         }
 
-        $result = $this->action->assign($bookingItemUuid, $technicianUuid, $actor->id, $internalNote);
+        $result = $this->action->assign(
+            $bookingItemUuid,
+            $technicianUuid,
+            $actor->id,
+            $internalNote,
+            function ($mutation) use ($request, $actor, $bookingItemUuid): void {
+                AdminAuditLogger::record(
+                    $request,
+                    $actor,
+                    'TECHNICIAN_ASSIGNED',
+                    'BOOKING_ITEM',
+                    $bookingItemUuid,
+                    [
+                        'technician_uuid' => $mutation->technicianUuid,
+                        'assignment_uuid' => $mutation->assignmentUuid,
+                    ]
+                );
+            }
+        );
 
         $response = match ($result->outcome) {
             TechnicianAssignmentOutcome::ASSIGNED => $this->ok(201, 'Technician assigned successfully.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),
@@ -58,13 +76,6 @@ final class AdminAssignTechnicianAction
             TechnicianAssignmentOutcome::ACTOR_NOT_FOUND, TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED => $this->forbidden(),
             TechnicianAssignmentOutcome::NO_ACTIVE_ASSIGNMENT => $this->conflict('This Booking Item has no active technician assignment.'),
         };
-
-        if ($result->outcome === TechnicianAssignmentOutcome::ASSIGNED) {
-            AdminAuditLogger::record($request, $actor, 'TECHNICIAN_ASSIGNED', 'BOOKING_ITEM', $bookingItemUuid, [
-                'technician_uuid' => $result->technicianUuid,
-                'assignment_uuid' => $result->assignmentUuid,
-            ]);
-        }
 
         return $response;
     }

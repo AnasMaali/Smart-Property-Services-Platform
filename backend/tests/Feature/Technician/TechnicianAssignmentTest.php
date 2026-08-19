@@ -414,6 +414,281 @@ class TechnicianAssignmentTest extends TestCase
     // 20. A forced DB failure mid-assignment (a genuine CHECK constraint
     // violation, not a mock) rolls back the whole Action atomically - no
     // technician_assignments row and no Booking Item lifecycle write survive.
+
+    public function test_assignment_after_mutation_failure_rolls_back_everything(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+        $technician = $this->createEligibleTechnician($fixture['specialization_id']);
+        $admin = $this->createAdminUser();
+        $itemUuid = UuidBinary::toString($fixture['item']->id);
+
+        try {
+            $this->action()->assign(
+                $itemUuid,
+                $technician['uuid'],
+                $admin,
+                null,
+                function (): void {
+                    throw new \RuntimeException('Forced audit failure.');
+                }
+            );
+
+            $this->fail('Expected forced audit failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Forced audit failure.', $e->getMessage());
+        }
+
+        $this->assertNull($this->activeAssignmentForItem($fixture['item']));
+
+        $this->assertSame(
+            0,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->count()
+        );
+
+        $fresh = DB::table('booking_items')
+            ->where('id', $fixture['item']->id)
+            ->first();
+
+        $this->assertSame(
+            'PENDING_ASSIGNMENT',
+            DB::table('booking_item_statuses')
+                ->where('id', $fresh->status_id)
+                ->value('code')
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('booking_item_status_history')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->count()
+        );
+
+        $bookingStatusId = DB::table('bookings')
+            ->where('id', $fixture['booking']->id)
+            ->value('status_id');
+
+        $this->assertSame(
+            'PAID',
+            DB::table('booking_statuses')
+                ->where('id', $bookingStatusId)
+                ->value('code')
+        );
+    }
+
+    public function test_reassignment_after_mutation_failure_rolls_back_everything(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+        $technicianA = $this->createEligibleTechnician($fixture['specialization_id']);
+        $technicianB = $this->createEligibleTechnician($fixture['specialization_id']);
+        $admin = $this->createAdminUser();
+        $itemUuid = UuidBinary::toString($fixture['item']->id);
+
+        $initial = $this->action()->assign(
+            $itemUuid,
+            $technicianA['uuid'],
+            $admin
+        );
+
+        $this->assertSame(
+            TechnicianAssignmentOutcome::ASSIGNED,
+            $initial->outcome
+        );
+
+        try {
+            $this->action()->reassign(
+                $itemUuid,
+                $technicianB['uuid'],
+                $admin,
+                'Forced rollback QA.',
+                null,
+                function (): void {
+                    throw new \RuntimeException('Forced audit failure.');
+                }
+            );
+
+            $this->fail('Expected forced audit failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Forced audit failure.', $e->getMessage());
+        }
+
+        $active = $this->activeAssignmentForItem($fixture['item']);
+
+        $this->assertNotNull($active);
+
+        $this->assertSame(
+            UuidBinary::toBinary($technicianA['uuid']),
+            $active->technician_id
+        );
+
+        $original = $this->assignmentRow($initial->assignmentUuid);
+
+        $this->assertNull($original->released_at);
+        $this->assertNull($original->released_by_user_id);
+        $this->assertNull($original->release_reason);
+
+        $this->assertSame(
+            1,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->count()
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->where('technician_id', UuidBinary::toBinary($technicianB['uuid']))
+                ->count()
+        );
+    }
+
+
+    public function test_assignment_callback_unique_violation_is_not_misclassified_as_assignment_race(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+        $technician = $this->createEligibleTechnician(
+            $fixture['specialization_id']
+        );
+        $admin = $this->createAdminUser();
+        $itemUuid = UuidBinary::toString($fixture['item']->id);
+
+        try {
+            $this->action()->assign(
+                $itemUuid,
+                $technician['uuid'],
+                $admin,
+                null,
+                function (): void {
+                    throw new \Illuminate\Database\UniqueConstraintViolationException(
+                        'testing',
+                        'forced audit unique violation',
+                        [],
+                        new \PDOException('forced audit unique violation')
+                    );
+                }
+            );
+
+            $this->fail('Expected callback failure.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame(
+                'The after-mutation callback failed.',
+                $exception->getMessage()
+            );
+
+            $this->assertInstanceOf(
+                \Illuminate\Database\UniqueConstraintViolationException::class,
+                $exception->getPrevious()
+            );
+        }
+
+        $this->assertNull(
+            $this->activeAssignmentForItem($fixture['item'])
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->count()
+        );
+
+        $freshItem = DB::table('booking_items')
+            ->where('id', $fixture['item']->id)
+            ->first();
+
+        $this->assertSame(
+            'PENDING_ASSIGNMENT',
+            DB::table('booking_item_statuses')
+                ->where('id', $freshItem->status_id)
+                ->value('code')
+        );
+    }
+
+    public function test_reassignment_callback_unique_violation_is_not_misclassified_as_assignment_race(): void
+    {
+        $fixture = $this->bookingWithAssignableItem();
+
+        $technicianA = $this->createEligibleTechnician(
+            $fixture['specialization_id']
+        );
+
+        $technicianB = $this->createEligibleTechnician(
+            $fixture['specialization_id']
+        );
+
+        $admin = $this->createAdminUser();
+        $itemUuid = UuidBinary::toString($fixture['item']->id);
+
+        $initial = $this->action()->assign(
+            $itemUuid,
+            $technicianA['uuid'],
+            $admin
+        );
+
+        $this->assertSame(
+            TechnicianAssignmentOutcome::ASSIGNED,
+            $initial->outcome
+        );
+
+        try {
+            $this->action()->reassign(
+                $itemUuid,
+                $technicianB['uuid'],
+                $admin,
+                'Forced audit failure.',
+                null,
+                function (): void {
+                    throw new \Illuminate\Database\UniqueConstraintViolationException(
+                        'testing',
+                        'forced audit unique violation',
+                        [],
+                        new \PDOException('forced audit unique violation')
+                    );
+                }
+            );
+
+            $this->fail('Expected callback failure.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame(
+                'The after-mutation callback failed.',
+                $exception->getMessage()
+            );
+
+            $this->assertInstanceOf(
+                \Illuminate\Database\UniqueConstraintViolationException::class,
+                $exception->getPrevious()
+            );
+        }
+
+        $active = $this->activeAssignmentForItem($fixture['item']);
+
+        $this->assertNotNull($active);
+
+        $this->assertSame(
+            UuidBinary::toBinary($technicianA['uuid']),
+            $active->technician_id
+        );
+
+        $original = $this->assignmentRow($initial->assignmentUuid);
+
+        $this->assertNull($original->released_at);
+        $this->assertNull($original->released_by_user_id);
+        $this->assertNull($original->release_reason);
+
+        $this->assertSame(
+            0,
+            DB::table('technician_assignments')
+                ->where('booking_item_id', $fixture['item']->id)
+                ->where(
+                    'technician_id',
+                    UuidBinary::toBinary($technicianB['uuid'])
+                )
+                ->count()
+        );
+    }
+
     public function test_assignment_failure_rolls_back_everything(): void
     {
         $fixture = $this->bookingWithAssignableItem();

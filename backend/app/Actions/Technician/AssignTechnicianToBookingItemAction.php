@@ -83,21 +83,23 @@ class AssignTechnicianToBookingItemAction
     ) {}
 
     public function assign(
-    string $bookingItemUuid,
-    string $technicianUuid,
-    string $assignedByUserUuid,
-    ?string $internalNote = null
-): TechnicianAssignmentResult {
-    $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
-    $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
-    $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
+        string $bookingItemUuid,
+        string $technicianUuid,
+        string $assignedByUserUuid,
+        ?string $internalNote = null,
+        ?callable $afterMutation = null,
+    ): TechnicianAssignmentResult {
+        $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
+        $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
+        $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
 
     try {
         $result = DB::transaction(function () use (
             $itemIdBinary,
             $technicianIdBinary,
             $actorIdBinary,
-            $internalNote
+            $internalNote,
+            $afterMutation
         ): TechnicianAssignmentResult {
             $item = DB::table('booking_items')
                 ->where('id', $itemIdBinary)
@@ -170,7 +172,7 @@ class AssignTechnicianToBookingItemAction
                 UuidBinary::toString($itemIdBinary)
             );
 
-            return new TechnicianAssignmentResult(
+            $result = new TechnicianAssignmentResult(
                 TechnicianAssignmentOutcome::ASSIGNED,
                 $assignmentUuid,
                 UuidBinary::toString($itemIdBinary),
@@ -178,6 +180,19 @@ class AssignTechnicianToBookingItemAction
                 itemStatusFrom: 'PENDING_ASSIGNMENT',
                 itemStatusTo: 'ASSIGNED',
             );
+
+            if ($afterMutation !== null) {
+                try {
+                    $afterMutation($result);
+                } catch (UniqueConstraintViolationException $exception) {
+                    throw new RuntimeException(
+                        'The after-mutation callback failed.',
+                        previous: $exception,
+                    );
+                }
+            }
+
+            return $result;
         });
     } catch (UniqueConstraintViolationException) {
         $result = $this->resolveAssignmentRace(
@@ -219,14 +234,21 @@ class AssignTechnicianToBookingItemAction
      * BookingItemStatusMachine has no such reverse transition and none is
      * required by the current requirements docs.
      */
-    public function reassign(string $bookingItemUuid, string $newTechnicianUuid, string $assignedByUserUuid, string $releaseReason, ?string $internalNote = null): TechnicianAssignmentResult
+    public function reassign(
+        string $bookingItemUuid,
+        string $newTechnicianUuid,
+        string $assignedByUserUuid,
+        string $releaseReason,
+        ?string $internalNote = null,
+        ?callable $afterMutation = null,
+    ): TechnicianAssignmentResult
     {
         $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
         $technicianIdBinary = UuidBinary::toBinary($newTechnicianUuid);
         $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
 
         try {
-            return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $releaseReason, $internalNote): TechnicianAssignmentResult {
+            return DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $releaseReason, $internalNote, $afterMutation): TechnicianAssignmentResult {
                 $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
                 if ($item === null) {
@@ -274,7 +296,7 @@ class AssignTechnicianToBookingItemAction
 
                 $assignmentUuid = $this->writeAssignment($itemIdBinary, $technicianIdBinary, $actorIdBinary, $specializationId, $internalNote, $now);
 
-                return new TechnicianAssignmentResult(
+                $result = new TechnicianAssignmentResult(
                     TechnicianAssignmentOutcome::REASSIGNED,
                     $assignmentUuid,
                     UuidBinary::toString($itemIdBinary),
@@ -283,6 +305,19 @@ class AssignTechnicianToBookingItemAction
                     itemStatusFrom: $itemStatusCode,
                     itemStatusTo: $itemStatusCode,
                 );
+
+                if ($afterMutation !== null) {
+                    try {
+                        $afterMutation($result);
+                    } catch (UniqueConstraintViolationException $exception) {
+                        throw new RuntimeException(
+                            'The after-mutation callback failed.',
+                            previous: $exception,
+                        );
+                    }
+                }
+
+                return $result;
             });
         } catch (UniqueConstraintViolationException) {
             return $this->resolveAssignmentRace($itemIdBinary, $technicianIdBinary);

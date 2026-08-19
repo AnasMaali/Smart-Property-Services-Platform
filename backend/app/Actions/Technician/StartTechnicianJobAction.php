@@ -76,13 +76,19 @@ class StartTechnicianJobAction
      * was reassigned in between) is rejected as ASSIGNMENT_MISMATCH rather
      * than silently reporting success.
      */
-    public function start(string $bookingItemUuid, string $technicianUuid, string $actorUserUuid, ?string $reason = null): TechnicianJobResult
+    public function start(
+        string $bookingItemUuid,
+        string $technicianUuid,
+        string $actorUserUuid,
+        ?string $reason = null,
+        ?callable $afterMutation = null,
+    ): TechnicianJobResult
     {
         $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
         $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
         $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
 
-        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
+        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason, $afterMutation): TechnicianJobResult {
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
@@ -126,7 +132,7 @@ class StartTechnicianJobAction
 
             $transition = $this->itemLifecycle->start($bookingItemUuid, $reason);
 
-            return new TechnicianJobResult(
+            $result = new TechnicianJobResult(
                 TechnicianJobOutcome::STARTED,
                 $bookingItemUuid,
                 $technicianUuid,
@@ -134,6 +140,12 @@ class StartTechnicianJobAction
                 $transition->fromStatus,
                 $transition->toStatus,
             );
+
+            if ($afterMutation !== null) {
+                $afterMutation($result);
+            }
+
+            return $result;
         });
 if (in_array($result->outcome, [
     TechnicianJobOutcome::STARTED,

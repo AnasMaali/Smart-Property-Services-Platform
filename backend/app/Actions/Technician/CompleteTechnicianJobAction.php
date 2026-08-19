@@ -49,13 +49,19 @@ class CompleteTechnicianJobAction
      * retried call with the same Technician after the item is already
      * COMPLETED returns ALREADY_COMPLETED without writing anything.
      */
-    public function complete(string $bookingItemUuid, string $technicianUuid, string $actorUserUuid, ?string $reason = null): TechnicianJobResult
+    public function complete(
+        string $bookingItemUuid,
+        string $technicianUuid,
+        string $actorUserUuid,
+        ?string $reason = null,
+        ?callable $afterMutation = null,
+    ): TechnicianJobResult
     {
         $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
         $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
         $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
 
-        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason): TechnicianJobResult {
+        $result = DB::transaction(function () use ($itemIdBinary, $technicianIdBinary, $actorIdBinary, $bookingItemUuid, $technicianUuid, $reason, $afterMutation): TechnicianJobResult {
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
@@ -99,7 +105,7 @@ class CompleteTechnicianJobAction
 
             $transition = $this->itemLifecycle->complete($bookingItemUuid, $reason);
 
-            return new TechnicianJobResult(
+            $result = new TechnicianJobResult(
                 TechnicianJobOutcome::COMPLETED,
                 $bookingItemUuid,
                 $technicianUuid,
@@ -107,6 +113,12 @@ class CompleteTechnicianJobAction
                 $transition->fromStatus,
                 $transition->toStatus,
             );
+
+            if ($afterMutation !== null) {
+                $afterMutation($result);
+            }
+
+            return $result;
         });
 if (in_array($result->outcome, [
     TechnicianJobOutcome::COMPLETED,

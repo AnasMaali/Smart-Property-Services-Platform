@@ -457,6 +457,109 @@ class TechnicianJobExecutionTest extends TestCase
     // 28. A forced DB failure mid-transition (a genuine CHECK constraint
     // violation, not a mock) rolls back the whole Action atomically - no
     // status write and no history row survive.
+
+    public function test_start_after_mutation_failure_rolls_back_everything(): void
+    {
+        $job = $this->assignedJobFixture();
+
+        try {
+            $this->startAction()->start(
+                $job['itemUuid'],
+                $job['technician']['uuid'],
+                $job['admin'],
+                'Start work.',
+                function (): void {
+                    throw new \RuntimeException('Forced audit failure.');
+                }
+            );
+
+            $this->fail('Expected forced audit failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Forced audit failure.', $e->getMessage());
+        }
+
+        $this->assertSame(
+            'ASSIGNED',
+            $this->itemStatusCode($job['fixture']['item']->id)
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('booking_item_status_history')
+                ->where('booking_item_id', $job['fixture']['item']->id)
+                ->where(
+                    'to_status_id',
+                    BookingItemStatuses::id('IN_PROGRESS')
+                )
+                ->count()
+        );
+
+        $bookingStatusId = DB::table('bookings')
+            ->where('id', $job['fixture']['booking']->id)
+            ->value('status_id');
+
+        $this->assertSame(
+            'ASSIGNED',
+            DB::table('booking_statuses')
+                ->where('id', $bookingStatusId)
+                ->value('code')
+        );
+    }
+
+    public function test_complete_after_mutation_failure_rolls_back_everything(): void
+    {
+        $job = $this->startedJobFixture();
+
+        try {
+            $this->completeAction()->complete(
+                $job['itemUuid'],
+                $job['technician']['uuid'],
+                $job['admin'],
+                'Complete work.',
+                function (): void {
+                    throw new \RuntimeException('Forced audit failure.');
+                }
+            );
+
+            $this->fail('Expected forced audit failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Forced audit failure.', $e->getMessage());
+        }
+
+        $this->assertSame(
+            'IN_PROGRESS',
+            $this->itemStatusCode($job['fixture']['item']->id)
+        );
+
+        $this->assertNull(
+            DB::table('booking_items')
+                ->where('id', $job['fixture']['item']->id)
+                ->value('completed_at')
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('booking_item_status_history')
+                ->where('booking_item_id', $job['fixture']['item']->id)
+                ->where(
+                    'to_status_id',
+                    BookingItemStatuses::id('COMPLETED')
+                )
+                ->count()
+        );
+
+        $bookingStatusId = DB::table('bookings')
+            ->where('id', $job['fixture']['booking']->id)
+            ->value('status_id');
+
+        $this->assertSame(
+            'IN_PROGRESS',
+            DB::table('booking_statuses')
+                ->where('id', $bookingStatusId)
+                ->value('code')
+        );
+    }
+
     public function test_start_failure_rolls_back_everything(): void
     {
         $job = $this->assignedJobFixture();

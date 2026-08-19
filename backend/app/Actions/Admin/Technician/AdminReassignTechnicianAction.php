@@ -40,7 +40,27 @@ final class AdminReassignTechnicianAction
             return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
         }
 
-        $result = $this->action->reassign($bookingItemUuid, $technicianUuid, $actor->id, $releaseReason, $internalNote);
+        $result = $this->action->reassign(
+            $bookingItemUuid,
+            $technicianUuid,
+            $actor->id,
+            $releaseReason,
+            $internalNote,
+            function ($mutation) use ($request, $actor, $bookingItemUuid): void {
+                AdminAuditLogger::record(
+                    $request,
+                    $actor,
+                    'TECHNICIAN_REASSIGNED',
+                    'BOOKING_ITEM',
+                    $bookingItemUuid,
+                    [
+                        'technician_uuid' => $mutation->technicianUuid,
+                        'assignment_uuid' => $mutation->assignmentUuid,
+                        'previous_technician_uuid' => $mutation->previousTechnicianUuid,
+                    ]
+                );
+            }
+        );
 
         $response = match ($result->outcome) {
             TechnicianAssignmentOutcome::REASSIGNED => $this->ok(200, 'Technician reassigned successfully.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),
@@ -56,14 +76,6 @@ final class AdminReassignTechnicianAction
             TechnicianAssignmentOutcome::ACTOR_NOT_FOUND, TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED => $this->forbidden(),
             TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN => $this->conflict('This Booking Item already has an active technician assigned.'),
         };
-
-        if ($result->outcome === TechnicianAssignmentOutcome::REASSIGNED) {
-            AdminAuditLogger::record($request, $actor, 'TECHNICIAN_REASSIGNED', 'BOOKING_ITEM', $bookingItemUuid, [
-                'technician_uuid' => $result->technicianUuid,
-                'assignment_uuid' => $result->assignmentUuid,
-                'previous_technician_uuid' => $result->previousTechnicianUuid,
-            ]);
-        }
 
         return $response;
     }
