@@ -204,6 +204,112 @@ class CancelBookingTest extends TestCase
         );
     }
 
+
+    public function test_malformed_booking_uuid_returns_clean_404_on_cancel(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->postJson(
+            '/api/v1/bookings/not-a-uuid/cancel',
+            [],
+            ['Authorization' => 'Bearer '.$customer['access_token']]
+        )->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Booking not found.',
+            ]);
+    }
+
+    public function test_unknown_booking_uuid_returns_clean_404_on_cancel(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->postJson(
+            '/api/v1/bookings/'.UuidBinary::generate().'/cancel',
+            [],
+            ['Authorization' => 'Bearer '.$customer['access_token']]
+        )->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Booking not found.',
+            ]);
+    }
+
+    public function test_foreign_customer_cancel_does_not_mutate_booking_or_history(): void
+    {
+        ['payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+        $otherCustomer = $this->createAuthenticatedCartCustomer();
+
+        $historyBefore = DB::table('booking_status_history')
+            ->where('booking_id', $booking->id)
+            ->count();
+
+        $cancelledAtBefore = DB::table('bookings')
+            ->where('id', $booking->id)
+            ->value('cancelled_at');
+
+        $this->cancelBooking(
+            $otherCustomer['access_token'],
+            $booking
+        )->assertStatus(404)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Booking not found.',
+            ]);
+
+        $fresh = DB::table('bookings')
+            ->where('id', $booking->id)
+            ->first();
+
+        $historyAfter = DB::table('booking_status_history')
+            ->where('booking_id', $booking->id)
+            ->count();
+
+        $this->assertSame('PAID', $this->bookingStatus($booking));
+        $this->assertSame($cancelledAtBefore, $fresh->cancelled_at);
+        $this->assertSame($historyBefore, $historyAfter);
+    }
+
+    public function test_foreign_and_unknown_booking_are_publicly_indistinguishable_on_cancel(): void
+    {
+        ['payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+        $stranger = $this->createAuthenticatedCartCustomer();
+
+        $foreignResponse = $this->cancelBooking(
+            $stranger['access_token'],
+            $booking
+        );
+
+        $unknownResponse = $this->postJson(
+            '/api/v1/bookings/'.UuidBinary::generate().'/cancel',
+            [],
+            ['Authorization' => 'Bearer '.$stranger['access_token']]
+        );
+
+        $foreignResponse->assertStatus(404);
+        $unknownResponse->assertStatus(404);
+
+        $this->assertSame(
+            $unknownResponse->json('success'),
+            $foreignResponse->json('success')
+        );
+
+        $this->assertSame(
+            $unknownResponse->json('message'),
+            $foreignResponse->json('message')
+        );
+
+        $this->assertSame('Booking not found.', $foreignResponse->json('message'));
+    }
+
     public function test_cancellation_is_idempotent_and_does_not_duplicate_history(): void
     {
         ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
