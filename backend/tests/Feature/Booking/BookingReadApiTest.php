@@ -421,4 +421,80 @@ class BookingReadApiTest extends TestCase
         json_decode($raw, true);
         $this->assertSame(JSON_ERROR_NONE, json_last_error());
     }
+
+    // 31. item.pricing.adjustments (booking_items.pricing_breakdown,
+    // decoded verbatim by BookingPresenter) is the fixed, server-controlled
+    // PricingAdjustment::toArray() shape - never raw pricing-rule ids,
+    // condition/tier internals, or any other injected field.
+    public function test_customer_booking_item_pricing_breakdown_exposes_only_the_safe_adjustment_shape(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $response = $this->getBooking($customer['access_token'], UuidBinary::toString($booking->id));
+
+        $response->assertStatus(200);
+        $data = $response->json('data.booking');
+
+        $this->assertNotEmpty($data['items']);
+
+        foreach ($data['items'] as $item) {
+            $this->assertArrayHasKey('adjustments', $item['pricing']);
+            $this->assertNotEmpty($item['pricing']['adjustments']);
+
+            foreach ($item['pricing']['adjustments'] as $adjustment) {
+                $keys = array_keys($adjustment);
+                sort($keys);
+                $this->assertSame(
+                    ['amount_or_factor', 'effect_type', 'label', 'rule_code', 'running_total_after'],
+                    $keys
+                );
+
+                foreach ([
+                    'id',
+                    'pricing_rule_id',
+                    'pricing_scheme_version_id',
+                    'priority',
+                    'effect_amount',
+                    'effect_subject_type',
+                    'effect_subject_service_option_id',
+                    'tier_calculation_mode',
+                    'tiers',
+                    'stop_processing',
+                    'condition_groups',
+                    'conditions',
+                    'rules',
+                    'internal_note',
+                ] as $forbiddenKey) {
+                    $this->assertArrayNotHasKey($forbiddenKey, $adjustment, "Booking item adjustment leaked forbidden field: {$forbiddenKey}");
+                }
+            }
+
+            // The fixture's one base SET_PRICE rule (createCartPricingRule's
+            // default, via createPricedCartService) - proves the safe
+            // fields still carry the real rule data through storage and
+            // back, not just an empty shape.
+            $baseAdjustment = $item['pricing']['adjustments'][0];
+            $this->assertStringStartsWith('BASE_', $baseAdjustment['rule_code']);
+            $this->assertSame('Base price', $baseAdjustment['label']);
+            $this->assertSame('SET_PRICE', $baseAdjustment['effect_type']);
+            $this->assertSame('100.000000', $baseAdjustment['amount_or_factor']);
+            $this->assertSame('100.000000', $baseAdjustment['running_total_after']);
+        }
+
+        $raw = $response->getContent();
+        foreach ([
+            'condition_groups',
+            'pricing_rule_id',
+            'effect_subject_service_option_id',
+            'tier_calculation_mode',
+            'stop_processing',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Raw Booking JSON leaked forbidden pricing-rule field name: {$forbiddenString}");
+        }
+
+        $this->assertTrue(mb_check_encoding($raw, 'UTF-8'));
+        json_decode($raw, true);
+        $this->assertSame(JSON_ERROR_NONE, json_last_error());
+    }
 }
