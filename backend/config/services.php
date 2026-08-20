@@ -62,4 +62,27 @@ return [
         'contract_billing_webhook_secret' => env('STRIPE_CONTRACT_BILLING_WEBHOOK_SECRET'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Twilio (BLUE V1 production OTP delivery)
+    |--------------------------------------------------------------------------
+    |
+    | Read only by App\Support\Otp\TwilioOtpDeliveryChannel, bound by
+    | App\Providers\OtpDeliveryServiceProvider when OTP_DELIVERY_DRIVER=twilio
+    | - see config/otp.php. The provider validates account_sid/auth_token
+    | and exactly one sender strategy are present before ever constructing
+    | the channel, so it fails closed at resolution time, never silently.
+    | messaging_service_sid takes precedence over from_number when both are
+    | set. Never commit real values here.
+    |
+    */
+
+    'twilio' => [
+        'account_sid' => env('TWILIO_ACCOUNT_SID'),
+        'auth_token' => env('TWILIO_AUTH_TOKEN'),
+        'messaging_service_sid' => env('TWILIO_MESSAGING_SERVICE_SID'),
+        'from_number' => env('TWILIO_FROM_NUMBER'),
+        'timeout_seconds' => (int) env('TWILIO_TIMEOUT_SECONDS', 10),
+    ],
+
 ];

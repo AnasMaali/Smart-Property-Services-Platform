@@ -24,28 +24,9 @@ class LocalLogOtpDeliveryChannel implements OtpDeliveryChannel
         Log::info(sprintf(
             '[LOCAL OTP] purpose=%s phone=%s code=%s expires_at=%s',
             $purpose,
-            $this->maskPhoneNumber($phoneNumber),
+            OtpPhoneMasking::mask($phoneNumber),
             $rawOtp,
             $expiresAt->toIso8601String(),
         ));
-    }
-
-    /**
-     * Keeps only the last 4 digits visible, even in a local-only log -
-     * this log line is a development convenience, not a reason to write a
-     * full phone number to disk unnecessarily.
-     */
-    private function maskPhoneNumber(string $phoneNumber): string
-    {
-        $visibleLength = 4;
-
-        if (mb_strlen($phoneNumber) <= $visibleLength) {
-            return $phoneNumber;
-        }
-
-        $visible = mb_substr($phoneNumber, -$visibleLength);
-        $maskedLength = mb_strlen($phoneNumber) - $visibleLength;
-
-        return str_repeat('*', $maskedLength).$visible;
     }
 }
