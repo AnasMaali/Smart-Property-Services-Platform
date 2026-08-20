@@ -2,7 +2,9 @@
 
 namespace Tests\Feature\Property;
 
+use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Tests\Feature\Property\Concerns\CreatesPropertyFixtures;
 use Tests\TestCase;
@@ -28,6 +30,46 @@ class PropertyTest extends TestCase
         $this->assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $response->json('data.property.uuid'));
         $this->assertTrue($response->json('data.property.is_active'));
         $this->assertSame('APARTMENT', $response->json('data.property.property_type.code'));
+    }
+
+    // CreatePropertyRequest::rules() never declares customer_user_id, id,
+    // is_active, created_at, or updated_at, so Illuminate\Http\
+    // FormRequest::validated() (the only thing CreatePropertyAction ever
+    // reads) strips all of them regardless of what the client sends -
+    // proving here that the owner is always server-resolved and the new
+    // row's identity/state can never be client-influenced.
+    public function test_create_property_ignores_client_supplied_ownership_and_state_fields(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $otherCustomer = $this->createAuthenticatedCartCustomer();
+
+        $spoofedUuid = (string) Str::uuid();
+
+        $response = $this->createPropertyHttp($customer['access_token'], [
+            'customer_user_id' => $otherCustomer['user_uuid'],
+            'id' => $spoofedUuid,
+            'uuid' => $spoofedUuid,
+            'is_active' => false,
+            'created_at' => '2000-01-01 00:00:00',
+            'updated_at' => '2000-01-01 00:00:00',
+        ]);
+
+        $response->assertStatus(201);
+        $propertyUuid = $response->json('data.property.uuid');
+
+        $this->assertNotSame($spoofedUuid, $propertyUuid);
+        $this->assertTrue($response->json('data.property.is_active'));
+
+        $row = $this->propertyRow($propertyUuid);
+        $this->assertSame($customer['user_uuid'], UuidBinary::toString($row->customer_user_id));
+        $this->assertNotSame($otherCustomer['user_uuid'], UuidBinary::toString($row->customer_user_id));
+        $this->assertSame(1, (int) $row->is_active);
+        $this->assertTrue(Carbon::parse($row->created_at)->greaterThan(Carbon::parse('2000-01-02')));
+
+        // The other customer's own property list must never contain a row
+        // this request could have attributed to them.
+        $otherCustomerProperties = $this->listProperties($otherCustomer['access_token'])->json('data.properties');
+        $this->assertSame([], $otherCustomerProperties);
     }
 
     public function test_create_requires_other_property_type_name_when_other(): void
@@ -105,6 +147,26 @@ class PropertyTest extends TestCase
         $response->assertStatus(404);
     }
 
+    // A foreign (owned by someone else) Property UUID and a genuinely
+    // unknown UUID must be publicly indistinguishable on GET - never
+    // "exists but forbidden" vs "does not exist", matching the same
+    // convention already proven for update/archive in
+    // test_unknown_valid_property_uuid_is_indistinguishable_for_update_and_archive.
+    public function test_get_foreign_and_unknown_property_are_publicly_indistinguishable(): void
+    {
+        $owner = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($owner['access_token']);
+
+        $stranger = $this->createAuthenticatedCartCustomer();
+
+        $foreign = $this->getPropertyHttp($stranger['access_token'], $property['uuid']);
+        $unknown = $this->getPropertyHttp($stranger['access_token'], (string) Str::uuid());
+
+        $foreign->assertStatus(404)->assertJson(['success' => false, 'message' => 'Property not found.']);
+        $unknown->assertStatus(404)->assertJson(['success' => false, 'message' => 'Property not found.']);
+        $this->assertSame($foreign->json('message'), $unknown->json('message'));
+    }
+
     public function test_customer_can_update_own_property(): void
     {
         $customer = $this->createAuthenticatedCartCustomer();
@@ -114,6 +176,41 @@ class PropertyTest extends TestCase
 
         $response->assertStatus(200);
         $this->assertSame('Updated label', $response->json('data.property.label'));
+    }
+
+    // Same guarantee as create: UpdatePropertyRequest::rules() never
+    // declares customer_user_id, id, or is_active, so a PATCH can never
+    // reassign ownership or flip the archived flag by simply including
+    // those keys in the payload - only the documented address/label
+    // fields (here, label) are ever applied.
+    public function test_update_property_ignores_client_supplied_ownership_and_state_fields(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $otherCustomer = $this->createAuthenticatedCartCustomer();
+        $spoofedUuid = (string) Str::uuid();
+
+        $response = $this->updatePropertyHttp($customer['access_token'], $property['uuid'], [
+            'label' => 'Legitimately updated label',
+            'customer_user_id' => $otherCustomer['user_uuid'],
+            'id' => $spoofedUuid,
+            'is_active' => false,
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertSame('Legitimately updated label', $response->json('data.property.label'));
+        $this->assertTrue($response->json('data.property.is_active'));
+
+        $row = $this->propertyRow($property['uuid']);
+        $this->assertSame('Legitimately updated label', $row->label);
+        $this->assertSame($customer['user_uuid'], UuidBinary::toString($row->customer_user_id));
+        $this->assertNotSame($otherCustomer['user_uuid'], UuidBinary::toString($row->customer_user_id));
+        $this->assertSame(1, (int) $row->is_active);
+
+        // The injected ownership never attributed the property to the
+        // other customer's own list either.
+        $otherCustomerProperties = $this->listProperties($otherCustomer['access_token'])->json('data.properties');
+        $this->assertSame([], $otherCustomerProperties);
     }
 
     public function test_foreign_customer_cannot_update_another_customers_property(): void
@@ -315,6 +412,54 @@ class PropertyTest extends TestCase
             $unknownUuid
         )->assertStatus(404)
             ->assertJson(['success' => false]);
+    }
+
+    // Locks the exact PropertyPresenter shape (App\Support\Property\
+    // PropertyPresenter::present()) rather than only checking a handful of
+    // forbidden keys, so any future field added for an internal reason
+    // (e.g. customer_user_id, a raw property_type_id/area_id/
+    // property_relationship_type_id foreign key, or an audit/admin field)
+    // is caught here even if nobody thinks to forbid it by name first.
+    public function test_property_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+
+        $response = $this->getPropertyHttp($customer['access_token'], $property['uuid']);
+        $response->assertStatus(200);
+
+        $payload = $response->json('data.property');
+
+        $this->assertSame([
+            'uuid', 'label', 'relationship_type', 'property_type', 'other_property_type_name',
+            'area', 'street_name', 'address_line', 'building_name_or_number', 'floor_number',
+            'unit_number', 'nearby_landmark', 'additional_location_notes', 'visit_contact_phone',
+            'is_active', 'created_at', 'updated_at',
+        ], array_keys($payload));
+
+        $this->assertSame(['code', 'name'], array_keys($payload['relationship_type']));
+        $this->assertSame(['code', 'name'], array_keys($payload['property_type']));
+        $this->assertSame(['id', 'name', 'city_name', 'country_name'], array_keys($payload['area']));
+
+        $raw = $response->getContent();
+        foreach ([
+            'customer_user_id',
+            'property_type_id',
+            'property_relationship_type_id',
+            'created_by_user_id',
+            'updated_by_user_id',
+            'deleted_by_user_id',
+            'deleted_at',
+            'internal_note',
+            'admin_note',
+            'status_history',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Property JSON leaked forbidden field name: {$forbiddenString}");
+        }
+
+        $this->assertTrue(mb_check_encoding($raw, 'UTF-8'));
+        json_decode($raw, true);
+        $this->assertSame(JSON_ERROR_NONE, json_last_error());
     }
 
 }
