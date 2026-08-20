@@ -282,4 +282,37 @@ class ListCategoryServicesTest extends TestCase
         $this->assertArrayHasKey('pricing_preview', $entry);
         $this->assertSame('UNAVAILABLE', $entry['pricing_preview']['pricing_status']);
     }
+
+    // Locks the exact ListCategoryServicesAction shape - category summary,
+    // service summary, and nested primary_image/pricing_preview - so any
+    // future field added for an internal reason (category_id, is_active,
+    // a raw pricing_scheme_id, ...) is caught here.
+    public function test_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+        $this->createMedia($serviceUuid, ['is_primary' => 1]);
+        $this->createPrice($serviceUuid, ['base_amount' => '50.000000', 'effective_to' => null]);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+        $response->assertStatus(200);
+
+        $data = $response->json('data');
+        $this->assertSame(['category', 'services'], array_keys($data));
+        $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
+
+        $entry = collect($data['services'])->firstWhere('uuid', $serviceUuid);
+        $this->assertSame(['uuid', 'code', 'slug', 'name', 'short_description', 'primary_image', 'pricing_preview'], array_keys($entry));
+        $this->assertSame(
+            ['storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels'],
+            array_keys($entry['primary_image'])
+        );
+        $this->assertSame(['pricing_status', 'unit_total', 'currency'], array_keys($entry['pricing_preview']));
+        $this->assertSame(['code', 'symbol', 'minor_unit'], array_keys($entry['pricing_preview']['currency']));
+
+        $raw = $response->getContent();
+        foreach (['category_id', 'service_id', 'is_active', 'pricing_rule_id', 'pricing_scheme_id'] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Category services JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
 }

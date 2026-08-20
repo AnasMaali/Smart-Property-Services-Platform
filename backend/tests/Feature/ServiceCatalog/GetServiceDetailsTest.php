@@ -297,6 +297,77 @@ class GetServiceDetailsTest extends TestCase
         $this->assertArrayHasKey('choices', $selectPayload);
     }
 
+    // assertJsonStructure (test_full_safe_detail_shape) only proves the
+    // documented keys are present, never that nothing else is - this locks
+    // the exact key set at every level (top level, category, media,
+    // numeric_rule/measurement_unit, selection_rule, choices) so a future
+    // field added to GetServiceDetailsAction for an internal reason
+    // (category_id, option_type_id, is_active, a raw pricing_rule_id, ...)
+    // is caught here even if nobody thinks to forbid it by name first.
+    public function test_service_detail_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+        $this->createMedia($service['uuid'], ['is_primary' => 1]);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_amount' => '100.000000']);
+
+        $numberOption = $this->createOption($service['uuid'], $this->numberTypeId);
+        $this->createNumericRule($numberOption, ['measurement_unit_id' => $this->roomUnitId]);
+
+        $selectOption = $this->createOption($service['uuid'], $this->singleSelectTypeId);
+        $this->createSelectionRule($selectOption);
+        $this->createChoice($selectOption);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+        $response->assertStatus(200);
+
+        $data = $response->json('data');
+        $this->assertSame(
+            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'category', 'media', 'pricing_preview', 'options'],
+            array_keys($data)
+        );
+        $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
+        $this->assertSame(
+            ['uuid', 'storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels', 'is_primary'],
+            array_keys($data['media'][0])
+        );
+        $this->assertSame(
+            ['pricing_status', 'currency', 'pricing_scheme_version', 'base_amount', 'adjustments', 'unit_total', 'quantity', 'line_total', 'required_context'],
+            array_keys($data['pricing_preview'])
+        );
+
+        $numberPayload = collect($data['options'])->firstWhere('uuid', $numberOption);
+        $this->assertSame(['uuid', 'code', 'name', 'description', 'type', 'is_required', 'numeric_rule'], array_keys($numberPayload));
+        $this->assertSame(['min_value', 'max_value', 'step_value', 'default_value', 'decimal_places', 'measurement_unit'], array_keys($numberPayload['numeric_rule']));
+        $this->assertSame(['id', 'code', 'name', 'symbol'], array_keys($numberPayload['numeric_rule']['measurement_unit']));
+
+        $selectPayload = collect($data['options'])->firstWhere('uuid', $selectOption);
+        $this->assertSame(['uuid', 'code', 'name', 'description', 'type', 'is_required', 'selection_rule', 'choices'], array_keys($selectPayload));
+        $this->assertSame(['minimum_selections', 'maximum_selections'], array_keys($selectPayload['selection_rule']));
+        $this->assertSame(['uuid', 'code', 'name', 'description'], array_keys($selectPayload['choices'][0]));
+
+        $raw = $response->getContent();
+        foreach ([
+            'category_id',
+            'option_type_id',
+            'service_id',
+            'is_active',
+            'pricing_rule_id',
+            'pricing_scheme_id',
+            'condition_groups',
+            'effect_subject_service_option_id',
+            'stop_processing',
+            'internal_note',
+            'admin_note',
+            'created_by_user_id',
+            'updated_by_user_id',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Service detail JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
+
     public function test_text_option_has_no_invented_rules(): void
     {
         $categoryId = $this->createCategory();

@@ -128,4 +128,31 @@ class ReferenceDataTest extends TestCase
         $this->assertSame('AC', $categoryCodes[0]);
         $this->assertSame('OTHER', end($categoryCodes));
     }
+
+    // assertJsonStructure (test_public_endpoint_returns_reference_data_
+    // without_authentication) only proves the documented keys are present,
+    // never that nothing else is - this locks the exact key set on every
+    // entry (city, nested area, property_relationship_type,
+    // service_category) so a future field added for an internal reason is
+    // caught here.
+    public function test_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $response = $this->getJson('/api/v1/reference-data/registration');
+        $response->assertStatus(200);
+
+        $data = $response->json('data');
+        $this->assertSame(['cities', 'property_relationship_types', 'service_categories'], array_keys($data));
+
+        $city = collect($data['cities'])->firstWhere('code', 'DUBAI');
+        $this->assertSame(['id', 'code', 'name', 'areas'], array_keys($city));
+        $this->assertSame(['id', 'code', 'name'], array_keys($city['areas'][0]));
+
+        $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['property_relationship_types'][0]));
+        $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['service_categories'][0]));
+
+        $raw = $response->getContent();
+        foreach (['is_active', 'display_order', 'country_id', 'city_id', 'created_at', 'updated_at'] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Reference data JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
 }
