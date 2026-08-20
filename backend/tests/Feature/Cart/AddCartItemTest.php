@@ -560,4 +560,45 @@ class AddCartItemTest extends TestCase
 
         $this->assertSame(1, $activeCartCount);
     }
+
+    // Every Cart mutation Action (Add/Update/Remove/Clear) resolves its
+    // target cart via `status_id = ACTIVE` only - a cart frozen to CHECKOUT
+    // (e.g. by CreatePaymentAttemptAction once a payment attempt opens) must
+    // therefore be completely immune to further mutation: Update/Remove see
+    // no owned item to act on, Clear finds no ACTIVE cart to empty, and Add
+    // transparently opens a brand new, independent ACTIVE cart rather than
+    // ever touching the frozen one.
+    public function test_frozen_checkout_cart_is_immune_to_further_cart_mutation(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $service = $this->createCartService();
+        $this->createCartPricingRule($this->createCartPricingScheme($service['uuid']), ['effect_amount' => '100.000000']);
+
+        $added = $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']]);
+        $frozenCartUuid = $added->json('data.cart.uuid');
+        $frozenItemUuid = $added->json('data.cart.items.0.uuid');
+
+        DB::table('carts')->where('id', UuidBinary::toBinary($frozenCartUuid))->update([
+            'status_id' => (int) DB::table('cart_statuses')->where('code', 'CHECKOUT')->value('id'),
+        ]);
+
+        $this->updateCartItem($customer['access_token'], $frozenItemUuid, ['quantity' => 5])->assertStatus(404);
+        $this->assertDatabaseHas('cart_items', ['id' => UuidBinary::toBinary($frozenItemUuid), 'quantity' => 1]);
+
+        $this->removeCartItem($customer['access_token'], $frozenItemUuid)->assertStatus(404);
+        $this->assertDatabaseHas('cart_items', ['id' => UuidBinary::toBinary($frozenItemUuid)]);
+
+        $this->clearCart($customer['access_token'])->assertStatus(200)->assertJsonPath('message', 'Cart is already empty.');
+        $this->assertDatabaseHas('cart_items', ['id' => UuidBinary::toBinary($frozenItemUuid)]);
+
+        $reAdded = $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']]);
+        $reAdded->assertStatus(201);
+        $this->assertNotSame($frozenCartUuid, $reAdded->json('data.cart.uuid'));
+
+        $this->assertSame(
+            'CHECKOUT',
+            DB::table('cart_statuses')->where('id', DB::table('carts')->where('id', UuidBinary::toBinary($frozenCartUuid))->value('status_id'))->value('code')
+        );
+        $this->assertDatabaseCount('cart_items', 2);
+    }
 }

@@ -131,6 +131,58 @@ class GetCheckoutTest extends TestCase
         $this->assertArrayNotHasKey('rules', $pricing);
     }
 
+    // Locks the exact CheckoutPresenter shape - top-level plus the nested
+    // location/appointment/slot objects - rather than only checking a
+    // handful of forbidden fields. appointment_slots.internal_note is a
+    // real admin-only schema column (see AppointmentSlotsTest::test_slot_
+    // response_contains_only_safe_fields for the list-endpoint equivalent
+    // of this same guarantee); this proves the nested slot object embedded
+    // in checkout.appointment never carries it either.
+    public function test_checkout_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $service = $this->createPricedCartService();
+        $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']])->assertStatus(201);
+
+        [$areaId] = $this->twoDistinctAreaIds();
+        $this->saveCheckoutLocation($customer['access_token'], $this->locationPayload($areaId))->assertStatus(200);
+
+        $slot = $this->createAppointmentSlot(['internal_note' => 'Staffing note, never customer-facing.']);
+        $this->createAppointmentHold($customer['access_token'], $slot['uuid'])->assertStatus(201);
+
+        $response = $this->getCheckout($customer['access_token']);
+        $response->assertStatus(200);
+
+        $checkout = $response->json('data.checkout');
+        $this->assertSame([
+            'cart_uuid', 'location', 'appointment', 'pricing_status', 'required_context',
+            'requires_quote', 'ready_for_payment', 'currency', 'items', 'total',
+        ], array_keys($checkout));
+
+        $this->assertSame([
+            'property_type', 'other_property_type_name', 'area', 'city', 'street_name', 'address_line',
+            'building_name_or_number', 'floor_number', 'unit_number', 'nearby_landmark',
+            'additional_location_notes', 'visit_contact_phone',
+        ], array_keys($checkout['location']));
+
+        $this->assertSame(['hold_uuid', 'slot', 'expires_at'], array_keys($checkout['appointment']));
+        $this->assertSame(['uuid', 'starts_at', 'ends_at', 'time_window'], array_keys($checkout['appointment']['slot']));
+        $this->assertSame(['code', 'name'], array_keys($checkout['appointment']['slot']['time_window']));
+
+        $raw = $response->getContent();
+        foreach ([
+            'customer_user_id',
+            'cart_id',
+            'service_id',
+            'status_id',
+            'currency_id',
+            'pricing_rule_id',
+            'internal_note',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Checkout JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
+
     private function removeLastCartItem(string $accessToken): void
     {
         $cart = $this->getCart($accessToken);

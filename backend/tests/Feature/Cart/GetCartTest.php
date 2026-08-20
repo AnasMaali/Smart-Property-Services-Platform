@@ -126,4 +126,48 @@ class GetCartTest extends TestCase
             $this->assertArrayHasKey('rule_code', $adjustment);
         }
     }
+
+    // Locks the exact CartPresenter shape (top-level and item/service keys)
+    // rather than only checking a handful of forbidden fields, so any
+    // future field added for an internal reason (customer_user_id, a raw
+    // cart_id/service_id/pricing_scheme_version_id foreign key, an
+    // is_active/status_id flag, ...) is caught here even if nobody thinks
+    // to forbid it by name first.
+    public function test_cart_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $service = $this->createCartService();
+        $this->createCartPricingRule($this->createCartPricingScheme($service['uuid']));
+
+        $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']])->assertStatus(201);
+
+        $response = $this->getCart($customer['access_token']);
+        $response->assertStatus(200);
+
+        $cart = $response->json('data.cart');
+        $this->assertSame(
+            ['uuid', 'currency', 'pricing_status', 'required_context', 'requires_quote', 'items', 'total'],
+            array_keys($cart)
+        );
+        $this->assertSame(['code', 'symbol', 'decimal_places'], array_keys($cart['currency']));
+
+        $item = $cart['items'][0];
+        $this->assertSame(['uuid', 'service', 'quantity', 'options', 'pricing'], array_keys($item));
+        $this->assertSame(['uuid', 'slug', 'name', 'primary_image'], array_keys($item['service']));
+
+        $raw = $response->getContent();
+        foreach ([
+            'customer_user_id',
+            'cart_id',
+            'service_id',
+            'status_id',
+            'currency_id',
+            'pricing_rule_id',
+            'pricing_scheme_id',
+            'is_active',
+            'internal_note',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Cart JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
 }

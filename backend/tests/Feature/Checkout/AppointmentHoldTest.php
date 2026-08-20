@@ -199,4 +199,43 @@ class AppointmentHoldTest extends TestCase
         $checkoutA = $this->getCheckout($customerA['access_token']);
         $this->assertSame($holdUuid, $checkoutA->json('data.checkout.appointment.hold_uuid'));
     }
+
+    // CreateAppointmentHoldAction, SaveCheckoutLocationAction, and
+    // GetAppointmentSlotsAction all resolve their cart via `status_id =
+    // ACTIVE` only - once a cart is frozen to CHECKOUT (e.g. by
+    // CreatePaymentAttemptAction), none of them can find it any more, so a
+    // customer can never attach a new hold or a new location to a cart a
+    // payment attempt has already frozen. Release stays a safe no-op,
+    // matching Cart's Clear-on-no-ACTIVE-cart convention.
+    public function test_frozen_checkout_cart_rejects_new_location_and_appointment_hold(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $service = $this->createPricedCartService();
+        $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']])->assertStatus(201);
+
+        $cartUuid = $this->getCart($customer['access_token'])->json('data.cart.uuid');
+        DB::table('carts')->where('id', UuidBinary::toBinary($cartUuid))->update([
+            'status_id' => (int) DB::table('cart_statuses')->where('code', 'CHECKOUT')->value('id'),
+        ]);
+
+        [$areaId] = $this->twoDistinctAreaIds();
+        $this->saveCheckoutLocation($customer['access_token'], $this->locationPayload($areaId))
+            ->assertStatus(404)
+            ->assertJsonPath('message', 'No active cart to check out.');
+        $this->assertDatabaseCount('cart_locations', 0);
+
+        $slot = $this->createAppointmentSlot();
+        $this->createAppointmentHold($customer['access_token'], $slot['uuid'])
+            ->assertStatus(404)
+            ->assertJsonPath('message', 'No active cart to check out.');
+        $this->assertDatabaseCount('appointment_holds', 0);
+
+        $this->getAppointmentSlots($customer['access_token'])
+            ->assertStatus(404)
+            ->assertJsonPath('message', 'No active cart to check out.');
+
+        $this->releaseAppointmentHold($customer['access_token'])
+            ->assertStatus(200)
+            ->assertJsonPath('message', 'No active cart.');
+    }
 }
