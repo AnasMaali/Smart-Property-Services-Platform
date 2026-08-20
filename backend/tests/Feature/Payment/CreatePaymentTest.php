@@ -390,6 +390,54 @@ class CreatePaymentTest extends TestCase
         $this->assertArrayNotHasKey('publishable_key', $payload);
     }
 
+    // Allowlist companion to test_get_payment_response_never_leaks_hashes_or_
+    // snapshot() above - that test proves specific forbidden fields are
+    // absent, this proves the response contains EXACTLY the documented
+    // public shape (docs/api-contracts/payments-v1.md "Get Payment") and
+    // nothing else, so any future field added to PaymentPresenter for an
+    // internal reason is caught here even if nobody thinks to forbid it by
+    // name first.
+    public function test_get_payment_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $customer = $this->readyForPaymentCustomer();
+        $created = $this->createPayment($customer['access_token'], (string) Str::uuid());
+
+        $response = $this->getPayment($customer['access_token'], $created->json('data.payment.uuid'));
+
+        $response->assertStatus(200);
+        $payload = $response->json('data.payment');
+
+        $this->assertSame(
+            ['uuid', 'checkout_reference', 'status', 'requested_amount', 'currency', 'expires_at', 'provider'],
+            array_keys($payload)
+        );
+        $this->assertSame(['code', 'symbol', 'decimal_places'], array_keys($payload['currency']));
+    }
+
+    // docs/api-contracts/payments-v1.md "Get Payment": client_secret is
+    // "never reconstructed on a later read" - that guarantee applies just
+    // as much to a same-key retry that resolves the existing attempt
+    // without calling the gateway again as it does to a plain GET.
+    // client_secret is never persisted, so a retry response built only
+    // from the stored row can never contain it, even though the very
+    // first response for the same Idempotency-Key did.
+    public function test_idempotent_retry_response_never_re_exposes_the_original_client_secret(): void
+    {
+        $customer = $this->readyForPaymentCustomer();
+        $key = (string) Str::uuid();
+
+        $first = $this->createPayment($customer['access_token'], $key);
+        $first->assertStatus(201);
+        $this->assertNotNull($first->json('data.payment.client_secret'));
+
+        $second = $this->createPayment($customer['access_token'], $key);
+        $second->assertStatus(200);
+
+        $this->assertSame($first->json('data.payment.uuid'), $second->json('data.payment.uuid'));
+        $this->assertArrayNotHasKey('client_secret', $second->json('data.payment'));
+        $this->assertArrayNotHasKey('publishable_key', $second->json('data.payment'));
+    }
+
     public function test_raw_idempotency_key_is_never_stored(): void
     {
         $customer = $this->readyForPaymentCustomer();
