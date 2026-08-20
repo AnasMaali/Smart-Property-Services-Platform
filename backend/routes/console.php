@@ -41,3 +41,11 @@ Schedule::command('contracts:retry-pending-cancel-at-scheduling')
 Schedule::command('contracts:suspend-past-due-billing')
     ->hourly()
     ->withoutOverlapping(120);
+
+// Recover Bookings for SUCCESSFUL payment attempts whose post-webhook
+// conversion attempt transiently failed (see
+// App\Console\Commands\ConvertSuccessfulPaymentsToBookings) - idempotent
+// and safe to run repeatedly, so a healthy system simply finds nothing.
+Schedule::command('bookings:convert-successful-payments')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10);
