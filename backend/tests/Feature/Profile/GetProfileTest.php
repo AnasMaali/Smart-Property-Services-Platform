@@ -206,6 +206,49 @@ class GetProfileTest extends TestCase
         $this->assertSame($expectedIds, $returnedIds);
     }
 
+    // test_authenticated_profile_shape_is_correct proves the documented keys
+    // are present (assertJsonStructure) and does a raw-string leak check for
+    // a couple of specific secrets - neither proves nothing ELSE is present.
+    // This locks the exact top-level and nested key set (GetProfileAction's
+    // return shape) so a future field added for an internal reason
+    // (account_status_id, role_id, a raw user id, phone_verified_at as a
+    // raw timestamp, ...) is caught here even if nobody thinks to forbid it
+    // by name first.
+    public function test_profile_response_exposes_only_the_documented_public_field_set(): void
+    {
+        $customer = $this->createCustomer();
+        $session = $this->loginCustomer($customer);
+
+        $response = $this->getJson('/api/v1/profile', ['Authorization' => 'Bearer '.$session['access_token']]);
+        $response->assertStatus(200);
+
+        $data = $response->json('data');
+        $this->assertSame(
+            ['user_uuid', 'full_name', 'email', 'phone_number', 'phone_verified', 'account_status', 'location', 'property_relationship', 'service_interests'],
+            array_keys($data)
+        );
+        $this->assertSame(['city', 'area'], array_keys($data['location']));
+        $this->assertSame(['id', 'code', 'name'], array_keys($data['location']['city']));
+        $this->assertSame(['id', 'code', 'name'], array_keys($data['location']['area']));
+        $this->assertSame(['id', 'code', 'name'], array_keys($data['property_relationship']));
+        $this->assertSame(['id', 'code', 'name'], array_keys($data['service_interests'][0]));
+
+        $raw = $response->getContent();
+        foreach ([
+            'account_status_id',
+            'role_id',
+            'user_roles',
+            'password_hash',
+            'refresh_token_hash',
+            'phone_verified_at',
+            'otp',
+            'created_by_user_id',
+            'updated_by_user_id',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Profile JSON leaked forbidden field name: {$forbiddenString}");
+        }
+    }
+
     public function test_previously_selected_inactive_reference_rows_are_still_displayed(): void
     {
         $now = now();

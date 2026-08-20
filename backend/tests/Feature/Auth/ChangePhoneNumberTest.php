@@ -360,6 +360,80 @@ class ChangePhoneNumberTest extends TestCase
         $second->assertStatus(422)->assertJson(['success' => false]);
     }
 
+    // An OTP issued for Customer A's own PHONE_NUMBER_CHANGE request must
+    // never be usable by Customer B, even though the OTP UUID itself is a
+    // freely-readable request parameter - VerifyPhoneNumberChangeOtpAction's
+    // `$otp->user_id !== $user->id` check is the only thing standing between
+    // an authenticated-but-unrelated customer and hijacking someone else's
+    // pending phone change.
+    public function test_otp_belonging_to_another_customer_cannot_be_used_to_verify_or_resend(): void
+    {
+        $owner = $this->createCustomer();
+        $ownerSession = $this->loginCustomer($owner);
+        $newPhone = $this->newPhoneNumber();
+
+        $requestResponse = $this->requestChange($ownerSession['access_token'], $newPhone)->assertStatus(200);
+        $otpUuid = $requestResponse->json('data.otp_verification_uuid');
+        $rawCode = $this->latestOtpRawCode($otpUuid);
+
+        $stranger = $this->createCustomer();
+        $strangerSession = $this->loginCustomer($stranger);
+
+        $this->verifyChange($strangerSession['access_token'], $otpUuid, $rawCode)
+            ->assertStatus(422)
+            ->assertJson(['success' => false]);
+
+        $this->resendChange($strangerSession['access_token'], $otpUuid)
+            ->assertStatus(422)
+            ->assertJson(['success' => false]);
+
+        // Neither the owner's phone nor the OTP's PENDING state was touched
+        // by the stranger's attempts - the owner can still verify normally.
+        $ownerRow = DB::table('users')->where('id', UuidBinary::toBinary($owner['user_uuid']))->first();
+        $this->assertSame($owner['phone_number'], $ownerRow->phone_number);
+
+        $this->verifyChange($ownerSession['access_token'], $otpUuid, $rawCode)->assertStatus(200);
+    }
+
+    // The defensive re-check in VerifyPhoneNumberChangeOtpAction (the target
+    // number may have been claimed by another account after this OTP was
+    // issued) is currently exercised by zero tests. Simulates the race by
+    // directly claiming the target number for a second account between
+    // request and verify - verification must fail safely, never overwrite
+    // the second account's number or silently succeed with a now-duplicate
+    // number.
+    public function test_verification_is_rejected_when_the_target_number_was_claimed_by_another_account_meanwhile(): void
+    {
+        $customer = $this->createCustomer();
+        $session = $this->loginCustomer($customer);
+        $newPhone = $this->newPhoneNumber();
+
+        $requestResponse = $this->requestChange($session['access_token'], $newPhone)->assertStatus(200);
+        $otpUuid = $requestResponse->json('data.otp_verification_uuid');
+        $rawCode = $this->latestOtpRawCode($otpUuid);
+
+        // Another account claims the target number after the OTP was issued
+        // but before verification - the OTP row itself is left untouched.
+        $interloper = $this->createCustomer();
+        DB::table('users')->where('id', UuidBinary::toBinary($interloper['user_uuid']))->update(['phone_number' => $newPhone]);
+
+        $response = $this->verifyChange($session['access_token'], $otpUuid, $rawCode);
+
+        $response->assertStatus(422)->assertJson(['success' => false]);
+
+        $customerRow = DB::table('users')->where('id', UuidBinary::toBinary($customer['user_uuid']))->first();
+        $this->assertSame($customer['phone_number'], $customerRow->phone_number);
+
+        $interloperRow = DB::table('users')->where('id', UuidBinary::toBinary($interloper['user_uuid']))->first();
+        $this->assertSame($newPhone, $interloperRow->phone_number);
+
+        // The OTP stays PENDING (not silently marked VERIFIED), matching
+        // the Action's documented "left PENDING so the customer can request
+        // a fresh OTP for a different number" behavior.
+        $otp = DB::table('otp_verifications')->where('id', UuidBinary::toBinary($otpUuid))->first();
+        $this->assertSame($this->otpStatusId('PENDING'), (int) $otp->status_id);
+    }
+
     // 11. Required session behavior after change: current session stays valid, others are revoked.
     public function test_current_session_stays_valid_and_other_sessions_are_revoked_after_change(): void
     {
