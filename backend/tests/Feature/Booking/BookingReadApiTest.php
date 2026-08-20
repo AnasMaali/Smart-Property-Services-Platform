@@ -333,4 +333,92 @@ class BookingReadApiTest extends TestCase
         $this->assertSame($expectedAmount, $response->json('data.booking.refund_due.amount'));
         $this->assertSame('MANUAL', $response->json('data.booking.refund_due.execution'));
     }
+
+    // 30. Customer Booking detail response never exposes raw relational FK
+    // ids, or Admin/audit/technician-operational fields - either at the
+    // top level, nested inside `items`, or anywhere in the raw JSON.
+    public function test_customer_booking_detail_never_exposes_internal_admin_or_assignment_fields(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $response = $this->getBooking($customer['access_token'], UuidBinary::toString($booking->id));
+
+        $response->assertStatus(200);
+        $data = $response->json('data.booking');
+
+        $forbiddenTopLevelKeys = [
+            // Raw database FK / internal fields.
+            'customer_user_id',
+            'cart_id',
+            'payment_attempt_id',
+            'appointment_slot_id',
+            'booking_source_id',
+            'cart_currency_id',
+            'service_contract_id',
+            'service_contract_item_id',
+            'cancellation_refund_percentage',
+            'cancellation_refund_amount',
+            // Admin / audit / technician operational fields.
+            'technician_assignments',
+            'technician_assignment',
+            'technician_uuid',
+            'assigned_by_user_id',
+            'released_by_user_id',
+            'release_reason',
+            'internal_note',
+            'status_history',
+            'booking_status_history',
+            'changed_by_user_id',
+        ];
+
+        foreach ($forbiddenTopLevelKeys as $forbiddenKey) {
+            $this->assertArrayNotHasKey($forbiddenKey, $data, "Booking response leaked forbidden field: {$forbiddenKey}");
+        }
+
+        // The safe presented `contract` field is intentional and must
+        // remain - only the raw FK ids above are forbidden.
+        $this->assertArrayHasKey('contract', $data);
+
+        $this->assertNotEmpty($data['items']);
+
+        $forbiddenItemKeys = [
+            'booking_id',
+            'service_id',
+            'status_id',
+            'pricing_scheme_version_id',
+            'assigned_by_user_id',
+            'changed_by_user_id',
+            'technician_id',
+            'technician_assignment_id',
+            'internal_note',
+        ];
+
+        foreach ($data['items'] as $item) {
+            foreach ($forbiddenItemKeys as $forbiddenKey) {
+                $this->assertArrayNotHasKey($forbiddenKey, $item, "Booking item response leaked forbidden field: {$forbiddenKey}");
+            }
+
+            // The safe nested identifiers are intentional and must remain.
+            $this->assertArrayHasKey('uuid', $item);
+            $this->assertArrayHasKey('uuid', $item['service']);
+            $this->assertArrayHasKey('pricing_scheme_version_uuid', $item['pricing']);
+        }
+
+        $raw = $response->getContent();
+        foreach ([
+            'payment_attempt_id',
+            'customer_user_id',
+            'technician_assignments',
+            'changed_by_user_id',
+            'checkout_snapshot',
+            'checkout_snapshot_hash',
+        ] as $forbiddenString) {
+            $this->assertStringNotContainsString($forbiddenString, $raw, "Raw Booking JSON leaked forbidden field name: {$forbiddenString}");
+        }
+
+        $this->assertTrue(mb_check_encoding($raw, 'UTF-8'));
+        json_decode($raw, true);
+        $this->assertSame(JSON_ERROR_NONE, json_last_error());
+    }
 }
