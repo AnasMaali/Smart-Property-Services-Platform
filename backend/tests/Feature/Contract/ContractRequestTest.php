@@ -185,6 +185,96 @@ class ContractRequestTest extends TestCase
         $this->assertCount(1, $response->json('data.contracts'));
     }
 
+
+    public function test_customer_contract_detail_never_exposes_internal_or_provider_fields(): void
+    {
+        $ctx = $this->activeContractWithItem();
+
+        $contractUuid = \App\Support\Uuid\UuidBinary::toString(
+            $ctx['contract']->id
+        );
+
+        $response = $this->getContractHttp(
+            $ctx['customer']['access_token'],
+            $contractUuid
+        );
+
+        $response->assertStatus(200);
+
+        $contract = $response->json('data.contract');
+
+        $this->assertIsArray($contract);
+
+        foreach ([
+            'customer_user_id',
+            'customer',
+            'internal_note',
+            'agreement_hash',
+            'requested_service_ids',
+            'requested_service_uuids',
+            'accepted_by_user_id',
+            'accepted_by_user_uuid',
+            'status_history',
+        ] as $forbiddenKey) {
+            $this->assertArrayNotHasKey(
+                $forbiddenKey,
+                $contract,
+                "Customer Contract response leaked forbidden field: {$forbiddenKey}"
+            );
+        }
+
+        $billing = $contract['billing'] ?? null;
+
+        if ($billing !== null) {
+            foreach ([
+                'uuid',
+                'stripe_customer_id',
+                'stripe_subscription_id',
+                'stripe_price_id',
+                'stripe_product_id',
+                'stripe_checkout_session_id',
+                'stripe_checkout_url',
+                'checkout_session_id',
+                'checkout_url',
+                'past_due_since',
+                'cancelled_at',
+                'billing_suspended_at',
+                'provider_cancellation_requested_at',
+                'provider_cancellation_last_attempt_at',
+                'provider_cancellation_attempt_count',
+            ] as $forbiddenKey) {
+                $this->assertArrayNotHasKey(
+                    $forbiddenKey,
+                    $billing,
+                    "Customer Contract billing response leaked provider/internal field: {$forbiddenKey}"
+                );
+            }
+        }
+
+        $json = strtolower($response->getContent());
+
+        foreach ([
+            'agreement_hash',
+            'internal_note',
+            'stripe_customer_id',
+            'stripe_subscription_id',
+            'stripe_price_id',
+            'stripe_product_id',
+            'stripe_checkout_session_id',
+            'stripe_checkout_url',
+        ] as $forbiddenText) {
+            $this->assertStringNotContainsString(
+                $forbiddenText,
+                $json
+            );
+        }
+
+        $this->assertTrue(
+            mb_check_encoding($response->getContent(), 'UTF-8'),
+            'Customer Contract response must remain valid UTF-8 with no raw binary id leakage.'
+        );
+    }
+
     public function test_foreign_customer_cannot_read_another_customers_contract(): void
     {
         $owner = $this->createAuthenticatedCartCustomer();
