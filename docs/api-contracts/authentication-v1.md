@@ -16,7 +16,7 @@ planned behavior is included.
 - **Refresh rotation**: every successful `POST /v1/auth/refresh` call invalidates the presented raw refresh token and issues a brand-new raw refresh token (and a new access token). The old raw refresh token cannot be reused.
 - **Bearer token usage**: protected endpoints (see table below) require header `Authorization: Bearer {{access_token}}`. The access token is a signed HS256 JWT containing `sub` (user UUID), `sid` (session UUID), `role`, `client`, `iat`, `nbf`, `exp`, `jti`.
 - **OTP policy** (identical for every OTP purpose — phone verification, password reset, phone number change): 6-digit numeric code, expires 5 minutes after issue, maximum 5 verification attempts before the code is locked out (`ATTEMPTS_EXCEEDED`), and a 60-second cooldown between resend requests for the same flow.
-- **HTTP-layer rate limiting on top of the OTP policy above** (`App\Providers\AppServiceProvider`, an additional flooding boundary — the domain rules above remain authoritative): the public pre-auth OTP endpoints (`resend-otp`, `forgot-password` → `throttle:auth-otp-issue`; `verify-phone`, `verify-password-reset-otp` → `throttle:auth-otp-verify`) key their identity bucket off the request's own `phone_number`/`otp_uuid`. The authenticated phone-number-change endpoints (`change-phone-number`, `resend-phone-number-change-otp` → `throttle:auth-phone-change-issue`; `verify-phone-number-change-otp` → `throttle:auth-phone-change-verify`) instead key identity off the already-authenticated caller's own user id, since there is no anonymous body field to key on — same limits (5/min identity + 30/min IP for issuance, 10/min identity + 60/min IP for verification), same hashed-key convention, applied after `auth.customer` has already run.
+- **HTTP-layer rate limiting on top of the OTP policy above** (`App\Providers\AppServiceProvider`, an additional flooding boundary — the domain rules above remain authoritative): the public pre-auth OTP endpoints (`resend-otp`, `forgot-password` → `throttle:auth-otp-issue`; `verify-phone`, `verify-password-reset-otp` → `throttle:auth-otp-verify`) key their identity bucket off the request's own `phone_number`/`otp_uuid`. The authenticated phone-number-change endpoints (`change-phone-number`, `resend-phone-number-change-otp` → `throttle:auth-phone-change-issue`; `verify-phone-number-change-otp` → `throttle:auth-phone-change-verify`) instead key identity off the already-authenticated caller's own user id, since there is no anonymous body field to key on — same limits (5/min identity + 30/min IP for issuance, 10/min identity + 60/min IP for verification), same hashed-key convention, applied after `auth.customer` has already run. `DELETE /v1/auth/account` (`throttle:auth-account-delete`) uses the same authenticated-identity keying, at 5/min identity + 20/min IP.
 - **Customer remains logged in through the refresh-token flow**: the access token expires every 15 minutes, but as long as the underlying session (refresh token) is valid (not revoked, not expired, ≤ 30 days old) the client can call `POST /v1/auth/refresh` repeatedly to obtain new access/refresh token pairs without requiring the customer to log in again.
 - Nothing in this document exposes real OTP codes, password hashes, OTP hashes, refresh token hashes, or raw binary UUIDs. All example values are placeholders.
 - **OTP delivery** (`OTP_DELIVERY_DRIVER`, `.env`): OTP codes are always generated, hashed, and stored server-side, and are never returned by any endpoint under any circumstance, in any environment — the driver below only controls what (if anything) happens to the raw code *after* it is hashed and *before* it is discarded. `App\Providers\OtpDeliveryServiceProvider` is the single place every driver's guard is enforced.
@@ -44,6 +44,7 @@ planned behavior is included.
 | 12 | Request Phone Number Change | POST | `/v1/auth/change-phone-number` | Yes (Bearer) |
 | 13 | Verify Phone Number Change OTP | POST | `/v1/auth/verify-phone-number-change-otp` | Yes (Bearer) |
 | 14 | Resend Phone Number Change OTP | POST | `/v1/auth/resend-phone-number-change-otp` | Yes (Bearer) |
+| 15 | Delete Account | DELETE | `/v1/auth/account` | Yes (Bearer) |
 
 (The "Change Phone Number" feature from the task brief maps to 3 routes: request, verify, resend — routes 12–14 above.)
 
@@ -672,6 +673,70 @@ All three endpoints below require `Authorization: Bearer {{access_token}}` (midd
   Other message: `"This verification request is invalid or no longer active."`
 - **Business behavior**: Same invalidate-and-reissue pattern as `resend-otp`, scoped to the `PHONE_NUMBER_CHANGE` purpose, with the same 60-second cooldown.
 - **Postman test script**: overwrites `phone_change_otp_uuid` with the new value from the response.
+
+---
+
+## 13. Delete Account
+
+- **HTTP method / route**: `DELETE /v1/auth/account`
+- **Auth required**: Yes — `Authorization: Bearer {{access_token}}` (middleware group `auth.customer`). The account acted on is always the authenticated caller (`$request->attributes->get('auth_user')`) — there is no request field for a target user id, and none would be honored if sent.
+- **Rate limit**: `throttle:auth-account-delete` — 5/min per authenticated identity, 20/min per IP.
+- **Request JSON**:
+```json
+{
+  "current_password": "{{password}}"
+}
+```
+- **Fields**:
+  | Field | Required | Rules |
+  |---|---|---|
+  | `current_password` | Yes | string — re-authentication proof; no other field is read by the underlying Action even if present in the request body |
+
+- **Success status**: `200 OK`
+- **Success response**:
+```json
+{
+  "success": true,
+  "message": "Account deleted successfully.",
+  "data": null
+}
+```
+- **Error status**: `422 Unprocessable Entity` (wrong password, or the caller's own account is no longer `ACTIVE`); `409 Conflict` (active obligations block deletion — see below); `401 Unauthorized` for an invalid/expired Bearer token (handled by `auth.customer` before reaching this endpoint).
+- **Example error JSON**:
+```json
+{
+  "success": false,
+  "message": "The account cannot be deleted while active bookings, contracts, or payments exist.",
+  "data": null
+}
+```
+  Other messages: `"The current password you entered is incorrect."`, and the generic `"Your session is no longer valid. Please log in again."` if the authenticated user row itself is no longer `ACTIVE`. No response ever includes an internal id, a Stripe reference, or any other identifier for the blocking record — the customer is told only that an obligation exists, never which one.
+
+- **Eligibility (blocking conditions, `409`)** — any one of the following is enough to block deletion:
+  - A `bookings` row (via any of the customer's carts) whose `status_id` is not `COMPLETED` or `CANCELLED`.
+  - A `payment_attempts` row (via any of the customer's carts) that is still open (`finalized_at IS NULL`), still `requires_reconciliation`, or is `SUCCESSFUL` with no `bookings` row converted from it yet (the same state `bookings:convert-successful-payments` exists to recover).
+  - A `service_contracts` row whose `status_id` is not `EXPIRED` or `CANCELLED` (this covers `REQUESTED`, `PENDING_ADMIN_APPROVAL`, `PENDING_CUSTOMER_ACCEPTANCE`, and `ACTIVE` — including a contract still being billed through Stripe, since a contract stays `ACTIVE` through `CANCEL_AT_PERIOD_END` until the provider confirms cancellation).
+
+  No Stripe call is ever made as part of this endpoint — a contract still tied to live Stripe billing is simply left alone (blocked), never cancelled as a side effect of account deletion.
+
+  **Known limitation**: a blocked customer has no in-app deferred-deletion path today — only the option to resolve the blocking obligation (let the booking/payment settle, wait for the contract to reach a terminal state) and call this endpoint again. This is a disclosed gap relative to Apple's guideline 5.1.1(v) requirement that a user be able to *initiate* deletion even when completion must wait; a `PENDING_DELETION`-style deferred-erasure mechanism (record the request now, complete it automatically once the obligation clears) is the correct long-term fix and is recommended before final App Store submission, but was not implemented in this change.
+
+- **Business behavior (only once every eligibility check above passes, all inside one DB transaction)**:
+  - **This is genuine erasure, not the existing account-deactivation status flip reused verbatim.** `account_status_id` does move to `DEACTIVATED` (the same status value `AuthenticateCustomer`/`LoginAction` already require to be `ACTIVE`, so it alone is sufficient to block every future login/authenticated request), but a `DEACTIVATED` account and a *deleted* account are not otherwise the same thing in this schema: deletion additionally sets a dedicated `users.deleted_at` timestamp, and — unlike any other current use of `DEACTIVATED` — permanently destroys the account's live PII and access below. A future "temporarily deactivate my account" feature landing on the same status value would *not* imply any of this.
+  - `users.phone_number` and `users.email` are overwritten with non-personal, randomly generated, collision-free placeholder values (`DEL` + random hex for phone; `deleted+<random-hex>@deleted.invalid` for email — `.invalid` is the RFC 2606-reserved TLD for exactly this "never resolves" use). **The original phone number and email become immediately available for a new registration.**
+  - `users.password_hash` is overwritten with a hash of random data — the original password can never again authenticate.
+  - `user_profiles.full_name` is overwritten to `"Deleted User"`; profile location/relationship reference-data ids are left as non-personal foreign keys.
+  - The `CUSTOMER` row in `user_roles` for this user is deleted — even if the `users` row itself must remain (see below), the account no longer carries customer authorization.
+  - `customer_profiles.stripe_customer_id` is cleared.
+  - `customer_service_interests` rows for this customer are deleted.
+  - Every `auth_sessions` row for this user is revoked (including the one used to make this call) — old access and refresh tokens stop working immediately.
+  - Every still-`PENDING` `otp_verifications` row for this user (any purpose) is marked `INVALIDATED` — no in-flight OTP (phone verification, password reset, phone number change) can be used afterwards, and `forgot-password` issues no new OTP for a tombstoned phone number.
+  - Each of the customer's `carts`: if it has no `bookings` and no `payment_attempts` row (pure transient shopping/appointment-hold state), the cart is deleted outright (its items, option selections, `cart_locations`, and any `appointment_holds` all cascade). If it does carry financial history, the cart and its items are left in place as historical order content, and only `cart_locations` (the cart's own contact/address PII) is stripped.
+  - Each of the customer's `customer_properties`: if never referenced by any `service_contracts` row (including a historical cancelled/expired one), it is deleted outright. If it is referenced, it cannot be deleted (a `RESTRICT` foreign key) and is instead anonymized in place (`is_active = 0`, label/address/contact fields overwritten, non-personal reference ids like `area_id`/`property_type_id` left intact) — never exposed back through any customer-facing property listing afterward, since the customer's own session and role no longer exist.
+  - **Deliberately never touched**: `payment_attempts` rows that are `SUCCESSFUL` and already converted, `bookings` in a terminal state (`COMPLETED`/`CANCELLED`) and their `booking_status_history`, `service_contracts` in a terminal state (`EXPIRED`/`CANCELLED`) and their `service_contract_billings` (including Stripe subscription/customer/invoice references needed for reconciliation), and every immutable `checkout_snapshot`/`checkout_snapshot_hash`. Most of this is genuinely non-personal financial/audit data. **`checkout_snapshot` is a partial exception**: it embeds the exact service address and `visit_contact_phone` captured at the moment of payment — real personal data, not just financial metadata. `checkout_snapshot_hash` is not merely a decorative integrity stamp: `ProcessPaymentWebhookAction` and `CreateBookingFromSuccessfulPaymentAction` both actively recompute and verify it against the live snapshot on every webhook delivery, including provider retries — a currently-exercised code path. Redacting the snapshot's personal fields post-deletion, even while recomputing a new hash, would silently change what that hash validates against for any future retried webhook on that payment. Retention today is driven primarily by this technical constraint, not by a BLUE-documented legal retention requirement for `visit_contact_phone` specifically — no such policy exists in this codebase. This endpoint is **designed to support** Apple's account-deletion requirement for every field it can safely erase; this specific residual gap is disclosed here rather than assumed compliant, and should be closed by a future redesign that separates the hashed financial core from a redactable fulfillment-PII subset. It is never exposed through any customer-facing read path after deletion, since the deleted account has no working credentials, role, or session left to query it with.
+- **Atomicity**: the entire operation runs inside one `DB::transaction()`; any failure rolls back every write, leaving the account exactly as it was (including its live PII) rather than a partially-deleted state.
+- **Lock order**: `users` (the target row) → `carts` (all, ordered by id) → `customer_properties` (all, ordered by id) — the same "lock the user row first" convention already used by `AddCartItemAction`/`CreatePaymentAttemptAction`, so a concurrent request that creates a new cart or payment for this customer naturally serializes behind this transaction rather than racing it. No external network/provider (Stripe, Twilio) call is ever made inside this transaction.
+- **Postman variables used**: `access_token` (Bearer auth), `password`.
 
 ---
 

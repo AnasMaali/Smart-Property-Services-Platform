@@ -1,0 +1,640 @@
+<?php
+
+namespace Tests\Feature\Auth;
+
+use App\Actions\Auth\DeleteAccountAction;
+use App\Support\Uuid\UuidBinary;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use RuntimeException;
+use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
+use Tests\TestCase;
+
+/**
+ * Real Apple App Store account deletion (App\Actions\Auth\DeleteAccountAction)
+ * - never a status flip. Uses CreatesContractFixtures because it transitively
+ * composes every fixture builder this suite needs (Cart/Checkout/Payment/
+ * Booking via CreatesAdminFixtures -> CreatesTechnicianFixtures ->
+ * CreatesBookingFixtures, and Property via CreatesPropertyFixtures) without
+ * a second, parallel fixture-construction path.
+ */
+class DeleteAccountTest extends TestCase
+{
+    use CreatesContractFixtures;
+    use DatabaseTransactions;
+
+    // Every customer this fixture chain creates (createCartCustomer(), the
+    // base of every higher-level builder used here) is given this exact
+    // fixed password - see tests/Feature/Cart/Concerns/CreatesCartFixtures.
+    private const FIXTURE_PASSWORD = 'CartTestPassw0rd';
+
+    private const BLOCKED_MESSAGE = 'The account cannot be deleted while active bookings, contracts, or payments exist.';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->setUpCartFixtures();
+    }
+
+    private function deleteAccount(string $accessToken, ?string $password = self::FIXTURE_PASSWORD)
+    {
+        return $this->deleteJson('/api/v1/auth/account', [
+            'current_password' => $password,
+        ], ['Authorization' => 'Bearer '.$accessToken]);
+    }
+
+    private function userRow(string $userUuid): ?object
+    {
+        return DB::table('users')->where('id', UuidBinary::toBinary($userUuid))->first();
+    }
+
+    private function accountStatusCode(object $userRow): string
+    {
+        return DB::table('user_account_statuses')->where('id', $userRow->account_status_id)->value('code');
+    }
+
+    // ================================================================
+    // AUTH / ENDPOINT
+    // ================================================================
+
+    public function test_unauthenticated_caller_cannot_delete_account(): void
+    {
+        $this->deleteJson('/api/v1/auth/account', ['current_password' => 'whatever'])
+            ->assertStatus(401);
+    }
+
+    public function test_admin_token_cannot_use_the_customer_deletion_endpoint(): void
+    {
+        $admin = $this->createAndLoginAdmin();
+
+        $this->deleteAccount($admin['access_token'])->assertStatus(401);
+    }
+
+    public function test_wrong_current_password_is_rejected_and_account_untouched(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->deleteAccount($customer['access_token'], 'DefinitelyWrongPassw0rd')
+            ->assertStatus(422)
+            ->assertJson(['success' => false, 'data' => null]);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertSame('ACTIVE', $this->accountStatusCode($row));
+        $this->assertNull($row->deleted_at);
+    }
+
+    public function test_eligible_customer_with_correct_password_succeeds(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(200)->assertJson([
+            'success' => true,
+            'message' => 'Account deleted successfully.',
+            'data' => null,
+        ]);
+    }
+
+    public function test_deletion_never_targets_or_affects_another_customer(): void
+    {
+        $customerA = $this->createAuthenticatedCartCustomer();
+        $customerB = $this->createAuthenticatedCartCustomer();
+
+        $this->deleteAccount($customerA['access_token'])->assertStatus(200);
+
+        $rowB = $this->userRow($customerB['user_uuid']);
+        $this->assertSame('ACTIVE', $this->accountStatusCode($rowB));
+        $this->assertNull($rowB->deleted_at);
+
+        // customer B's own session is completely unaffected.
+        $this->getJson('/api/v1/profile', ['Authorization' => 'Bearer '.$customerB['access_token']])
+            ->assertStatus(200);
+    }
+
+    public function test_delete_route_is_protected_by_auth_customer_and_has_a_rate_limiter(): void
+    {
+        $route = collect(\Illuminate\Support\Facades\Route::getRoutes())
+            ->first(fn ($r) => $r->uri() === 'api/v1/auth/account' && in_array('DELETE', $r->methods(), true));
+
+        $this->assertNotNull($route, 'Expected DELETE api/v1/auth/account to be registered.');
+        $this->assertContains('auth.customer', $route->middleware());
+        $this->assertContains('throttle:auth-account-delete', $route->middleware());
+    }
+
+    // ================================================================
+    // POST-DELETION AUTH
+    // ================================================================
+
+    public function test_old_access_token_fails_after_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $this->getJson('/api/v1/profile', ['Authorization' => 'Bearer '.$customer['access_token']])
+            ->assertStatus(401);
+    }
+
+    public function test_old_refresh_token_fails_after_deletion(): void
+    {
+        $customer = $this->createCartCustomer();
+        $login = $this->postJson('/api/v1/auth/login', [
+            'phone_number' => $customer['phone_number'],
+            'password' => $customer['password'],
+            'client_type' => 'MOBILE_IOS',
+        ])->assertStatus(200);
+
+        $accessToken = $login->json('data.access_token');
+        $refreshToken = $login->json('data.refresh_token');
+
+        $this->deleteAccount($accessToken)->assertStatus(200);
+
+        // Repository convention (see docs/api-contracts/authentication-v1.md
+        // "Refresh Access Token"): an invalid/revoked refresh token is a 422
+        // business failure, not a 401 - 401 is reserved for a Bearer token
+        // rejected by auth.customer/auth.admin middleware on a protected
+        // route, which this public endpoint is not.
+        $this->postJson('/api/v1/auth/refresh', ['refresh_token' => $refreshToken])
+            ->assertStatus(422);
+    }
+
+    public function test_login_with_original_phone_and_password_fails_after_deletion(): void
+    {
+        $customer = $this->createCartCustomer();
+        $session = $this->loginCartCustomer($customer);
+
+        $this->deleteAccount($session['access_token'])->assertStatus(200);
+
+        // Repository convention (see docs/api-contracts/authentication-v1.md
+        // "Login"): a wrong/unresolvable credential is a 422 business
+        // failure, not 401.
+        $this->postJson('/api/v1/auth/login', [
+            'phone_number' => $customer['phone_number'],
+            'password' => $customer['password'],
+            'client_type' => 'MOBILE_IOS',
+        ])->assertStatus(422);
+    }
+
+    public function test_forgot_password_cannot_resurrect_a_deleted_account(): void
+    {
+        $customer = $this->createCartCustomer();
+        $session = $this->loginCartCustomer($customer);
+        $this->deleteAccount($session['access_token'])->assertStatus(200);
+
+        // Non-enumerating generic response either way - but no OTP is
+        // created for the (now tombstoned) user, since no user row is
+        // found by the original phone number any more.
+        $this->postJson('/api/v1/auth/forgot-password', ['phone_number' => $customer['phone_number']])
+            ->assertStatus(200);
+
+        $otpCount = DB::table('otp_verifications')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->where('purpose_id', DB::table('otp_verification_purposes')->where('code', 'PASSWORD_RESET')->value('id'))
+            ->count();
+
+        $this->assertSame(0, $otpCount);
+    }
+
+    public function test_customer_role_no_longer_grants_access_after_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $hasCustomerRole = DB::table('user_roles')
+            ->join('roles', 'roles.id', '=', 'user_roles.role_id')
+            ->where('user_roles.user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->where('roles.code', 'CUSTOMER')
+            ->exists();
+
+        $this->assertFalse($hasCustomerRole);
+    }
+
+    // ================================================================
+    // PII
+    // ================================================================
+
+    public function test_old_phone_number_no_longer_remains_as_live_pii(): void
+    {
+        $customer = $this->createCartCustomer();
+        $session = $this->loginCartCustomer($customer);
+        $this->deleteAccount($session['access_token'])->assertStatus(200);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertNotSame($customer['phone_number'], $row->phone_number);
+        $this->assertStringStartsWith('DEL', $row->phone_number);
+    }
+
+    public function test_old_email_no_longer_remains_as_live_pii(): void
+    {
+        $customer = $this->createCartCustomer();
+        $session = $this->loginCartCustomer($customer);
+        $this->deleteAccount($session['access_token'])->assertStatus(200);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertNotSame($customer['email'], $row->email);
+        $this->assertStringContainsString('@deleted.invalid', $row->email);
+    }
+
+    public function test_full_name_is_anonymized_after_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $fullName = DB::table('user_profiles')->where('user_id', UuidBinary::toBinary($customer['user_uuid']))->value('full_name');
+        $this->assertSame('Deleted User', $fullName);
+    }
+
+    public function test_original_phone_and_email_can_be_reused_for_a_new_account(): void
+    {
+        $customer = $this->createCartCustomer();
+        $session = $this->loginCartCustomer($customer);
+        $this->deleteAccount($session['access_token'])->assertStatus(200);
+
+        $dubaiCityId = (int) DB::table('cities')->where('code', 'DUBAI')->value('id');
+        $dubaiAreaId = (int) DB::table('areas')->where('city_id', $dubaiCityId)->value('id');
+        $propertyRelationshipTypeId = (int) DB::table('property_relationship_types')->value('id');
+        $serviceCategoryId = (int) DB::table('service_categories')->value('id');
+
+        $this->postJson('/api/v1/auth/register', [
+            'full_name' => 'Reused Identity Customer',
+            'phone_number' => $customer['phone_number'],
+            'email' => $customer['email'],
+            'password' => 'BrandNewPassw0rd',
+            'city_id' => $dubaiCityId,
+            'area_id' => $dubaiAreaId,
+            'property_relationship_type_id' => $propertyRelationshipTypeId,
+            'service_interests' => [$serviceCategoryId],
+        ])->assertStatus(201);
+    }
+
+    // ================================================================
+    // TRANSIENT DATA
+    // ================================================================
+
+    public function test_all_sessions_are_revoked_after_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $otherSession = $this->loginCartCustomer($this->createCartCustomer());
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $revokedCount = DB::table('auth_sessions')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->whereNotNull('revoked_at')
+            ->count();
+
+        $totalCount = DB::table('auth_sessions')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count();
+
+        $this->assertGreaterThan(0, $totalCount);
+        $this->assertSame($totalCount, $revokedCount);
+
+        unset($otherSession);
+    }
+
+    public function test_pending_otps_are_invalidated_by_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        $this->postJson('/api/v1/auth/change-phone-number', [
+            'new_phone_number' => '+971509'.random_int(100000, 999999),
+        ], ['Authorization' => 'Bearer '.$customer['access_token']])->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $pendingCount = DB::table('otp_verifications')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->where('status_id', DB::table('otp_verification_statuses')->where('code', 'PENDING')->value('id'))
+            ->count();
+
+        $this->assertSame(0, $pendingCount);
+    }
+
+    public function test_active_cart_is_deleted_when_it_has_no_financial_history(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $service = $this->createPricedCartService();
+        $this->addCartItem($customer['access_token'], ['service_uuid' => $service['uuid']])->assertStatus(201);
+
+        $cartCountBefore = DB::table('carts')->where('customer_user_id', UuidBinary::toBinary($customer['user_uuid']))->count();
+        $this->assertSame(1, $cartCountBefore);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $cartCountAfter = DB::table('carts')->where('customer_user_id', UuidBinary::toBinary($customer['user_uuid']))->count();
+        $this->assertSame(0, $cartCountAfter);
+    }
+
+    public function test_appointment_hold_is_removed_with_its_untouched_cart(): void
+    {
+        $customer = $this->readyForPaymentCustomer();
+
+        $holdCountBefore = DB::table('appointment_holds')
+            ->join('carts', 'carts.id', '=', 'appointment_holds.cart_id')
+            ->where('carts.customer_user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count();
+        $this->assertSame(1, $holdCountBefore);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $holdCountAfter = DB::table('appointment_holds')
+            ->join('carts', 'carts.id', '=', 'appointment_holds.cart_id')
+            ->where('carts.customer_user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count();
+        $this->assertSame(0, $holdCountAfter);
+    }
+
+    // ================================================================
+    // PROPERTY
+    // ================================================================
+
+    public function test_property_never_used_by_a_contract_is_deleted(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $this->assertDatabaseMissing('customer_properties', ['id' => UuidBinary::toBinary($property['uuid'])]);
+    }
+
+    public function test_property_used_by_a_historical_contract_is_anonymized_not_deleted(): void
+    {
+        $fixture = $this->activeContractWithItem();
+        $customer = $fixture['customer'];
+        $contractUuid = $fixture['contract']->id;
+
+        // Move the Contract to a terminal state so deletion becomes eligible.
+        $this->adminCancelContract($fixture['admin']['access_token'], UuidBinary::toString($contractUuid))->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $row = DB::table('customer_properties')->where('id', UuidBinary::toBinary($fixture['property_uuid']))->first();
+
+        $this->assertNotNull($row, 'A Property referenced by a Contract must never be deleted.');
+        $this->assertSame(0, (int) $row->is_active);
+        $this->assertSame('Deleted property', $row->label);
+        $this->assertSame('Deleted', $row->street_name);
+        $this->assertSame('Deleted', $row->address_line);
+        $this->assertNull($row->nearby_landmark);
+        $this->assertNull($row->additional_location_notes);
+    }
+
+    // ================================================================
+    // DUAL-ROLE (CUSTOMER + ADMIN) SAFETY
+    // ================================================================
+
+    public function test_a_customer_who_also_holds_an_active_admin_role_cannot_self_service_delete(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        DB::table('user_roles')->insert([
+            'user_id' => UuidBinary::toBinary($customer['user_uuid']),
+            'role_id' => (int) DB::table('roles')->where('code', 'ADMIN')->value('id'),
+            'assigned_by_user_id' => null,
+            'assigned_at' => now(),
+        ]);
+
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(409)->assertJson(['success' => false, 'data' => null]);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertSame('ACTIVE', $this->accountStatusCode($row));
+        $this->assertNull($row->deleted_at);
+
+        $hasAdminRole = DB::table('user_roles')
+            ->join('roles', 'roles.id', '=', 'user_roles.role_id')
+            ->where('user_roles.user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->where('roles.code', 'ADMIN')
+            ->exists();
+        $this->assertTrue($hasAdminRole, 'The Admin identity must survive a blocked deletion attempt.');
+    }
+
+    public function test_a_customer_who_also_holds_an_active_super_admin_role_cannot_self_service_delete(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        DB::table('user_roles')->insert([
+            'user_id' => UuidBinary::toBinary($customer['user_uuid']),
+            'role_id' => (int) DB::table('roles')->where('code', 'SUPER_ADMIN')->value('id'),
+            'assigned_by_user_id' => null,
+            'assigned_at' => now(),
+        ]);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(409);
+    }
+
+    // ================================================================
+    // ACTIVE OBLIGATIONS
+    // ================================================================
+
+    public function test_non_terminal_booking_blocks_deletion(): void
+    {
+        ['customer' => $customer] = $this->successfulPayment();
+
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(409)->assertJson(['success' => false, 'message' => self::BLOCKED_MESSAGE, 'data' => null]);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertSame('ACTIVE', $this->accountStatusCode($row));
+    }
+
+    public function test_pending_payment_attempt_blocks_deletion(): void
+    {
+        $customer = $this->readyForPaymentCustomer();
+        $this->createPayment($customer['access_token'], (string) Str::uuid())->assertStatus(201);
+
+        $this->deleteAccount($customer['access_token'])
+            ->assertStatus(409)
+            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+    }
+
+    public function test_requested_contract_blocks_deletion(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $property = $this->createProperty($customer['access_token']);
+        $service = $this->createSubscriptionEligibleService();
+
+        $this->requestContract($customer['access_token'], [
+            'property_uuid' => $property['uuid'],
+            'all_services' => false,
+            'service_uuids' => [$service['uuid']],
+        ])->assertStatus(201);
+
+        $this->deleteAccount($customer['access_token'])
+            ->assertStatus(409)
+            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+    }
+
+    public function test_active_contract_with_stripe_billing_blocks_deletion(): void
+    {
+        $fixture = $this->activeContractWithItem();
+
+        $this->deleteAccount($fixture['customer']['access_token'])
+            ->assertStatus(409)
+            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+
+        $this->assertSame('ACTIVE', DB::table('service_contract_statuses')
+            ->where('id', $fixture['contract']->status_id)
+            ->value('code'));
+    }
+
+    // ================================================================
+    // HISTORICAL RETENTION
+    // ================================================================
+
+    public function test_cancelled_historical_booking_survives_deletion_structurally_intact(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->postJson('/api/v1/bookings/'.UuidBinary::toString($booking->id).'/cancel', [], [
+            'Authorization' => 'Bearer '.$customer['access_token'],
+        ])->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $after = $this->bookingRow(UuidBinary::toString($booking->id));
+        $this->assertNotNull($after);
+        $this->assertSame($booking->booking_number, $after->booking_number);
+        $this->assertSame('CANCELLED', DB::table('booking_statuses')->where('id', $after->status_id)->value('code'));
+        $this->assertNotNull($after->cancelled_at);
+    }
+
+    public function test_successful_payment_financial_record_survives_deletion_structurally_intact(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->postJson('/api/v1/bookings/'.UuidBinary::toString($booking->id).'/cancel', [], [
+            'Authorization' => 'Bearer '.$customer['access_token'],
+        ])->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $after = DB::table('payment_attempts')->where('id', $payment->id)->first();
+        $this->assertNotNull($after);
+        $this->assertSame($payment->requested_amount, $after->requested_amount);
+        $this->assertSame($payment->confirmed_amount, $after->confirmed_amount);
+        $this->assertSame('SUCCESSFUL', DB::table('payment_statuses')->where('id', $after->status_id)->value('code'));
+    }
+
+    public function test_immutable_checkout_snapshot_is_not_corrupted_by_deletion(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->postJson('/api/v1/bookings/'.UuidBinary::toString($booking->id).'/cancel', [], [
+            'Authorization' => 'Bearer '.$customer['access_token'],
+        ])->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200);
+
+        $after = DB::table('payment_attempts')->where('id', $payment->id)->first();
+        $this->assertSame($payment->checkout_snapshot, $after->checkout_snapshot);
+        $this->assertSame($payment->checkout_snapshot_hash, $after->checkout_snapshot_hash);
+    }
+
+    public function test_cancelled_contract_history_survives_deletion_structurally_intact(): void
+    {
+        $fixture = $this->activeContractWithItem();
+        $contractUuid = UuidBinary::toString($fixture['contract']->id);
+
+        $this->adminCancelContract($fixture['admin']['access_token'], $contractUuid)->assertStatus(200);
+
+        $billingBefore = $this->billingRow($contractUuid);
+
+        $this->deleteAccount($fixture['customer']['access_token'])->assertStatus(200);
+
+        $contractAfter = $this->contractRow($contractUuid);
+        $this->assertNotNull($contractAfter);
+        $this->assertSame('CANCELLED', DB::table('service_contract_statuses')->where('id', $contractAfter->status_id)->value('code'));
+        $this->assertSame($fixture['contract']->contract_number, $contractAfter->contract_number);
+
+        $billingAfter = $this->billingRow($contractUuid);
+        $this->assertNotNull($billingAfter, 'Contract billing/reconciliation record must survive.');
+        $this->assertSame($billingBefore->stripe_subscription_id, $billingAfter->stripe_subscription_id);
+        $this->assertSame($billingBefore->stripe_customer_id, $billingAfter->stripe_customer_id);
+    }
+
+    // ================================================================
+    // ATOMICITY
+    // ================================================================
+
+    public function test_a_mid_deletion_failure_rolls_back_every_write(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $originalFullName = DB::table('user_profiles')->where('user_id', UuidBinary::toBinary($customer['user_uuid']))->value('full_name');
+        $originalUser = $this->userRow($customer['user_uuid']);
+
+        // Forces DeleteAccountAction's final lookupId('user_account_statuses', 'DEACTIVATED')
+        // call to fail, AFTER every other write in the same transaction has
+        // already been attempted - proving the whole transaction rolls back
+        // together rather than leaving a half-deleted customer.
+        DB::table('user_account_statuses')->where('code', 'DEACTIVATED')->update(['code' => 'DEACTIVATED_TEMP_RENAMED']);
+
+        $threw = false;
+
+        try {
+            app(DeleteAccountAction::class)->handle($customer['user_uuid'], ['current_password' => self::FIXTURE_PASSWORD]);
+        } catch (RuntimeException) {
+            $threw = true;
+        } finally {
+            DB::table('user_account_statuses')->where('code', 'DEACTIVATED_TEMP_RENAMED')->update(['code' => 'DEACTIVATED']);
+        }
+
+        $this->assertTrue($threw, 'Expected the missing DEACTIVATED reference row to throw.');
+
+        $afterUser = $this->userRow($customer['user_uuid']);
+        $this->assertSame($originalUser->phone_number, $afterUser->phone_number);
+        $this->assertSame($originalUser->email, $afterUser->email);
+        $this->assertSame($originalUser->account_status_id, $afterUser->account_status_id);
+        $this->assertNull($afterUser->deleted_at);
+
+        $afterFullName = DB::table('user_profiles')->where('user_id', UuidBinary::toBinary($customer['user_uuid']))->value('full_name');
+        $this->assertSame($originalFullName, $afterFullName);
+    }
+
+    // ================================================================
+    // RESPONSE SAFETY
+    // ================================================================
+
+    public function test_successful_response_exposes_no_internal_fields(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(200);
+        $this->assertNull($response->json('data'));
+
+        $raw = $response->getContent();
+        $this->assertTrue(mb_check_encoding($raw, 'UTF-8'));
+        json_decode($raw, true);
+        $this->assertSame(JSON_ERROR_NONE, json_last_error());
+
+        foreach (['password', 'hash', 'stripe', 'uuid', 'id'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, strtolower($raw));
+        }
+    }
+
+    public function test_blocked_response_exposes_no_internal_fields(): void
+    {
+        ['customer' => $customer] = $this->successfulPayment();
+
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(409);
+        $this->assertNull($response->json('data'));
+
+        $raw = strtolower($response->getContent());
+        $this->assertTrue(mb_check_encoding($response->getContent(), 'UTF-8'));
+
+        foreach (['stripe', 'booking_id', 'contract_id', 'payment_attempt', 'sql', 'exception'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $raw);
+        }
+    }
+}

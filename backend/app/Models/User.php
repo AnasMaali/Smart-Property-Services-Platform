@@ -37,6 +37,7 @@ class User extends Model
             'account_status_id' => 'integer',
             'phone_verified_at' => 'datetime',
             'last_login_at' => 'datetime',
+            'deleted_at' => 'datetime',
         ];
     }
 }

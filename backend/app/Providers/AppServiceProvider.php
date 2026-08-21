@@ -172,6 +172,21 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // Account deletion (DELETE /v1/auth/account) - deliberately its own,
+        // low-frequency limiter rather than reusing an OTP one: this isn't
+        // an OTP flow, but it is a low-frequency, password-guarded,
+        // irreversible action worth its own tight identity+IP boundary
+        // against automated repeated-attempt abuse.
+        RateLimiter::for('auth-account-delete', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(5)
+                    ->by('auth-account-delete-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(20)
+                    ->by('auth-account-delete-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Refresh tokens are deliberately NOT included in limiter keys.
         RateLimiter::for('auth-refresh', function (Request $request) use ($ipKey): Limit {
             return Limit::perMinute(60)

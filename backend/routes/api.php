@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\SendContractForAcceptanceControll
 use App\Http\Controllers\Api\V1\Admin\Contract\SuspendContractController;
 use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
+use App\Http\Controllers\Api\V1\Auth\DeleteAccountController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
@@ -81,6 +82,7 @@ Route::post('/v1/auth/reset-password', ResetPasswordController::class)->middlewa
 
 Route::middleware('auth.customer')->group(function () {
     Route::post('/v1/auth/change-password', ChangePasswordController::class);
+    Route::delete('/v1/auth/account', DeleteAccountController::class)->middleware('throttle:auth-account-delete');
     Route::post('/v1/auth/change-phone-number', RequestPhoneNumberChangeController::class)->middleware('throttle:auth-phone-change-issue');
     Route::post('/v1/auth/verify-phone-number-change-otp', VerifyPhoneNumberChangeOtpController::class)->middleware('throttle:auth-phone-change-verify');
     Route::post('/v1/auth/resend-phone-number-change-otp', ResendPhoneNumberChangeOtpController::class)->middleware('throttle:auth-phone-change-issue');

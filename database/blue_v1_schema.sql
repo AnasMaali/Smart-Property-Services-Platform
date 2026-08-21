@@ -3319,6 +3319,7 @@ CREATE TABLE `users` (
   `account_status_id` smallint unsigned NOT NULL,
   `phone_verified_at` datetime(6) DEFAULT NULL,
   `last_login_at` datetime(6) DEFAULT NULL,
+  `deleted_at` datetime(6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
@@ -3326,9 +3327,11 @@ CREATE TABLE `users` (
   UNIQUE KEY `uq_users_email` (`email`),
   KEY `idx_users_account_status_id` (`account_status_id`),
   KEY `idx_users_created_at` (`created_at`),
+  KEY `idx_users_deleted_at` (`deleted_at`),
   CONSTRAINT `fk_users_account_status` FOREIGN KEY (`account_status_id`) REFERENCES `user_account_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `chk_users_email_not_blank` CHECK ((char_length(trim(`email`)) > 0)),
-  CONSTRAINT `chk_users_phone_number_not_blank` CHECK ((char_length(trim(`phone_number`)) between 8 and 20))
+  CONSTRAINT `chk_users_phone_number_not_blank` CHECK ((char_length(trim(`phone_number`)) between 8 and 20)),
+  CONSTRAINT `chk_users_deleted_at` CHECK (((`deleted_at` is null) or (`deleted_at` >= `created_at`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
