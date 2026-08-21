@@ -155,4 +155,26 @@ class OtpDeliveryServiceProviderTest extends TestCase
 
         $this->assertInstanceOf(TwilioOtpDeliveryChannel::class, $this->app->make(OtpDeliveryChannel::class));
     }
+
+    // A 0 timeout means "wait forever" to Guzzle - a hung Twilio connection
+    // would then block the customer's own HTTP request indefinitely.
+    public function test_twilio_driver_fails_closed_with_a_zero_timeout(): void
+    {
+        $this->configureTwilio(['services.twilio.timeout_seconds' => 0]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('TWILIO_TIMEOUT_SECONDS must be a positive integer.');
+
+        $this->app->make(OtpDeliveryChannel::class);
+    }
+
+    public function test_twilio_driver_fails_closed_with_a_negative_timeout(): void
+    {
+        $this->configureTwilio(['services.twilio.timeout_seconds' => -5]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('TWILIO_TIMEOUT_SECONDS must be a positive integer.');
+
+        $this->app->make(OtpDeliveryChannel::class);
+    }
 }

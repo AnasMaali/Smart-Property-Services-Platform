@@ -62,7 +62,7 @@ behind `auth.admin` once this document is extended.
 
 | # | Feature | Method | Route | Auth required |
 |---|---|---|---|---|
-| 1 | Admin Login | POST | `/v1/admin/auth/login` | No (rate limited: 5/min per IP) |
+| 1 | Admin Login | POST | `/v1/admin/auth/login` | No (rate limited: 5/min per identity + 20/min per IP) |
 | 2 | Admin Refresh Access Token | POST | `/v1/admin/auth/refresh` | No (refresh token in body) |
 | 3 | Admin "Me" (identity bootstrap) | GET | `/v1/admin/me` | Yes — `auth.admin` (Bearer) |
 | — | Admin Logout | POST | `/v1/auth/logout` | Yes (Bearer) — **reused from customer auth**, see below |
@@ -82,10 +82,13 @@ session-revocation logic under a separate Admin path.
 
 - **HTTP method / route**: `POST /v1/admin/auth/login`
 - **Auth required**: No
-- **Rate limiting**: `throttle:5,1` — 5 requests per minute per client IP (Laravel's built-in
-  rate limiter). The 6th request within the window receives `429 Too Many Requests` regardless of
-  whether the credentials are correct. Successful requests are not exempted from the counter, but
-  normal login usage (well under 5/min) is unaffected.
+- **Rate limiting**: `throttle:admin-auth-login` (`App\Providers\AppServiceProvider`) — two
+  independent buckets, both must clear: 5 requests per minute per hashed `phone_number` identity
+  (follows one targeted account regardless of source IP) and 20 requests per minute per hashed
+  client IP (limits credential spraying/phone-number enumeration from one source, independent of
+  which account is being tried). Either bucket being exceeded returns `429 Too Many Requests`
+  regardless of whether the credentials are correct. Successful requests are not exempted from the
+  counter, but normal login usage (well under 5/min) is unaffected.
 - **Headers**: `Content-Type: application/json`
 - **Request JSON**:
 ```json

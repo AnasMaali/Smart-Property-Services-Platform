@@ -128,6 +128,50 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // The authenticated customer's own identity, hashed the same way the
+        // anonymous $identityKey above hashes a request-supplied field - used
+        // for the phone-number-change OTP limiters below, where the caller
+        // is already authenticated so there is no anonymous body field
+        // (new_phone_number / otp_verification_uuid) worth keying on
+        // instead. Every route these limiters attach to sits behind
+        // auth.customer, which runs first and sets this attribute before
+        // the throttle middleware ever evaluates; the 'anonymous' fallback
+        // only guards against that assumption ever changing, collapsing to
+        // one shared bucket rather than erroring.
+        $authenticatedIdentityKey = static function (Request $request): string {
+            $authUser = $request->attributes->get('auth_user');
+
+            return hash('sha256', (string) ($authUser->id ?? 'anonymous'));
+        };
+
+        // Authenticated phone-number-change OTP issuance/resend protection
+        // (POST /v1/auth/change-phone-number and /resend-phone-number-change-otp)
+        // - same dual identity+IP shape and limits as the public
+        // auth-otp-issue limiter above; the OTP row's own 60-second resend
+        // cooldown remains the stronger domain rule for legitimate retries.
+        RateLimiter::for('auth-phone-change-issue', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(5)
+                    ->by('auth-phone-change-issue-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(30)
+                    ->by('auth-phone-change-issue-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // Authenticated phone-number-change OTP verification flooding
+        // protection (POST /v1/auth/verify-phone-number-change-otp) - the
+        // OTP's own max_attempts remains the stronger per-OTP domain rule.
+        RateLimiter::for('auth-phone-change-verify', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('auth-phone-change-verify-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(60)
+                    ->by('auth-phone-change-verify-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Refresh tokens are deliberately NOT included in limiter keys.
         RateLimiter::for('auth-refresh', function (Request $request) use ($ipKey): Limit {
             return Limit::perMinute(60)

@@ -81,9 +81,9 @@ Route::post('/v1/auth/reset-password', ResetPasswordController::class)->middlewa
 
 Route::middleware('auth.customer')->group(function () {
     Route::post('/v1/auth/change-password', ChangePasswordController::class);
-    Route::post('/v1/auth/change-phone-number', RequestPhoneNumberChangeController::class);
-    Route::post('/v1/auth/verify-phone-number-change-otp', VerifyPhoneNumberChangeOtpController::class);
-    Route::post('/v1/auth/resend-phone-number-change-otp', ResendPhoneNumberChangeOtpController::class);
+    Route::post('/v1/auth/change-phone-number', RequestPhoneNumberChangeController::class)->middleware('throttle:auth-phone-change-issue');
+    Route::post('/v1/auth/verify-phone-number-change-otp', VerifyPhoneNumberChangeOtpController::class)->middleware('throttle:auth-phone-change-verify');
+    Route::post('/v1/auth/resend-phone-number-change-otp', ResendPhoneNumberChangeOtpController::class)->middleware('throttle:auth-phone-change-issue');
 
     Route::get('/v1/profile', GetProfileController::class);
     Route::patch('/v1/profile', UpdateProfileController::class);

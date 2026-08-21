@@ -79,12 +79,24 @@ class OtpDeliveryServiceProvider extends ServiceProvider
             );
         }
 
+        $timeoutSeconds = (int) config('services.twilio.timeout_seconds', 10);
+
+        // Guzzle (Laravel's HTTP client) treats a 0 timeout as "wait
+        // forever" - a hung Twilio connection would then block the
+        // customer's own HTTP request (and the PHP-FPM worker handling it)
+        // indefinitely. A misconfigured TWILIO_TIMEOUT_SECONDS must fail
+        // closed the same way a missing credential does, not silently
+        // remove the one guard against that.
+        if ($timeoutSeconds < 1) {
+            throw new RuntimeException('TWILIO_TIMEOUT_SECONDS must be a positive integer.');
+        }
+
         return new TwilioOtpDeliveryChannel(
             accountSid: $accountSid,
             authToken: $authToken,
             messagingServiceSid: $hasMessagingService ? $messagingServiceSid : null,
             fromNumber: $hasMessagingService ? null : $fromNumber,
-            timeoutSeconds: (int) config('services.twilio.timeout_seconds', 10),
+            timeoutSeconds: $timeoutSeconds,
         );
     }
 }
