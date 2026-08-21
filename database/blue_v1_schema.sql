@@ -1082,6 +1082,39 @@ LOCK TABLES `currencies` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `customer_account_deletion_requests`
+--
+
+DROP TABLE IF EXISTS `customer_account_deletion_requests`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `customer_account_deletion_requests` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `user_id` binary(16) NOT NULL,
+  `requested_at` datetime(6) NOT NULL,
+  `last_checked_at` datetime(6) DEFAULT NULL,
+  `completed_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_customer_account_deletion_requests_user` (`user_id`),
+  KEY `idx_customer_account_deletion_requests_completed_at` (`completed_at`),
+  CONSTRAINT `fk_customer_account_deletion_requests_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_customer_account_deletion_requests_last_checked_at` CHECK (((`last_checked_at` is null) or (`last_checked_at` >= `requested_at`))),
+  CONSTRAINT `chk_customer_account_deletion_requests_completed_at` CHECK (((`completed_at` is null) or (`completed_at` >= `requested_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `customer_account_deletion_requests`
+--
+
+LOCK TABLES `customer_account_deletion_requests` WRITE;
+/*!40000 ALTER TABLE `customer_account_deletion_requests` DISABLE KEYS */;
+/*!40000 ALTER TABLE `customer_account_deletion_requests` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `customer_profiles`
 --
 

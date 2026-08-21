@@ -29,7 +29,7 @@ class DeleteAccountTest extends TestCase
     // fixed password - see tests/Feature/Cart/Concerns/CreatesCartFixtures.
     private const FIXTURE_PASSWORD = 'CartTestPassw0rd';
 
-    private const BLOCKED_MESSAGE = 'The account cannot be deleted while active bookings, contracts, or payments exist.';
+    private const PENDING_MESSAGE = 'Account deletion has been requested and will complete automatically after your active bookings, contracts, or payments are resolved.';
 
     protected function setUp(): void
     {
@@ -82,6 +82,10 @@ class DeleteAccountTest extends TestCase
         $row = $this->userRow($customer['user_uuid']);
         $this->assertSame('ACTIVE', $this->accountStatusCode($row));
         $this->assertNull($row->deleted_at);
+
+        $this->assertSame(0, DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count(), 'A wrong password must never create a deletion request.');
     }
 
     public function test_eligible_customer_with_correct_password_succeeds(): void
@@ -411,6 +415,10 @@ class DeleteAccountTest extends TestCase
             ->where('roles.code', 'ADMIN')
             ->exists();
         $this->assertTrue($hasAdminRole, 'The Admin identity must survive a blocked deletion attempt.');
+
+        $this->assertSame(0, DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count(), 'An Admin dual-role identity must never enter the deferred-deletion queue.');
     }
 
     public function test_a_customer_who_also_holds_an_active_super_admin_role_cannot_self_service_delete(): void
@@ -425,35 +433,117 @@ class DeleteAccountTest extends TestCase
         ]);
 
         $this->deleteAccount($customer['access_token'])->assertStatus(409);
+
+        $this->assertSame(0, DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count());
     }
 
     // ================================================================
-    // ACTIVE OBLIGATIONS
+    // ACTIVE OBLIGATIONS - deferred (PENDING, 202), never a hard refusal
     // ================================================================
 
-    public function test_non_terminal_booking_blocks_deletion(): void
+    private function deletionRequestRow(string $userUuid): ?object
+    {
+        return DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($userUuid))
+            ->first();
+    }
+
+    private function assertPendingResponse($response): void
+    {
+        $response->assertStatus(202)->assertJson([
+            'success' => true,
+            'message' => self::PENDING_MESSAGE,
+        ]);
+        $this->assertSame('PENDING', $response->json('data.deletion_status'));
+        $this->assertNotNull($response->json('data.requested_at'));
+    }
+
+    public function test_non_terminal_booking_yields_pending_deletion_request(): void
     {
         ['customer' => $customer] = $this->successfulPayment();
 
         $response = $this->deleteAccount($customer['access_token']);
 
-        $response->assertStatus(409)->assertJson(['success' => false, 'message' => self::BLOCKED_MESSAGE, 'data' => null]);
+        $this->assertPendingResponse($response);
 
         $row = $this->userRow($customer['user_uuid']);
         $this->assertSame('ACTIVE', $this->accountStatusCode($row));
+        $this->assertNull($row->deleted_at);
+
+        $request = $this->deletionRequestRow($customer['user_uuid']);
+        $this->assertNotNull($request);
+        $this->assertNull($request->completed_at);
     }
 
-    public function test_pending_payment_attempt_blocks_deletion(): void
+    public function test_open_payment_attempt_yields_pending_deletion_request(): void
     {
         $customer = $this->readyForPaymentCustomer();
         $this->createPayment($customer['access_token'], (string) Str::uuid())->assertStatus(201);
 
-        $this->deleteAccount($customer['access_token'])
-            ->assertStatus(409)
-            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+        $this->assertPendingResponse($this->deleteAccount($customer['access_token']));
     }
 
-    public function test_requested_contract_blocks_deletion(): void
+    public function test_requires_reconciliation_payment_yields_pending_deletion_request(): void
+    {
+        // An amount-mismatch webhook is the real, legitimate application
+        // path that produces a payment_attempts row that is simultaneously
+        // SUCCESSFUL, requires_reconciliation = 1, and has no Booking yet
+        // (see App\Actions\Payment\ProcessPaymentWebhookAction) - no manual
+        // DB manipulation needed to reach this exact blocking state.
+        $customer = $this->readyForPaymentCustomer();
+        $response = $this->createPayment($customer['access_token'], (string) Str::uuid());
+        $row = $this->paymentRow($response->json('data.payment.uuid'));
+
+        $this->postWebhook($this->fakeWebhookPayload([
+            'provider_session_reference' => $row->provider_session_reference,
+            'outcome' => 'SUCCEEDED',
+            'amount' => '1.000000',
+        ]))->assertStatus(200);
+
+        $fresh = $this->paymentRow(UuidBinary::toString($row->id));
+        $this->assertSame(1, (int) $fresh->requires_reconciliation);
+
+        $this->assertPendingResponse($this->deleteAccount($customer['access_token']));
+    }
+
+    public function test_successful_payment_not_yet_converted_to_booking_yields_pending_deletion_request(): void
+    {
+        // Simulates the narrow "payment succeeded but Booking conversion is
+        // pending recovery" window (see App\Console\Commands\
+        // ConvertSuccessfulPaymentsToBookings) by marking an otherwise
+        // still-open payment_attempts row SUCCESSFUL directly, without ever
+        // going through the webhook (which would synchronously create the
+        // Booking via CreateBookingFromSuccessfulPaymentAction) - no
+        // Booking is ever created, so there is nothing to cascade-delete.
+        // This isolates hasOpenOrUnresolvedPayment()'s third condition
+        // (SUCCESSFUL, no matching bookings row) from requires_reconciliation.
+        $customer = $this->readyForPaymentCustomer();
+        $response = $this->createPayment($customer['access_token'], (string) Str::uuid());
+        $row = $this->paymentRow($response->json('data.payment.uuid'));
+
+        // Explicit microsecond formatting - a bare Carbon instance's
+        // implicit string cast truncates to whole seconds, which can then
+        // sort earlier than payment_attempts.created_at's own microsecond
+        // precision and trip chk_payment_attempts_finalized_at.
+        $timestamp = now()->format('Y-m-d H:i:s.u');
+
+        DB::table('payment_attempts')->where('id', $row->id)->update([
+            'status_id' => DB::table('payment_statuses')->where('code', 'SUCCESSFUL')->value('id'),
+            'requires_reconciliation' => 0,
+            'confirmed_amount' => $row->requested_amount,
+            'successful_at' => $timestamp,
+            'finalized_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        $this->assertSame(0, DB::table('bookings')->where('payment_attempt_id', $row->id)->count());
+
+        $this->assertPendingResponse($this->deleteAccount($customer['access_token']));
+    }
+
+    public function test_requested_contract_yields_pending_deletion_request(): void
     {
         $customer = $this->createAuthenticatedCartCustomer();
         $property = $this->createProperty($customer['access_token']);
@@ -465,23 +555,77 @@ class DeleteAccountTest extends TestCase
             'service_uuids' => [$service['uuid']],
         ])->assertStatus(201);
 
-        $this->deleteAccount($customer['access_token'])
-            ->assertStatus(409)
-            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+        $this->assertPendingResponse($this->deleteAccount($customer['access_token']));
     }
 
-    public function test_active_contract_with_stripe_billing_blocks_deletion(): void
+    public function test_active_contract_with_stripe_billing_yields_pending_deletion_request(): void
     {
         $fixture = $this->activeContractWithItem();
 
-        $this->deleteAccount($fixture['customer']['access_token'])
-            ->assertStatus(409)
-            ->assertJson(['message' => self::BLOCKED_MESSAGE]);
+        $this->assertPendingResponse($this->deleteAccount($fixture['customer']['access_token']));
 
         $this->assertSame('ACTIVE', DB::table('service_contract_statuses')
             ->where('id', $fixture['contract']->status_id)
             ->value('code'));
     }
+
+    public function test_exactly_one_deletion_request_is_persisted_per_customer(): void
+    {
+        ['customer' => $customer] = $this->successfulPayment();
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(202);
+
+        $count = DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count();
+
+        $this->assertSame(1, $count);
+    }
+
+    public function test_repeated_delete_while_pending_is_idempotent_and_requested_at_stable(): void
+    {
+        ['customer' => $customer] = $this->successfulPayment();
+
+        $first = $this->deleteAccount($customer['access_token']);
+        $this->assertPendingResponse($first);
+        $firstRequestedAt = $first->json('data.requested_at');
+
+        $second = $this->deleteAccount($customer['access_token']);
+        $this->assertPendingResponse($second);
+
+        $this->assertSame($firstRequestedAt, $second->json('data.requested_at'));
+
+        $count = DB::table('customer_account_deletion_requests')
+            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
+            ->count();
+        $this->assertSame(1, $count);
+    }
+
+    public function test_retry_after_obligation_resolves_completes_deletion(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->assertPendingResponse($this->deleteAccount($customer['access_token']));
+
+        $this->postJson('/api/v1/bookings/'.UuidBinary::toString($booking->id).'/cancel', [], [
+            'Authorization' => 'Bearer '.$customer['access_token'],
+        ])->assertStatus(200);
+
+        $this->deleteAccount($customer['access_token'])->assertStatus(200)->assertJson([
+            'success' => true,
+            'message' => 'Account deleted successfully.',
+            'data' => null,
+        ]);
+
+        $row = $this->userRow($customer['user_uuid']);
+        $this->assertSame('DEACTIVATED', $this->accountStatusCode($row));
+        $this->assertNotNull($row->deleted_at);
+
+        $request = $this->deletionRequestRow($customer['user_uuid']);
+        $this->assertNotNull($request->completed_at);
+    }
+
 
     // ================================================================
     // HISTORICAL RETENTION
@@ -621,20 +765,39 @@ class DeleteAccountTest extends TestCase
         }
     }
 
-    public function test_blocked_response_exposes_no_internal_fields(): void
+    public function test_pending_response_exposes_no_internal_fields(): void
     {
         ['customer' => $customer] = $this->successfulPayment();
 
         $response = $this->deleteAccount($customer['access_token']);
 
-        $response->assertStatus(409);
-        $this->assertNull($response->json('data'));
+        $response->assertStatus(202);
+        $this->assertEqualsCanonicalizing(['deletion_status', 'requested_at'], array_keys($response->json('data')));
 
         $raw = strtolower($response->getContent());
         $this->assertTrue(mb_check_encoding($response->getContent(), 'UTF-8'));
+        json_decode($response->getContent(), true);
+        $this->assertSame(JSON_ERROR_NONE, json_last_error());
 
-        foreach (['stripe', 'booking_id', 'contract_id', 'payment_attempt', 'sql', 'exception'] as $forbidden) {
+        foreach (['stripe', 'booking_id', 'contract_id', 'payment_attempt', 'sql', 'exception', 'binary', '\\x'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $raw);
         }
+    }
+
+    public function test_admin_rejection_response_exposes_no_internal_fields(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+
+        DB::table('user_roles')->insert([
+            'user_id' => UuidBinary::toBinary($customer['user_uuid']),
+            'role_id' => (int) DB::table('roles')->where('code', 'ADMIN')->value('id'),
+            'assigned_by_user_id' => null,
+            'assigned_at' => now(),
+        ]);
+
+        $response = $this->deleteAccount($customer['access_token']);
+
+        $response->assertStatus(409);
+        $this->assertNull($response->json('data'));
     }
 }

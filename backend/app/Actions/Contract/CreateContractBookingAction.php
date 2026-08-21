@@ -3,6 +3,7 @@
 namespace App\Actions\Contract;
 
 use App\Actions\Contract\Concerns\AppliesContractExpiry;
+use App\Support\Auth\PendingAccountDeletionGuard;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Booking\BookingNumberGenerator;
 use App\Support\Booking\BookingPresenter;
@@ -19,6 +20,7 @@ use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * The one canonical entry point for consuming an active Service Contract
@@ -68,9 +70,13 @@ use InvalidArgumentException;
  * Action's own row lock) - never observed half-applied or via a stale
  * snapshot.
  *
- * Lock order: SERVICE_CONTRACT -> SERVICE_CONTRACT_BILLING ->
- * SERVICE_CONTRACT_ITEM -> (new) CART -> APPOINTMENT_SLOT ->
- * APPOINTMENT_HOLD -> BOOKING. This is disjoint from
+ * Lock order: (BLUE V1 Phase 13) USER -> SERVICE_CONTRACT ->
+ * SERVICE_CONTRACT_BILLING -> SERVICE_CONTRACT_ITEM -> (new) CART ->
+ * APPOINTMENT_SLOT -> APPOINTMENT_HOLD -> BOOKING. The USER lock exists
+ * solely for PendingAccountDeletionGuard's race-freedom (see that class's
+ * docblock) and is otherwise inert here - this Action still never reads
+ * or mutates anything about the user row itself. Below USER, this chain
+ * is disjoint from
  * every existing lock chain: SERVICE_CONTRACT/SERVICE_CONTRACT_ITEM are a
  * new root nothing else in the codebase locks, and the CART this Action
  * locks is one it creates itself inside this same transaction - no other
@@ -107,6 +113,7 @@ class CreateContractBookingAction
         private readonly ContractStatusMachine $contractMachine = new ContractStatusMachine,
         private readonly PricingSchemeRepository $schemeRepository = new PricingSchemeRepository,
         private readonly PricingSchemeSelector $schemeSelector = new PricingSchemeSelector,
+        private readonly PendingAccountDeletionGuard $deletionGuard = new PendingAccountDeletionGuard,
     ) {}
 
     /**
@@ -130,6 +137,22 @@ class CreateContractBookingAction
         $userIdBinary = UuidBinary::toBinary($userUuid);
 
         return DB::transaction(function () use ($contractIdBinary, $contractItemIdBinary, $slotIdBinary, $userIdBinary): array {
+            // BLUE V1 Phase 13: locks `users` first, ahead of the
+            // SERVICE_CONTRACT root below, purely to make the
+            // PendingAccountDeletionGuard check race-free against
+            // DeleteAccountAction's own `users` lock - see that guard's
+            // class docblock. This is additive to, not a replacement for,
+            // this Action's own documented lock chain.
+            $userExists = DB::table('users')->where('id', $userIdBinary)->lockForUpdate()->exists();
+
+            if (! $userExists) {
+                throw new RuntimeException('Authenticated user with binary id not found.');
+            }
+
+            if ($this->deletionGuard->isPending($userIdBinary)) {
+                return $this->conflict(PendingAccountDeletionGuard::REJECTION_MESSAGE);
+            }
+
             $contract = DB::table('service_contracts')
                 ->where('id', $contractIdBinary)
                 ->where('customer_user_id', $userIdBinary)

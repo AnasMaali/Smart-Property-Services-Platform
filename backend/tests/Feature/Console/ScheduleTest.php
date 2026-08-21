@@ -40,6 +40,7 @@ class ScheduleTest extends TestCase
             'contracts:retry-pending-cancel-at-scheduling',
             'contracts:suspend-past-due-billing',
             'bookings:convert-successful-payments',
+            'accounts:process-pending-deletions',
         ] as $signature) {
             $this->assertNotNull($this->eventFor($signature), "Expected \"{$signature}\" to be registered in routes/console.php's scheduler.");
         }
@@ -54,6 +55,21 @@ class ScheduleTest extends TestCase
     public function test_booking_conversion_recovery_runs_frequently_and_without_overlap(): void
     {
         $event = $this->eventFor('bookings:convert-successful-payments');
+
+        $this->assertNotNull($event);
+        $this->assertSame('*/5 * * * *', $event->getExpression());
+        $this->assertTrue($event->withoutOverlapping);
+    }
+
+    // The deferred account-deletion processor (BLUE V1 Phase 13) must run
+    // frequently enough that a customer's PENDING deletion completes
+    // within minutes of their blocking obligation clearing, not left
+    // stranded until an operator notices, and must never overlap a
+    // still-running invocation (see App\Console\Commands\
+    // ProcessPendingAccountDeletions's own idempotency docblock).
+    public function test_pending_account_deletion_processor_runs_frequently_and_without_overlap(): void
+    {
+        $event = $this->eventFor('accounts:process-pending-deletions');
 
         $this->assertNotNull($event);
         $this->assertSame('*/5 * * * *', $event->getExpression());

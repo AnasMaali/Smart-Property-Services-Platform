@@ -49,3 +49,12 @@ Schedule::command('contracts:suspend-past-due-billing')
 Schedule::command('bookings:convert-successful-payments')
     ->everyFiveMinutes()
     ->withoutOverlapping(10);
+
+// Complete deferred customer account deletions once their blocking
+// Booking/Contract/Payment obligation has become terminal (see
+// App\Console\Commands\ProcessPendingAccountDeletions) - idempotent and
+// safe to run repeatedly, so a system with no pending requests simply
+// finds nothing.
+Schedule::command('accounts:process-pending-deletions')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10);

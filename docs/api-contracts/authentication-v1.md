@@ -45,6 +45,7 @@ planned behavior is included.
 | 13 | Verify Phone Number Change OTP | POST | `/v1/auth/verify-phone-number-change-otp` | Yes (Bearer) |
 | 14 | Resend Phone Number Change OTP | POST | `/v1/auth/resend-phone-number-change-otp` | Yes (Bearer) |
 | 15 | Delete Account | DELETE | `/v1/auth/account` | Yes (Bearer) |
+| 16 | Get Account Deletion Status | GET | `/v1/auth/account-deletion` | Yes (Bearer) |
 
 (The "Change Phone Number" feature from the task brief maps to 3 routes: request, verify, resend — routes 12–14 above.)
 
@@ -692,8 +693,13 @@ All three endpoints below require `Authorization: Bearer {{access_token}}` (midd
   |---|---|---|
   | `current_password` | Yes | string — re-authentication proof; no other field is read by the underlying Action even if present in the request body |
 
-- **Success status**: `200 OK`
-- **Success response**:
+This endpoint has two possible successful outcomes, decided automatically by whether the customer currently has an active Booking/Contract/Payment obligation — the client never chooses between them:
+
+- **Immediate deletion (`200`)** — no blocking obligation exists: the full erasure lifecycle below runs immediately, in the same request.
+- **Deferred deletion (`202`)** — a blocking obligation exists: the customer's request is durably recorded as `PENDING` (`customer_account_deletion_requests`, BLUE V1 Phase 13) and completes automatically, with no further client action required, once the obligation reaches a terminal state (a scheduled command checks every five minutes — see below). This exists specifically to satisfy Apple guideline 5.1.1(v)'s requirement that a customer be able to *initiate* deletion even when completion must wait, rather than being refused outright with no durable record of having asked.
+
+- **Success status**: `200 OK` (immediate) or `202 Accepted` (deferred)
+- **Immediate success response**:
 ```json
 {
   "success": true,
@@ -701,27 +707,45 @@ All three endpoints below require `Authorization: Bearer {{access_token}}` (midd
   "data": null
 }
 ```
-- **Error status**: `422 Unprocessable Entity` (wrong password, or the caller's own account is no longer `ACTIVE`); `409 Conflict` (active obligations block deletion — see below); `401 Unauthorized` for an invalid/expired Bearer token (handled by `auth.customer` before reaching this endpoint).
+- **Deferred success response**:
+```json
+{
+  "success": true,
+  "message": "Account deletion has been requested and will complete automatically after your active bookings, contracts, or payments are resolved.",
+  "data": {
+    "deletion_status": "PENDING",
+    "requested_at": "2026-08-21T16:38:18+00:00"
+  }
+}
+```
+  `requested_at` never changes on retry — calling `DELETE /v1/auth/account` again while already `PENDING` (still requiring the correct `current_password` each time) returns the same `requested_at`, or completes deletion immediately (`200`) if the obligation has since cleared. No blocking-record identifier (Booking/Contract/Payment UUID, internal id, or Stripe reference) is ever included in either response — the customer is told only that deletion was accepted, never which obligation it is waiting on.
+- **Error status**: `422 Unprocessable Entity` (wrong password, or the caller's own account is no longer `ACTIVE`); `409 Conflict` (the account also holds an active ADMIN/SUPER_ADMIN role — see below); `401 Unauthorized` for an invalid/expired Bearer token (handled by `auth.customer` before reaching this endpoint).
 - **Example error JSON**:
 ```json
 {
   "success": false,
-  "message": "The account cannot be deleted while active bookings, contracts, or payments exist.",
+  "message": "This account cannot be deleted through self-service while it retains administrative access. Please contact support.",
   "data": null
 }
 ```
-  Other messages: `"The current password you entered is incorrect."`, and the generic `"Your session is no longer valid. Please log in again."` if the authenticated user row itself is no longer `ACTIVE`. No response ever includes an internal id, a Stripe reference, or any other identifier for the blocking record — the customer is told only that an obligation exists, never which one.
+  Other messages: `"The current password you entered is incorrect."`, and the generic `"Your session is no longer valid. Please log in again."` if the authenticated user row itself is no longer `ACTIVE`.
 
-- **Eligibility (blocking conditions, `409`)** — any one of the following is enough to block deletion:
+- **Deferral conditions (`202`, not a refusal)** — any one of the following defers rather than blocks deletion:
   - A `bookings` row (via any of the customer's carts) whose `status_id` is not `COMPLETED` or `CANCELLED`.
   - A `payment_attempts` row (via any of the customer's carts) that is still open (`finalized_at IS NULL`), still `requires_reconciliation`, or is `SUCCESSFUL` with no `bookings` row converted from it yet (the same state `bookings:convert-successful-payments` exists to recover).
   - A `service_contracts` row whose `status_id` is not `EXPIRED` or `CANCELLED` (this covers `REQUESTED`, `PENDING_ADMIN_APPROVAL`, `PENDING_CUSTOMER_ACCEPTANCE`, and `ACTIVE` — including a contract still being billed through Stripe, since a contract stays `ACTIVE` through `CANCEL_AT_PERIOD_END` until the provider confirms cancellation).
 
-  No Stripe call is ever made as part of this endpoint — a contract still tied to live Stripe billing is simply left alone (blocked), never cancelled as a side effect of account deletion.
+  No Stripe call is ever made as part of this endpoint or its scheduled processor — a contract still tied to live Stripe billing is simply left alone (deferred), never cancelled as a side effect of account deletion.
 
-  **Known limitation**: a blocked customer has no in-app deferred-deletion path today — only the option to resolve the blocking obligation (let the booking/payment settle, wait for the contract to reach a terminal state) and call this endpoint again. This is a disclosed gap relative to Apple's guideline 5.1.1(v) requirement that a user be able to *initiate* deletion even when completion must wait; a `PENDING_DELETION`-style deferred-erasure mechanism (record the request now, complete it automatically once the obligation clears) is the correct long-term fix and is recommended before final App Store submission, but was not implemented in this change.
+- **Sessions while `PENDING`**: unaffected. The customer's current session (and any other) remains fully valid — deliberately, so they can use the app to resolve the obligation (view/cancel a Booking, wait out a Contract term, etc.). Only actual completion (`200`, whether immediate or via the scheduled processor) revokes sessions.
 
-- **Business behavior (only once every eligibility check above passes, all inside one DB transaction)**:
+- **New obligations while `PENDING`**: blocked. `App\Support\Auth\PendingAccountDeletionGuard` rejects (`409`, generic message, no internal details) any attempt to create a **new** Payment, Contract request, or CONTRACT-entitlement Booking while a deletion request is outstanding — a customer cannot indefinitely postpone their own deletion by continuously creating fresh obligations. Resolving an **existing** obligation is never blocked: reading Bookings/Contracts/profile, cancelling an existing Booking, and ordinary cart preparation (adding items, no Payment yet) all remain fully usable.
+
+- **Automatic completion**: `accounts:process-pending-deletions`, scheduled every five minutes (`withoutOverlapping`), re-evaluates every `PENDING` request using the exact same eligibility rules above and completes deletion — via the same erasure logic described below, never a separate implementation — the moment the obligation clears. No client action is required; `GET /v1/auth/account-deletion` (below) lets the client observe this happening.
+
+- **Dual-role Admin identity (`409`, unaffected by this phase)**: an account currently holding an active `ADMIN`/`SUPER_ADMIN` role is refused outright — never deferred, never queued. A `users` row can legitimately be both a Customer and a company Admin at once, and the erasure lifecycle's tombstoning is not scoped to "just the Customer half" of a shared identity; queuing such an account for automatic completion could later tombstone an active company Admin, which must never happen.
+
+- **Business behavior (only once every eligibility check above passes, all inside one DB transaction — immediate path)**:
   - **This is genuine erasure, not the existing account-deactivation status flip reused verbatim.** `account_status_id` does move to `DEACTIVATED` (the same status value `AuthenticateCustomer`/`LoginAction` already require to be `ACTIVE`, so it alone is sufficient to block every future login/authenticated request), but a `DEACTIVATED` account and a *deleted* account are not otherwise the same thing in this schema: deletion additionally sets a dedicated `users.deleted_at` timestamp, and — unlike any other current use of `DEACTIVATED` — permanently destroys the account's live PII and access below. A future "temporarily deactivate my account" feature landing on the same status value would *not* imply any of this.
   - `users.phone_number` and `users.email` are overwritten with non-personal, randomly generated, collision-free placeholder values (`DEL` + random hex for phone; `deleted+<random-hex>@deleted.invalid` for email — `.invalid` is the RFC 2606-reserved TLD for exactly this "never resolves" use). **The original phone number and email become immediately available for a new registration.**
   - `users.password_hash` is overwritten with a hash of random data — the original password can never again authenticate.
@@ -734,9 +758,34 @@ All three endpoints below require `Authorization: Bearer {{access_token}}` (midd
   - Each of the customer's `carts`: if it has no `bookings` and no `payment_attempts` row (pure transient shopping/appointment-hold state), the cart is deleted outright (its items, option selections, `cart_locations`, and any `appointment_holds` all cascade). If it does carry financial history, the cart and its items are left in place as historical order content, and only `cart_locations` (the cart's own contact/address PII) is stripped.
   - Each of the customer's `customer_properties`: if never referenced by any `service_contracts` row (including a historical cancelled/expired one), it is deleted outright. If it is referenced, it cannot be deleted (a `RESTRICT` foreign key) and is instead anonymized in place (`is_active = 0`, label/address/contact fields overwritten, non-personal reference ids like `area_id`/`property_type_id` left intact) — never exposed back through any customer-facing property listing afterward, since the customer's own session and role no longer exist.
   - **Deliberately never touched**: `payment_attempts` rows that are `SUCCESSFUL` and already converted, `bookings` in a terminal state (`COMPLETED`/`CANCELLED`) and their `booking_status_history`, `service_contracts` in a terminal state (`EXPIRED`/`CANCELLED`) and their `service_contract_billings` (including Stripe subscription/customer/invoice references needed for reconciliation), and every immutable `checkout_snapshot`/`checkout_snapshot_hash`. Most of this is genuinely non-personal financial/audit data. **`checkout_snapshot` is a partial exception**: it embeds the exact service address and `visit_contact_phone` captured at the moment of payment — real personal data, not just financial metadata. `checkout_snapshot_hash` is not merely a decorative integrity stamp: `ProcessPaymentWebhookAction` and `CreateBookingFromSuccessfulPaymentAction` both actively recompute and verify it against the live snapshot on every webhook delivery, including provider retries — a currently-exercised code path. Redacting the snapshot's personal fields post-deletion, even while recomputing a new hash, would silently change what that hash validates against for any future retried webhook on that payment. Retention today is driven primarily by this technical constraint, not by a BLUE-documented legal retention requirement for `visit_contact_phone` specifically — no such policy exists in this codebase. This endpoint is **designed to support** Apple's account-deletion requirement for every field it can safely erase; this specific residual gap is disclosed here rather than assumed compliant, and should be closed by a future redesign that separates the hashed financial core from a redactable fulfillment-PII subset. It is never exposed through any customer-facing read path after deletion, since the deleted account has no working credentials, role, or session left to query it with.
-- **Atomicity**: the entire operation runs inside one `DB::transaction()`; any failure rolls back every write, leaving the account exactly as it was (including its live PII) rather than a partially-deleted state.
-- **Lock order**: `users` (the target row) → `carts` (all, ordered by id) → `customer_properties` (all, ordered by id) — the same "lock the user row first" convention already used by `AddCartItemAction`/`CreatePaymentAttemptAction`, so a concurrent request that creates a new cart or payment for this customer naturally serializes behind this transaction rather than racing it. No external network/provider (Stripe, Twilio) call is ever made inside this transaction.
+- **Atomicity**: the entire operation (both the immediate-deletion path and the scheduled processor's per-request completion) runs inside one `DB::transaction()`; any failure rolls back every write, leaving the account exactly as it was (including its live PII) rather than a partially-deleted state.
+- **Lock order**: `users` (the target row) → `carts` (all, ordered by id) → `customer_properties` (all, ordered by id) — the same "lock the user row first" convention already used by `AddCartItemAction`/`CreatePaymentAttemptAction`. `App\Actions\Payment\CreatePaymentAttemptAction`, `App\Actions\Contract\RequestContractAction`, and `App\Actions\Contract\CreateContractBookingAction` now all lock `users` as their own first step too (Phase 13), specifically so `PendingAccountDeletionGuard`'s check cannot race against this endpoint's own `users` lock — whichever transaction acquires that single shared row first fully serializes the other. The scheduled processor locks `users` → the deletion request row → `carts` → (inside the erasure step) `customer_properties`; this differs in the relative order of the request row vs. `carts` from the HTTP path, which is safe for the same reason — `users` being the universal first lock on both paths means no second, distinct resource can ever be held by one side while the other waits on it. No external network/provider (Stripe, Twilio) call is ever made inside any of these transactions.
 - **Postman variables used**: `access_token` (Bearer auth), `password`.
+
+---
+
+## 13a. Get Account Deletion Status
+
+- **HTTP method / route**: `GET /v1/auth/account-deletion`
+- **Auth required**: Yes — `Authorization: Bearer {{access_token}}` (middleware group `auth.customer`). Always reflects only the authenticated caller's own state — there is no user-id parameter, so reading another customer's deletion status is architecturally impossible, not merely forbidden.
+- **Success status**: `200 OK`
+- **Success response (no request ever made)**:
+```json
+{
+  "success": true,
+  "message": "Account deletion status retrieved successfully.",
+  "data": { "deletion_status": "NONE", "requested_at": null }
+}
+```
+- **Success response (deferred, still pending)**:
+```json
+{
+  "success": true,
+  "message": "Account deletion status retrieved successfully.",
+  "data": { "deletion_status": "PENDING", "requested_at": "2026-08-21T16:38:18+00:00" }
+}
+```
+  No database or request UUID is ever returned. A fully completed deletion cannot normally reach this endpoint at all — `auth.customer` already rejects the request once the account's session is revoked and its `CUSTOMER` role removed, independent of anything this endpoint does. There is no cancel-deletion endpoint in this phase — a deletion request is intentional and reauthenticated; the system completes it once eligible rather than offering to abandon it.
 
 ---
 

@@ -6,6 +6,7 @@ use App\Models\AppointmentSlot;
 use App\Models\Cart;
 use App\Models\CartLocation;
 use App\Models\User;
+use App\Support\Auth\PendingAccountDeletionGuard;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Checkout\CheckoutPresenter;
@@ -52,6 +53,7 @@ class CreatePaymentAttemptAction
         private readonly CheckoutPresenter $checkoutPresenter = new CheckoutPresenter,
         private readonly CheckoutSnapshotBuilder $snapshotBuilder = new CheckoutSnapshotBuilder,
         private readonly PaymentAttemptStateMachine $stateMachine = new PaymentAttemptStateMachine,
+        private readonly PendingAccountDeletionGuard $deletionGuard = new PendingAccountDeletionGuard,
     ) {}
 
     /**
@@ -182,6 +184,10 @@ class CreatePaymentAttemptAction
 
         if ($user === null) {
             throw new RuntimeException("Authenticated user {$userUuid} not found.");
+        }
+
+        if ($this->deletionGuard->isPending($userIdBinary)) {
+            return $this->conflict(PendingAccountDeletionGuard::REJECTION_MESSAGE);
         }
 
         $cart = Cart::where('customer_user_id', $userIdBinary)

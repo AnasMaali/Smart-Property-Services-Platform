@@ -2,6 +2,7 @@
 
 namespace App\Actions\Contract;
 
+use App\Support\Auth\PendingAccountDeletionGuard;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Contract\ContractNumberGenerator;
 use App\Support\Contract\ContractPresenter;
@@ -12,6 +13,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Customer-initiated Service Contract request (POST /v1/contracts/requests,
@@ -33,9 +35,20 @@ class RequestContractAction
 {
     use BuildsCartResult;
 
-    public function __construct(private readonly ServiceCapabilities $capabilities = new ServiceCapabilities) {}
+    public function __construct(
+        private readonly ServiceCapabilities $capabilities = new ServiceCapabilities,
+        private readonly PendingAccountDeletionGuard $deletionGuard = new PendingAccountDeletionGuard,
+    ) {}
 
     /**
+     * BLUE V1 Phase 13: wrapped in a transaction that locks `users` first
+     * (previously this Action took no lock at all) specifically so the
+     * PendingAccountDeletionGuard check below cannot race against
+     * DeleteAccountAction's own `users` lock - see
+     * PendingAccountDeletionGuard's class docblock for why locking only
+     * this one shared row, before any other resource, cannot introduce a
+     * deadlock with any other lock chain in this codebase.
+     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
@@ -43,6 +56,27 @@ class RequestContractAction
     {
         $userIdBinary = UuidBinary::toBinary($userUuid);
 
+        return DB::transaction(function () use ($userIdBinary, $data) {
+            $userExists = DB::table('users')->where('id', $userIdBinary)->lockForUpdate()->exists();
+
+            if (! $userExists) {
+                throw new RuntimeException("Authenticated user with binary id not found.");
+            }
+
+            if ($this->deletionGuard->isPending($userIdBinary)) {
+                return $this->conflict(PendingAccountDeletionGuard::REJECTION_MESSAGE);
+            }
+
+            return $this->createContractRequest($userIdBinary, $data);
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function createContractRequest(string $userIdBinary, array $data): array
+    {
         try {
             $propertyIdBinary = UuidBinary::toBinary($data['property_uuid']);
         } catch (InvalidArgumentException) {
