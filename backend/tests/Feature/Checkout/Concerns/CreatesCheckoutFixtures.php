@@ -20,6 +20,8 @@ trait CreatesCheckoutFixtures
 
     private static int $checkoutFixtureSequence = 0;
 
+    private static int $appointmentSlotFixtureSequence = 0;
+
     private int $otherPropertyTypeId;
 
     protected function setUpCheckoutFixtures(): void
@@ -65,7 +67,18 @@ trait CreatesCheckoutFixtures
     {
         $uuid = UuidBinary::generate();
         $now = now();
-        $startsAt = $overrides['starts_at'] ?? $now->copy()->addDay();
+
+        // `appointment_slots` has a real UNIQUE (starts_at, ends_at) key on
+        // datetime(6) columns, but DB::table()->insert() stringifies a
+        // Carbon value via its default __toString(), which truncates to
+        // whole-second precision - so two slots built from `now()` within
+        // the same wall-clock second collide even though the column itself
+        // supports microseconds. A per-call minute offset (the same
+        // self::$sequence++ convention every other fixture builder in this
+        // codebase already uses) makes every slot this method creates
+        // deterministically distinct, regardless of how fast the calls run.
+        self::$appointmentSlotFixtureSequence++;
+        $startsAt = $overrides['starts_at'] ?? $now->copy()->addDay()->addMinutes(self::$appointmentSlotFixtureSequence);
         $endsAt = $overrides['ends_at'] ?? $startsAt->copy()->addHours(2);
         $timeWindowId = $overrides['time_window_id'] ?? $this->createAppointmentTimeWindow();
 
