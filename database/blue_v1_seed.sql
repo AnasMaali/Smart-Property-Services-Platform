@@ -181,6 +181,12 @@ VALUES
     'Phone Number Change',
     'Used to verify a new phone number before updating the account.',
     TRUE
+),
+(
+    'LOGIN',
+    'Login',
+    'Used to authenticate a customer via passwordless phone + OTP login.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,

@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 /**
@@ -21,6 +22,7 @@ use Tests\TestCase;
 class OtpDeliveryIntegrationTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const LOG_LINE_PATTERN = '/\[LOCAL OTP] purpose=(\S+) phone=(\S+) code=(\d{6}) expires_at=(\S+)/';
 
@@ -268,13 +270,9 @@ class OtpDeliveryIntegrationTest extends TestCase
             'otp_code' => $this->rawCodeFor($otpUuid),
         ])->assertStatus(200);
 
-        $login = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $payload['phone_number'],
-            'password' => $payload['password'],
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
+        $login = $this->issueCustomerSession($registerResponse->json('data.user_uuid'));
 
-        $accessToken = $login->json('data.access_token');
+        $accessToken = $login['access_token'];
         $newPhone = '+9715022000'.str_pad((string) (++self::$sequence), 2, '0', STR_PAD_LEFT);
 
         $this->enableLocalLogDelivery();

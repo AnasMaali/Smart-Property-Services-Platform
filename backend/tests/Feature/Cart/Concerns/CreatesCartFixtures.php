@@ -6,6 +6,7 @@ use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Testing\TestResponse;
+use Tests\Support\AuthenticatesCustomersForTests;
 
 /**
  * Shared cart-test fixture builders, following the same direct-insert
@@ -16,6 +17,8 @@ use Illuminate\Testing\TestResponse;
  */
 trait CreatesCartFixtures
 {
+    use AuthenticatesCustomersForTests;
+
     private static int $cartFixtureSequence = 0;
 
     private int $aedCurrencyId;
@@ -103,13 +106,7 @@ trait CreatesCartFixtures
      */
     private function loginCartCustomer(array $customer): array
     {
-        $response = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
-
-        return ['access_token' => $response->json('data.access_token')];
+        return $this->issueCustomerSession($customer['user_uuid']);
     }
 
     /**

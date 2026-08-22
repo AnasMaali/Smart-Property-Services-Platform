@@ -8,11 +8,13 @@ use Firebase\JWT\Key;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class AdminRefreshTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const GENERIC_MESSAGE = 'This refresh token is invalid or has expired.';
 
@@ -200,14 +202,10 @@ class AdminRefreshTest extends TestCase
             'assigned_at' => $now,
         ]);
 
-        $login = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
+        $login = $this->issueCustomerSession($userUuid);
 
         $response = $this->postJson('/api/v1/admin/auth/refresh', [
-            'refresh_token' => $login->json('data.refresh_token'),
+            'refresh_token' => $login['refresh_token'],
         ]);
 
         $response->assertStatus(422)->assertExactJson([

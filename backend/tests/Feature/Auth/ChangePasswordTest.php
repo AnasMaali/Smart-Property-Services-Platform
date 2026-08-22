@@ -6,11 +6,13 @@ use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class ChangePasswordTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const GENERIC_SESSION_MESSAGE = 'This session is invalid or has expired.';
 
@@ -69,16 +71,7 @@ class ChangePasswordTest extends TestCase
 
     private function loginCustomer(array $customer): array
     {
-        $response = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
-
-        return [
-            'session_uuid' => $response->json('data.session_uuid'),
-            'access_token' => $response->json('data.access_token'),
-        ];
+        return $this->issueCustomerSession($customer['user_uuid']);
     }
 
     private function changePassword(?string $accessToken, array $payload)

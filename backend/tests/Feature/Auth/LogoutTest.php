@@ -9,11 +9,13 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class LogoutTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const GENERIC_MESSAGE = 'This session is invalid or has expired.';
 
@@ -77,24 +79,15 @@ class LogoutTest extends TestCase
     }
 
     /**
-     * Logs the given customer in through the real /login endpoint so tests
-     * exercise a genuine auth_sessions row and access token.
+     * Mints a genuine auth_sessions row and access token for the given
+     * customer via AuthenticatesCustomersForTests, without HTTP or a
+     * password check.
      *
      * @return array{session_uuid: string, access_token: string, refresh_token: string}
      */
     private function loginCustomer(array $customer, string $clientType = 'MOBILE_IOS'): array
     {
-        $response = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => $clientType,
-        ])->assertStatus(200);
-
-        return [
-            'session_uuid' => $response->json('data.session_uuid'),
-            'access_token' => $response->json('data.access_token'),
-            'refresh_token' => $response->json('data.refresh_token'),
-        ];
+        return $this->issueCustomerSession($customer['user_uuid'], $clientType);
     }
 
     private function sessionRow(string $sessionUuid): ?object

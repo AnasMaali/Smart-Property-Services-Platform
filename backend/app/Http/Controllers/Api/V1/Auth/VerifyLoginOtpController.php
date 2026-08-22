@@ -2,14 +2,14 @@
 
 namespace App\Http\Controllers\Api\V1\Auth;
 
-use App\Actions\Auth\LoginAction;
+use App\Actions\Auth\VerifyLoginOtpAction;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Requests\Auth\VerifyLoginOtpRequest;
 use Illuminate\Http\JsonResponse;
 
-class LoginController extends Controller
+class VerifyLoginOtpController extends Controller
 {
-    public function __invoke(LoginRequest $request, LoginAction $action): JsonResponse
+    public function __invoke(VerifyLoginOtpRequest $request, VerifyLoginOtpAction $action): JsonResponse
     {
         $result = $action->handle([
             ...$request->validated(),

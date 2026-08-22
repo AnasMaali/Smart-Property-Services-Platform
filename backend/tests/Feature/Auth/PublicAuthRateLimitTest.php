@@ -14,7 +14,9 @@ class PublicAuthRateLimitTest extends TestCase
             'api/v1/auth/register' => 'throttle:auth-register',
             'api/v1/auth/verify-phone' => 'throttle:auth-otp-verify',
             'api/v1/auth/resend-otp' => 'throttle:auth-otp-issue',
-            'api/v1/auth/login' => 'throttle:auth-login',
+            'api/v1/auth/login/request-otp' => 'throttle:auth-login-otp-issue',
+            'api/v1/auth/login/verify-otp' => 'throttle:auth-login-otp-verify',
+            'api/v1/auth/login/resend-otp' => 'throttle:auth-login-otp-issue',
             'api/v1/auth/refresh' => 'throttle:auth-refresh',
             'api/v1/auth/forgot-password' => 'throttle:auth-otp-issue',
             'api/v1/auth/verify-password-reset-otp' => 'throttle:auth-otp-verify',
@@ -41,6 +43,26 @@ class PublicAuthRateLimitTest extends TestCase
                 "Public Auth route [{$uri}] is missing [{$expectedMiddleware}]."
             );
         }
+    }
+
+    // Regression guard for the BLUE V1 passwordless-login product decision:
+    // the password-based Customer login route must never come back as a
+    // registered route, under either its old path or method.
+    public function test_password_customer_login_route_no_longer_exists(): void
+    {
+        $route = collect(RouteFacade::getRoutes())
+            ->first(function (Route $route): bool {
+                return $route->uri() === 'api/v1/auth/login'
+                    && in_array('POST', $route->methods(), true);
+            });
+
+        $this->assertNull($route, 'The deprecated password Customer login route must not be registered.');
+
+        $this->postJson('/api/v1/auth/login', [
+            'phone_number' => '+971500001234',
+            'password' => 'irrelevant',
+            'client_type' => 'MOBILE_IOS',
+        ])->assertStatus(404);
     }
 
     // The equivalent defense-in-depth boundary for the authenticated

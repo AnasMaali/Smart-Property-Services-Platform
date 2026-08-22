@@ -15,8 +15,8 @@ planned behavior is included.
 - **Session / refresh token lifetime**: 30 days from login, absolute (not extended by refresh calls) (`AUTH_SESSION_TTL_DAYS`, default `30`).
 - **Refresh rotation**: every successful `POST /v1/auth/refresh` call invalidates the presented raw refresh token and issues a brand-new raw refresh token (and a new access token). The old raw refresh token cannot be reused.
 - **Bearer token usage**: protected endpoints (see table below) require header `Authorization: Bearer {{access_token}}`. The access token is a signed HS256 JWT containing `sub` (user UUID), `sid` (session UUID), `role`, `client`, `iat`, `nbf`, `exp`, `jti`.
-- **OTP policy** (identical for every OTP purpose — phone verification, password reset, phone number change): 6-digit numeric code, expires 5 minutes after issue, maximum 5 verification attempts before the code is locked out (`ATTEMPTS_EXCEEDED`), and a 60-second cooldown between resend requests for the same flow.
-- **HTTP-layer rate limiting on top of the OTP policy above** (`App\Providers\AppServiceProvider`, an additional flooding boundary — the domain rules above remain authoritative): the public pre-auth OTP endpoints (`resend-otp`, `forgot-password` → `throttle:auth-otp-issue`; `verify-phone`, `verify-password-reset-otp` → `throttle:auth-otp-verify`) key their identity bucket off the request's own `phone_number`/`otp_uuid`. The authenticated phone-number-change endpoints (`change-phone-number`, `resend-phone-number-change-otp` → `throttle:auth-phone-change-issue`; `verify-phone-number-change-otp` → `throttle:auth-phone-change-verify`) instead key identity off the already-authenticated caller's own user id, since there is no anonymous body field to key on — same limits (5/min identity + 30/min IP for issuance, 10/min identity + 60/min IP for verification), same hashed-key convention, applied after `auth.customer` has already run. `DELETE /v1/auth/account` (`throttle:auth-account-delete`) uses the same authenticated-identity keying, at 5/min identity + 20/min IP.
+- **OTP policy** (identical for every OTP purpose — phone verification, password reset, phone number change, login): 6-digit numeric code, expires 5 minutes after issue, maximum 5 verification attempts before the code is locked out (`ATTEMPTS_EXCEEDED`), and a 60-second cooldown between resend requests for the same flow.
+- **HTTP-layer rate limiting on top of the OTP policy above** (`App\Providers\AppServiceProvider`, an additional flooding boundary — the domain rules above remain authoritative): the public pre-auth OTP endpoints (`resend-otp`, `forgot-password` → `throttle:auth-otp-issue`; `verify-phone`, `verify-password-reset-otp` → `throttle:auth-otp-verify`) key their identity bucket off the request's own `phone_number`/`otp_uuid`. Login OTP (§4a–§4c) uses its own dedicated buckets, `throttle:auth-login-otp-issue` / `throttle:auth-login-otp-verify`, kept separate from the buckets above since a Login OTP directly authenticates a session on success. The authenticated phone-number-change endpoints (`change-phone-number`, `resend-phone-number-change-otp` → `throttle:auth-phone-change-issue`; `verify-phone-number-change-otp` → `throttle:auth-phone-change-verify`) instead key identity off the already-authenticated caller's own user id, since there is no anonymous body field to key on — same limits (5/min identity + 30/min IP for issuance, 10/min identity + 60/min IP for verification), same hashed-key convention, applied after `auth.customer` has already run. `DELETE /v1/auth/account` (`throttle:auth-account-delete`) uses the same authenticated-identity keying, at 5/min identity + 20/min IP.
 - **Customer remains logged in through the refresh-token flow**: the access token expires every 15 minutes, but as long as the underlying session (refresh token) is valid (not revoked, not expired, ≤ 30 days old) the client can call `POST /v1/auth/refresh` repeatedly to obtain new access/refresh token pairs without requiring the customer to log in again.
 - Nothing in this document exposes real OTP codes, password hashes, OTP hashes, refresh token hashes, or raw binary UUIDs. All example values are placeholders.
 - **OTP delivery** (`OTP_DELIVERY_DRIVER`, `.env`): OTP codes are always generated, hashed, and stored server-side, and are never returned by any endpoint under any circumstance, in any environment — the driver below only controls what (if anything) happens to the raw code *after* it is hashed and *before* it is discarded. `App\Providers\OtpDeliveryServiceProvider` is the single place every driver's guard is enforced.
@@ -33,7 +33,10 @@ planned behavior is included.
 | 1 | Registration | POST | `/v1/auth/register` | No |
 | 2 | Verify Phone OTP | POST | `/v1/auth/verify-phone` | No |
 | 3 | Resend Phone OTP | POST | `/v1/auth/resend-otp` | No |
-| 4 | Login | POST | `/v1/auth/login` | No |
+| 4 | ~~Login (password)~~ — **removed, see §4** | — | ~~`/v1/auth/login`~~ | — |
+| 4a | **Request Login OTP (canonical Customer login)** | POST | `/v1/auth/login/request-otp` | No |
+| 4b | **Verify Login OTP (canonical Customer login)** | POST | `/v1/auth/login/verify-otp` | No |
+| 4c | **Resend Login OTP** | POST | `/v1/auth/login/resend-otp` | No |
 | 5 | Refresh Access Token | POST | `/v1/auth/refresh` | No (refresh token in body) |
 | 6 | Logout | POST | `/v1/auth/logout` | Yes (Bearer) |
 | 7 | Logout All Sessions | POST | `/v1/auth/logout-all` | Yes (Bearer) |
@@ -216,43 +219,97 @@ planned behavior is included.
 
 ---
 
-## 4. Login
+## 4. Login (Password) — Removed
 
-- **HTTP method / route**: `POST /v1/auth/login`
+> **BLUE V1 product decision**: Customer login is passwordless. The canonical, and only, public
+> Customer login contract is §4a–§4c (Phone → 6-digit LOGIN OTP → session) below.
+>
+> `POST /v1/auth/login` (phone + password) has been **removed** — it is no longer a registered
+> route (`GET/POST` to it now returns `404`), not merely deprecated. It was previously kept alive
+> only because a large, unrelated slice of the automated test suite used it as a fixture shortcut
+> to obtain an authenticated session; that dependency has been refactored away (see
+> `backend/tests/Support/AuthenticatesCustomersForTests.php`, which mints a session directly via
+> the same production session-issuance code, without HTTP or a password check). Production route
+> design is no longer shaped by test-fixture convenience.
+>
+> `users.password_hash` and password-based flows elsewhere (Change Password, Reset Password,
+> Delete Account re-authentication) are unaffected and remain fully supported — this removal is
+> scoped to *login proof* only. `App\Actions\Auth\LoginAction`, `LoginController`, and
+> `LoginRequest` have been deleted from the codebase as genuinely dead code once the route and its
+> only remaining caller (the test suite) no longer referenced them — the reusable session-issuance
+> logic they contained was already extracted into `App\Actions\Auth\Concerns\IssuesAuthSession`,
+> which `VerifyLoginOtpAction` (§4b) now uses directly.
+
+---
+
+## 4a. Request Login OTP
+
+- **HTTP method / route**: `POST /v1/auth/login/request-otp`
 - **Auth required**: No
 - **Headers**: `Content-Type: application/json`
 - **Request JSON**:
 ```json
 {
-  "phone_number": "{{phone_number}}",
-  "password": "{{password}}",
-  "client_type": "{{client_type}}",
-  "device_name": "Layla's iPhone",
-  "app_version": "1.2.0"
+  "phone_number": "{{phone_number}}"
 }
 ```
 - **Fields**:
   | Field | Required | Rules |
   |---|---|---|
   | `phone_number` | Yes | string, `^\+?[0-9]{8,20}$` |
-  | `password` | Yes | string |
+
+- **Success status**: `200 OK` — **always**, regardless of whether the phone number belongs to an eligible account.
+- **Success response** (identical for every case: unknown phone number, ineligible account — wrong role, non-`ACTIVE` status, unverified phone — active resend cooldown, or an OTP actually issued):
+```json
+{
+  "success": true,
+  "message": "If an eligible account exists for this phone number, a login code has been sent.",
+  "data": null
+}
+```
+- **Non-enumeration behavior**: The key security property of this endpoint, mirroring Forgot Password (§8) — it never reveals whether the phone number is registered or eligible via response status, message, or shape: every rejection path performs the same dummy `bcrypt` hash operation the real OTP-issuing path spends. There is no error status under normal validation-passing input — only `422` for malformed `phone_number`.
+- **Residual timing side-channel (honestly scoped, not eliminated)**: response *shape* is fully non-enumerating, but response *latency* is not proven indistinguishable end-to-end. The eligible/issuing path calls `OtpDeliveryChannel::deliver()` synchronously, after the DB transaction commits and before the HTTP response is returned — under the production `"twilio"` driver this is a real outbound network call to Twilio's Messages API, which is slower and has different variance than the ineligible path's in-process `bcrypt` hash alone. A caller measuring response latency at scale could plausibly distinguish "an OTP was actually dispatched" from "it wasn't." This is an existing architectural property shared with Forgot Password (§8), Registration (§1), and Resend Phone OTP (§3) — none of which queue OTP delivery — not something unique to Login OTP. Closing this gap fully would require moving delivery off the request/response path entirely (e.g. a queued job dispatched from within the same transaction's `afterCommit`), which is a deliberate architecture change out of scope for this endpoint alone. Tracked as a residual risk, not fixed here.
+- **Business behavior**: If the account exists, is `ACTIVE`, has a verified phone number, and holds an active `CUSTOMER` role (the same eligibility gate `Login` §4 enforces), and no `PENDING` `LOGIN` OTP is within its 60-second cooldown, invalidates any previous pending `LOGIN` OTP and issues a new one (6 digits, 5-minute expiry, 5 max attempts). **No OTP UUID or code is ever returned by this endpoint** — the next step (`verify-otp`) is looked up by `phone_number`, not by UUID, for the same reason `verify-password-reset-otp` is (see §9).
+- **Rate limiting**: `throttle:auth-login-otp-issue` — a dedicated bucket (not shared with `auth-otp-issue`), 5/min per phone-number identity + 30/min per IP. Kept separate from other OTP-issuance traffic (registration, password reset, phone-number change) because a Login OTP directly authenticates a session on success, making it a higher-value target.
+- **Postman variables used**: `phone_number`. No variables are captured from the response (none exist to capture).
+
+---
+
+## 4b. Verify Login OTP
+
+- **HTTP method / route**: `POST /v1/auth/login/verify-otp`
+- **Auth required**: No
+- **Headers**: `Content-Type: application/json`
+- **Request JSON** (`phone_number` + `otp_code`, **not** an OTP UUID — request-otp never returns one — plus the same session-metadata fields `Login` §4 takes, since a successful verify issues a real session here):
+```json
+{
+  "phone_number": "{{phone_number}}",
+  "otp_code": "{{otp_code}}",
+  "client_type": "{{client_type}}",
+  "device_name": "Fatima's iPhone",
+  "app_version": "1.4.0"
+}
+```
+- **Fields**:
+  | Field | Required | Rules |
+  |---|---|---|
+  | `phone_number` | Yes | string, `^\+?[0-9]{8,20}$` |
+  | `otp_code` | Yes | string, exactly 6 digits |
   | `client_type` | Yes | string, one of `MOBILE_IOS`, `MOBILE_ANDROID`, must also exist and be active in `auth_client_types` |
   | `device_name` | No | string, max:120 |
   | `app_version` | No | string, max:30 |
 
-  `client_type` is upper-cased before validation.
-
 - **Success status**: `200 OK`
-- **Success response**:
+- **Success response** — identical shape to `Login` §4, issued via the same shared session-issuance code:
 ```json
 {
   "success": true,
   "message": "Login successful.",
   "data": {
     "user_uuid": "3f2a1c9e-....-....-....-............",
-    "full_name": "Layla Hassan",
+    "full_name": "Fatima Al Otaiba",
     "phone_number": "+971500001234",
-    "email": "layla@example.com",
+    "email": "fatima@example.com",
     "role": "CUSTOMER",
     "session_uuid": "7e1f4b02-....-....-....-............",
     "access_token": "<jwt>",
@@ -262,19 +319,43 @@ planned behavior is included.
   }
 }
 ```
-- **Error status**: `422 Unprocessable Entity` for business failure; `422` also for validation errors (e.g. invalid `client_type`).
+- **Error status**: `422 Unprocessable Entity`
 - **Example error JSON**:
 ```json
 {
   "success": false,
-  "message": "The phone number or password you entered is incorrect.",
+  "message": "Invalid or expired verification code.",
   "data": null
 }
 ```
-  This exact same message/status is returned for: unknown phone number, wrong password, non-`ACTIVE` account status (`PENDING_VERIFICATION`/`SUSPENDED`/`DEACTIVATED`), unverified phone number, or a missing/inactive `CUSTOMER` role — deliberately non-enumerating.
-- **Business behavior**: Creates a new `auth_sessions` row (30-day expiry from now), stores only `SHA-256(raw refresh token)`, updates `users.last_login_at`, and issues an access token embedding `sub`, `sid`, `role=CUSTOMER`, `client`.
-- **Security notes**: The raw refresh token is returned exactly once, in this response; only its hash is persisted. IP address is stored packed (`inet_pton`); response never includes `password`, `password_hash`, or `refresh_token_hash`.
+  This is the **only** business-failure message this endpoint ever returns — every rejection branch (unknown phone number, an account no longer eligible to log in, no pending `LOGIN` OTP, expired OTP, attempts-exceeded OTP, or simply a wrong code) collapses to this same message, status, and shape, mirroring Verify Password Reset OTP (§9) rather than Verify Phone OTP (§2), for the same non-enumeration reason.
+- **Business behavior**: Looks up the user's latest `LOGIN` OTP by `phone_number`, **re-checks the full login-eligibility gate immediately before session issuance** (account may have been deactivated, role-changed, or deleted since the OTP was requested — OTP possession is not permanent authorization), validates the code exactly like Verify Phone OTP, and — only on success — marks the OTP `VERIFIED` and creates a new `auth_sessions` row via the exact same code path `Login` (§4) uses. Internal OTP state (status, `failed_attempt_count`, `last_attempt_at`) transitions normally throughout.
+- **Replay / cross-user / cross-purpose protection**: A `VERIFIED` OTP is never `PENDING` again, so it cannot be replayed. There is no `otp_verification_uuid` anywhere in this flow, so there is no token an attacker who learns one customer's raw code could ever present against a different customer's phone number — cross-user replay is structurally impossible, not merely checked. The lookup is always scoped to `purpose_id = LOGIN`, so a `PHONE_VERIFICATION`/`PASSWORD_RESET`/`PHONE_NUMBER_CHANGE` OTP can never be accepted here, and a `LOGIN` OTP can never be accepted by those other endpoints.
+- **Security notes**: Response never includes `password`, `password_hash`, `code_hash`, or `refresh_token_hash`. The raw refresh token is returned exactly once, in this response.
 - **Postman test script**: on `200` + `success == true`, saves `access_token`, `refresh_token`, `session_uuid` into the environment.
+
+---
+
+## 4c. Resend Login OTP
+
+- **HTTP method / route**: `POST /v1/auth/login/resend-otp`
+- **Auth required**: No
+- **Headers**: `Content-Type: application/json`
+- **Request JSON** (`phone_number`, not an OTP UUID — see §4a for why):
+```json
+{
+  "phone_number": "{{phone_number}}"
+}
+```
+- **Fields**:
+  | Field | Required | Rules |
+  |---|---|---|
+  | `phone_number` | Yes | string, `^\+?[0-9]{8,20}$` |
+
+- **Success status**: `200 OK` — same always-generic response as §4a.
+- **Business behavior**: Functionally identical to Request Login OTP (§4a) — both routes share the same underlying `IssueLoginOtpAction` ("ensure a fresh `PENDING` `LOGIN` OTP exists for this phone number, respecting the 60-second resend cooldown, invalidating any prior pending one"), exposed under a distinct route name for UI clarity only (the OTP screen's "Resend" affordance is a distinct user gesture, not a distinct backend concept).
+- **Rate limiting**: `throttle:auth-login-otp-issue` (same bucket as §4a).
+- **Postman variables used**: `phone_number`.
 
 ---
 
@@ -398,7 +479,7 @@ planned behavior is included.
   "data": null
 }
 ```
-- **Non-enumeration behavior**: This is the key security property of this endpoint. It never reveals whether the phone number is registered. Every rejection path (unknown number, deactivated account, cooldown still active) performs a dummy `bcrypt` hash operation of equal cost to the real OTP-issuing path, specifically so that response **timing** cannot be used to distinguish "account exists" from "account does not exist" either. There is no error status for this endpoint under normal validation-passing input — only a `422` for malformed `phone_number` (missing/wrong format).
+- **Non-enumeration behavior**: This is the key security property of this endpoint. It never reveals whether the phone number is registered via response status, message, or shape. Every rejection path (unknown number, deactivated account, cooldown still active) performs a dummy `bcrypt` hash operation of equal cost to the real OTP-issuing path. **Response latency is not proven indistinguishable end-to-end** — see the residual timing side-channel note under Request Login OTP (§4a), which applies identically here: the issuing path's synchronous `OtpDeliveryChannel::deliver()` call (a real network request under the `"twilio"` driver) is not present on any decline path.
 - **Example validation error JSON** (malformed `phone_number` only):
 ```json
 {
@@ -802,6 +883,7 @@ Applies to `register`, `reset-password`, and `change-password`: minimum 8 charac
 | `PHONE_VERIFICATION` | Registration, Resend Phone OTP | 6 digits | 5 minutes | 5 | 60 seconds |
 | `PASSWORD_RESET` | Forgot Password | 6 digits | 5 minutes | 5 | 60 seconds |
 | `PHONE_NUMBER_CHANGE` | Request Phone Number Change, Resend Phone Number Change OTP | 6 digits | 5 minutes | 5 | 60 seconds |
+| `LOGIN` | Request Login OTP, Resend Login OTP | 6 digits | 5 minutes | 5 | 60 seconds |
 
 ## Reference: session/token lifetimes
 

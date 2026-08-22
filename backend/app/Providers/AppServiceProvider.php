@@ -61,15 +61,39 @@ class AppServiceProvider extends ServiceProvider
             return hash('sha256', $identity);
         };
 
-        // Brute-force protection for Customer login.
-        RateLimiter::for('auth-login', function (Request $request) use ($identityKey, $ipKey): array {
+        // Login OTP issuance/resend protection (POST /v1/auth/login/request-otp
+        // and /v1/auth/login/resend-otp). Deliberately its own dedicated
+        // bucket rather than sharing `auth-otp-issue` (used by
+        // resend-otp/forgot-password for PHONE_VERIFICATION/PASSWORD_RESET):
+        // a Login OTP directly authenticates a session on success, making it
+        // a higher-value target than those other OTP purposes, and keeping
+        // it isolated means Login OTP abuse can never consume headroom
+        // shared with unrelated registration/password-reset OTP traffic (or
+        // vice versa). Same dual identity+IP shape as auth-otp-issue, keyed
+        // on this flow's actual field name (phone_number - both endpoints
+        // take only that, see IssueLoginOtpAction).
+        RateLimiter::for('auth-login-otp-issue', function (Request $request) use ($identityKey, $ipKey): array {
             return [
                 Limit::perMinute(5)
-                    ->by('auth-login-identity:'.$identityKey($request, ['phone_number'])),
+                    ->by('auth-login-otp-issue-identity:'.$identityKey($request, ['phone_number'])),
 
-                // Prevent rotating through many phone numbers from one IP.
                 Limit::perMinute(30)
-                    ->by('auth-login-ip:'.$ipKey($request)),
+                    ->by('auth-login-otp-issue-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // Login OTP verification flooding protection (POST
+        // /v1/auth/login/verify-otp). The OTP's own max_attempts remains the
+        // stronger per-OTP domain rule; this is the HTTP-layer flooding
+        // boundary on top of it, keyed on phone_number (this flow has no
+        // otp_verification_uuid - see VerifyLoginOtpRequest).
+        RateLimiter::for('auth-login-otp-verify', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('auth-login-otp-verify-identity:'.$identityKey($request, ['phone_number'])),
+
+                Limit::perMinute(60)
+                    ->by('auth-login-otp-verify-ip:'.$ipKey($request)),
             ];
         });
 

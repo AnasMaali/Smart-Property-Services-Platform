@@ -9,11 +9,13 @@ use Firebase\JWT\Key;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class RefreshTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const GENERIC_MESSAGE = 'This refresh token is invalid or has expired.';
 
@@ -90,16 +92,8 @@ class RefreshTest extends TestCase
      */
     private function loginCustomer(array $customer, string $clientType = 'MOBILE_IOS'): array
     {
-        $response = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => $clientType,
-        ])->assertStatus(200);
-
         return [
-            'session_uuid' => $response->json('data.session_uuid'),
-            'refresh_token' => $response->json('data.refresh_token'),
-            'access_token' => $response->json('data.access_token'),
+            ...$this->issueCustomerSession($customer['user_uuid'], $clientType),
             'client_type' => $clientType,
         ];
     }

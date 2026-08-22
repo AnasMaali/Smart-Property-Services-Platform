@@ -21,15 +21,17 @@ use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\DeleteAccountController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\GetAccountDeletionStatusController;
-use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\RefreshController;
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
 use App\Http\Controllers\Api\V1\Auth\RequestPhoneNumberChangeController;
 use App\Http\Controllers\Api\V1\Auth\ResendOtpController;
+use App\Http\Controllers\Api\V1\Auth\RequestLoginOtpController;
+use App\Http\Controllers\Api\V1\Auth\ResendLoginOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResendPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
+use App\Http\Controllers\Api\V1\Auth\VerifyLoginOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
@@ -73,7 +75,17 @@ use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 Route::post('/v1/auth/register', RegisterController::class)->middleware('throttle:auth-register');
 Route::post('/v1/auth/verify-phone', VerifyPhoneController::class)->middleware('throttle:auth-otp-verify');
 Route::post('/v1/auth/resend-otp', ResendOtpController::class)->middleware('throttle:auth-otp-issue');
-Route::post('/v1/auth/login', LoginController::class)->middleware('throttle:auth-login');
+// Canonical Customer login (the ONLY public Customer login contract):
+// Phone -> 6-digit LOGIN OTP -> session. The previous password-based
+// POST /v1/auth/login route has been removed entirely - it is no longer
+// reachable, not even as a deprecated/internal endpoint. Test suites that
+// previously used it as a fixture shortcut now mint sessions via
+// tests/Support/AuthenticatesCustomersForTests instead of HTTP. See
+// docs/api-contracts/authentication-v1.md.
+Route::post('/v1/auth/login/request-otp', RequestLoginOtpController::class)->middleware('throttle:auth-login-otp-issue');
+Route::post('/v1/auth/login/verify-otp', VerifyLoginOtpController::class)->middleware('throttle:auth-login-otp-verify');
+Route::post('/v1/auth/login/resend-otp', ResendLoginOtpController::class)->middleware('throttle:auth-login-otp-issue');
+
 Route::post('/v1/auth/refresh', RefreshController::class)->middleware('throttle:auth-refresh');
 Route::post('/v1/auth/logout', LogoutController::class);
 Route::post('/v1/auth/logout-all', LogoutAllController::class);

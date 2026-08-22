@@ -66,7 +66,9 @@ Validation failures: `422` with `{ "success": false, "message": "The given data 
 | POST | `/v1/auth/register` | `throttle:auth-register` | `Auth\RegisterController` | Create account, issue phone OTP | 201 | 422 |
 | POST | `/v1/auth/verify-phone` | `throttle:auth-otp-verify` | `Auth\VerifyPhoneController` | Verify registration OTP, activate account | 200 | 422 |
 | POST | `/v1/auth/resend-otp` | `throttle:auth-otp-issue` | `Auth\ResendOtpController` | Resend registration OTP | 200 | 422 |
-| POST | `/v1/auth/login` | `throttle:auth-login` | `Auth\LoginController` | Password login, issue tokens | 200 | 422, 429 |
+| POST | `/v1/auth/login/request-otp` | `throttle:auth-login-otp-issue` | `Auth\RequestLoginOtpController` | **Canonical Customer login, step 1**: issue Login OTP (non-enumerating) | 200 always | 422 (malformed input only) |
+| POST | `/v1/auth/login/verify-otp` | `throttle:auth-login-otp-verify` | `Auth\VerifyLoginOtpController` | **Canonical Customer login, step 2**: verify OTP, issue tokens | 200 | 422 |
+| POST | `/v1/auth/login/resend-otp` | `throttle:auth-login-otp-issue` | `Auth\ResendLoginOtpController` | Resend Login OTP | 200 always | 422 (malformed input only) |
 | POST | `/v1/auth/refresh` | `throttle:auth-refresh` | `Auth\RefreshController` | Rotate access+refresh token pair | 200 | 422, 429 |
 | POST | `/v1/auth/logout` | none (manual Bearer decode) | `Auth\LogoutController` | Revoke current session | 200 | 401 |
 | POST | `/v1/auth/logout-all` | none (manual Bearer decode) | `Auth\LogoutAllController` | Revoke every session | 200 | 401 |
@@ -181,8 +183,9 @@ state-machine view Flutter needs on top of it.
 - Refresh token: 64 hex-char opaque string, **30 days absolute from login, not extended by refresh
   calls**. Every successful `POST /v1/auth/refresh` **rotates both tokens** — the old raw refresh token
   is invalidated the instant a new one is issued. There is no sliding/renewing session window.
-- OTP policy (identical for registration, password reset, phone-number change): 6 digits, 5-minute
-  expiry, 5 max verification attempts (`ATTEMPTS_EXCEEDED` on the 6th), 60-second resend cooldown.
+- OTP policy (identical for registration, password reset, phone-number change, **and login**): 6 digits,
+  5-minute expiry, 5 max verification attempts (`ATTEMPTS_EXCEEDED` on the 6th), 60-second resend
+  cooldown.
 - Non-enumeration: `forgot-password` always returns `200` with an identical message regardless of
   whether the phone number exists — Flutter must never imply "phone number not found" from this
   endpoint's response.
@@ -203,19 +206,40 @@ Flutter must hold `otp_verification_uuid` only in memory/screen state for the du
 screen — never persist it. A resend **replaces** the UUID; the old one becomes invalid for both verify
 and resend.
 
-### 2.2 Login → tokens
+### 2.2 Login → tokens (Phone + OTP, passwordless)
+
+**BLUE V1 product decision: Customer login is passwordless.** Flutter does **not** plan a
+phone+password login screen — the canonical (and only customer-facing) login flow is:
 
 ```
-POST /v1/auth/login { phone_number, password, client_type: "MOBILE_IOS"|"MOBILE_ANDROID", device_name?, app_version? }
+Phone Number
+  ↓
+POST /v1/auth/login/request-otp { phone_number }
+  → 200 ALWAYS (non-enumerating — never implies "phone number not found")
+6-Digit LOGIN OTP
+  ↓
+POST /v1/auth/login/verify-otp { phone_number, otp_code, client_type: "MOBILE_IOS"|"MOBILE_ANDROID", device_name?, app_version? }
   → 200, data: { user_uuid, full_name, phone_number, email, role, session_uuid,
                  access_token, access_token_expires_at, refresh_token, session_expires_at }
+  → 422 "Invalid or expired verification code." (unified for every rejection reason)
+POST /v1/auth/login/resend-otp { phone_number }   [optional, on cooldown expiry]
+  → 200 ALWAYS (same non-enumerating response as request-otp)
 ```
 
 `client_type` must be `MOBILE_IOS` or `MOBILE_ANDROID` — set per platform at build/runtime, never
-hardcoded to one value if the app ships on both platforms. Every failure mode (unknown phone, wrong
-password, unverified phone, inactive account, missing CUSTOMER role) collapses to the same 422 message
-— **the login screen must show one generic "incorrect phone number or password" error**, never branch
-UI on which specific reason failed.
+hardcoded to one value if the app ships on both platforms. Every `verify-otp` failure mode (unknown
+phone, ineligible account, wrong code, expired, attempts-exceeded) collapses to the same generic 422
+message — **the OTP screen must show one generic "invalid or expired verification code" error**, never
+branch UI on which specific reason failed. Same non-enumeration discipline as Forgot Password (§2.6):
+`request-otp`/`resend-otp` always return `200` regardless of whether the phone number is registered or
+eligible, so the phone-entry screen must never imply "phone number not found." There is no
+`otp_verification_uuid` anywhere in this flow — keep `phone_number` in local screen state across the
+phone-entry and OTP screens instead (do not persist it beyond the login flow).
+
+**Removed, do not implement**: `POST /v1/auth/login` (phone + password) has been removed from the
+backend entirely — it is no longer a registered route and is not part of the Customer contract.
+Password-based account-security features elsewhere (Change Password, Reset Password, Delete Account
+re-authentication) are unaffected and remain part of the app.
 
 ### 2.3 Authenticated calls + silent refresh
 
@@ -413,7 +437,8 @@ beyond what's already shipped.
 | Welcome/onboarding | none (frontend-only) | — | Get Started / Login | Register or Login | — | — |
 | Register | `POST /v1/auth/register`, `GET /v1/reference-data/registration` | city/area/relationship-type/service-category options | submit form | Verify Phone OTP | reference data spinner | 422 inline per-field |
 | Verify Phone OTP | `POST /v1/auth/verify-phone`, `POST /v1/auth/resend-otp` | `otp_verification_uuid`, `otp_expires_at`, cooldown | enter code / resend | Login (with "verified, please log in" message) | countdown to resend | 422 (wrong/expired/exceeded) |
-| Login | `POST /v1/auth/login` | phone, password | submit | Home | spinner | 422 generic, 429 |
+| Login — Enter Phone | `POST /v1/auth/login/request-otp` | phone | submit | Login — Verify OTP (always, regardless of whether the number is real) | spinner | — (non-enumerating, 200 always; 422 malformed phone only) |
+| Login — Verify OTP | `POST /v1/auth/login/verify-otp`, `POST /v1/auth/login/resend-otp` | phone, code (session state, not `otp_verification_uuid`), cooldown | enter code / resend | Home | countdown to resend | 422 generic "invalid or expired" |
 | Forgot Password | `POST /v1/auth/forgot-password` | phone | submit | Verify Reset OTP (always, regardless of whether the number is real) | spinner | 422 (malformed phone only) |
 | Verify Reset OTP | `POST /v1/auth/verify-password-reset-otp` | phone, code | submit | Reset Password (with `reset_token`) | countdown | 422 generic "invalid or expired" |
 | Reset Password | `POST /v1/auth/reset-password` | `reset_token`, new password | submit | Login | spinner | 422 |
@@ -1251,7 +1276,7 @@ built.
 |---|---|---|---|---|
 | **F1** — Project skeleton | — | `core/` scaffolding only | — | App boots to a placeholder Home behind a router; theming/design tokens in place |
 | **F2** — API client + secure storage | — | `ApiClient`, `TokenStore`, `AuthInterceptor` (refresh state machine stubbed against a test endpoint) | `GET /v1/health` | A request round-trips through the client and error taxonomy end-to-end against the real backend |
-| **F3** — Auth | Splash, Welcome, Register, Verify Phone OTP, Login, Forgot/Reset Password | `AuthRepository` | §1.A + `POST /v1/auth/change-password` deferred to F9 | Full register→verify→login→refresh→logout cycle works against the real backend, including the 401→refresh→retry path (§3) proven with an artificially-expired token |
+| **F3** — Auth | Splash, Welcome, Register, Verify Phone OTP, Login (Phone + OTP), Forgot/Reset Password | `AuthRepository` | §1.A + `POST /v1/auth/change-password` deferred to F9 | Full register→verify→login (phone+OTP)→refresh→logout cycle works against the real backend, including the 401→refresh→retry path (§3) proven with an artificially-expired token |
 | **F4** — Home/catalog | Home, Category Services, Service Detail | `ServiceCatalogRepository` | `GET /v1/service-categories`, `.../services`, `GET /v1/services/{service}` | Full browse path renders real catalog data incl. all five option input types |
 | **F5** — Cart | Cart | `CartRepository` | §6 cart endpoints | Add/update/remove/clear all correctly reprice from live server responses; 422 on invalid options handled inline |
 | **F6** — Checkout | Location, Slot Selection, Review | `CheckoutRepository` | §7 checkout endpoints | `ready_for_payment` correctly gates the Payment CTA; hold-expiry countdown + re-fetch verified |
@@ -1279,7 +1304,8 @@ real blocking obligations.
 | Splash | `/v1/profile` or `/v1/auth/refresh` | GET / POST | Bearer / refresh token | 200 | 401→refresh, 422 | `AuthNotifier` |
 | Register | `/v1/auth/register` | POST | none | 201 | 422 | `AuthRepository` (screen-local form state) |
 | Verify Phone OTP | `/v1/auth/verify-phone`, `/v1/auth/resend-otp` | POST | none | 200 | 422 | screen-local |
-| Login | `/v1/auth/login` | POST | none | 200 | 422, 429 | `AuthNotifier` |
+| Login — Enter Phone | `/v1/auth/login/request-otp` | POST | none | 200 always | 422 (malformed only) | screen-local |
+| Login — Verify OTP | `/v1/auth/login/verify-otp`, `/v1/auth/login/resend-otp` | POST | none | 200 | 422 | `AuthNotifier` |
 | Forgot Password | `/v1/auth/forgot-password` | POST | none | 200 always | 422 (malformed only) | screen-local |
 | Verify Reset OTP | `/v1/auth/verify-password-reset-otp` | POST | none | 200 | 422 | screen-local |
 | Reset Password | `/v1/auth/reset-password` | POST | none | 200 | 422 | screen-local |

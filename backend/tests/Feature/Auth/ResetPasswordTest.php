@@ -6,11 +6,13 @@ use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class ResetPasswordTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private static int $sequence = 0;
 
@@ -75,16 +77,7 @@ class ResetPasswordTest extends TestCase
 
     private function loginCustomer(array $customer): array
     {
-        $response = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
-
-        return [
-            'session_uuid' => $response->json('data.session_uuid'),
-            'access_token' => $response->json('data.access_token'),
-        ];
+        return $this->issueCustomerSession($customer['user_uuid']);
     }
 
     /**

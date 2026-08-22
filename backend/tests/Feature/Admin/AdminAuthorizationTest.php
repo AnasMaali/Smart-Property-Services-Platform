@@ -9,11 +9,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
+use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class AdminAuthorizationTest extends TestCase
 {
     use DatabaseTransactions;
+    use AuthenticatesCustomersForTests;
 
     private const GENERIC_SESSION_MESSAGE = 'This session is invalid or has expired.';
 
@@ -75,16 +77,20 @@ class AdminAuthorizationTest extends TestCase
 
         $isCustomerOnly = $roleCodes === ['CUSTOMER'];
 
-        $login = $isCustomerOnly
-            ? $this->postJson('/api/v1/auth/login', [
-                'phone_number' => $phoneNumber,
-                'password' => 'Passw0rd123',
-                'client_type' => 'MOBILE_IOS',
-            ])->assertStatus(200)
-            : $this->postJson('/api/v1/admin/auth/login', [
-                'phone_number' => $phoneNumber,
-                'password' => 'Passw0rd123',
-            ])->assertStatus(200);
+        if ($isCustomerOnly) {
+            $session = $this->issueCustomerSession($userUuid);
+
+            return [
+                'user_uuid' => $userUuid,
+                'access_token' => $session['access_token'],
+                'session_uuid' => $session['session_uuid'],
+            ];
+        }
+
+        $login = $this->postJson('/api/v1/admin/auth/login', [
+            'phone_number' => $phoneNumber,
+            'password' => 'Passw0rd123',
+        ])->assertStatus(200);
 
         return [
             'user_uuid' => $userUuid,
@@ -138,16 +144,12 @@ class AdminAuthorizationTest extends TestCase
             ]);
         }
 
-        $login = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
+        $session = $this->issueCustomerSession($userUuid, 'MOBILE_IOS');
 
         return [
             'user_uuid' => $userUuid,
-            'access_token' => $login->json('data.access_token'),
-            'session_uuid' => $login->json('data.session_uuid'),
+            'access_token' => $session['access_token'],
+            'session_uuid' => $session['session_uuid'],
         ];
     }
 

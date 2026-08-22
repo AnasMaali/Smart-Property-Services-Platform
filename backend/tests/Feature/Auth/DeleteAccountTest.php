@@ -143,14 +143,10 @@ class DeleteAccountTest extends TestCase
     public function test_old_refresh_token_fails_after_deletion(): void
     {
         $customer = $this->createCartCustomer();
-        $login = $this->postJson('/api/v1/auth/login', [
-            'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
-            'client_type' => 'MOBILE_IOS',
-        ])->assertStatus(200);
+        $login = $this->issueCustomerSession($customer['user_uuid']);
 
-        $accessToken = $login->json('data.access_token');
-        $refreshToken = $login->json('data.refresh_token');
+        $accessToken = $login['access_token'];
+        $refreshToken = $login['refresh_token'];
 
         $this->deleteAccount($accessToken)->assertStatus(200);
 
@@ -163,7 +159,7 @@ class DeleteAccountTest extends TestCase
             ->assertStatus(422);
     }
 
-    public function test_login_with_original_phone_and_password_fails_after_deletion(): void
+    public function test_login_via_otp_fails_after_deletion(): void
     {
         $customer = $this->createCartCustomer();
         $session = $this->loginCartCustomer($customer);
@@ -171,11 +167,20 @@ class DeleteAccountTest extends TestCase
         $this->deleteAccount($session['access_token'])->assertStatus(200);
 
         // Repository convention (see docs/api-contracts/authentication-v1.md
-        // "Login"): a wrong/unresolvable credential is a 422 business
-        // failure, not 401.
-        $this->postJson('/api/v1/auth/login', [
+        // §4a): request-otp is always 200/generic - non-enumerating - even
+        // for a deleted account, so it must not disclose deletion via
+        // response shape either.
+        $this->postJson('/api/v1/auth/login/request-otp', [
             'phone_number' => $customer['phone_number'],
-            'password' => $customer['password'],
+        ])->assertStatus(200);
+
+        // No LOGIN OTP is ever actually issued for a deleted/ineligible
+        // account (DeleteAccountAction tombstones the phone_number and
+        // removes the CUSTOMER role), so there is no real code to guess -
+        // verify-otp fails generically regardless of the code submitted.
+        $this->postJson('/api/v1/auth/login/verify-otp', [
+            'phone_number' => $customer['phone_number'],
+            'otp_code' => '000000',
             'client_type' => 'MOBILE_IOS',
         ])->assertStatus(422);
     }
