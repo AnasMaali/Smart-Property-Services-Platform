@@ -4,3 +4,5 @@ import './auth/logout';
 import './bookings/index';
 import './bookings/show';
 import './technicians/index';
+import './contracts/index';
+import './contracts/show';

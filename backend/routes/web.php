@@ -27,4 +27,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     // BLUE V1 Phase B3 - Technicians shell route. Same "empty Blade shell,
     // all data/authorization from the API client-side" convention as above.
     Route::view('/technicians', 'admin.technicians.index')->name('technicians.index');
+
+    // BLUE V1 Phase B4 - Contracts shell routes. Same convention as
+    // Bookings/Technicians above.
+    Route::view('/contracts', 'admin.contracts.index')->name('contracts.index');
+
+    Route::get('/contracts/{contract}', function (string $contract) {
+        return view('admin.contracts.show', ['contractUuid' => $contract]);
+    })->name('contracts.show');
 });
