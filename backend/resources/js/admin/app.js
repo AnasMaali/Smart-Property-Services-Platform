@@ -22,3 +22,5 @@ import './services/index';
 import './services/show';
 import './pricing/index';
 import './pricing/show';
+import './ratings/index';
+import './ratings/show';

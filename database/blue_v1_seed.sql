@@ -217,6 +217,12 @@ VALUES
     'View Admin Dashboard',
     'View the Admin operational dashboard: read-only summary counts, attention lists, and recent activity aggregated across Bookings, Contracts, Payments, Contract Billing, Support, Technicians, and Customers.',
     TRUE
+),
+(
+    'ratings.view',
+    'View Ratings',
+    'View customer ratings and feedback comments left on completed Bookings, and which Customer/Booking each rating belongs to. Read-only: no rating-creation flow exists yet, and editing/deleting a submitted rating is not yet policy-defined.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -269,7 +275,8 @@ WHERE r.code = 'ADMIN'
     'pricing.view',
     'pricing.manage',
     'pricing.publish',
-    'dashboard.view'
+    'dashboard.view',
+    'ratings.view'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

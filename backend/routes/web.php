@@ -98,4 +98,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/pricing/{scheme}', function (string $scheme) {
         return view('admin.pricing.show', ['schemeUuid' => $scheme]);
     })->name('pricing.show');
+
+    // BLUE V1 Phase B11 - Ratings shell routes. Same convention as every
+    // other module above.
+    Route::view('/ratings', 'admin.ratings.index')->name('ratings.index');
+
+    Route::get('/ratings/{booking}', function (string $booking) {
+        return view('admin.ratings.show', ['bookingUuid' => $booking]);
+    })->name('ratings.show');
 });

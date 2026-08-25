@@ -123,6 +123,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/pricing-schemes/{pricingScheme}/rules',
             'api/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}',
             'api/v1/admin/properties/{property}',
+            'api/v1/admin/ratings',
+            'api/v1/admin/ratings/{booking}',
             'api/v1/admin/service-categories',
             'api/v1/admin/service-categories/{category}',
             'api/v1/admin/service-categories/{category}/activate',

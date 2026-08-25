@@ -29,6 +29,8 @@ use App\Http\Controllers\Api\V1\Admin\Pricing\GetAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\ListAdminPricingSchemesController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\PublishAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
+use App\Http\Controllers\Api\V1\Admin\Rating\GetAdminRatingController;
+use App\Http\Controllers\Api\V1\Admin\Rating\ListAdminRatingsController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCategoryController;
@@ -347,6 +349,17 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
     Route::get('/v1/admin/properties/{property}', GetAdminPropertyController::class)
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
+
+    // BLUE V1 Phase B11 - Ratings visibility. Read-only: no customer-facing
+    // rating-creation endpoint exists anywhere in this codebase yet, and
+    // docs/03-features-and-requirements/10-rating-and-feedback.md
+    // explicitly defers edit/delete to "a future version" - so there is no
+    // mutation capability. `ratings.booking_id` is its own primary key, so
+    // the route identifier is simply the Booking's own UUID.
+    Route::get('/v1/admin/ratings', ListAdminRatingsController::class)
+        ->middleware(AdminCapability::RATINGS_VIEW->middleware());
+    Route::get('/v1/admin/ratings/{booking}', GetAdminRatingController::class)
+        ->middleware(AdminCapability::RATINGS_VIEW->middleware());
 
     // BLUE V1 Phase B8 - Service Catalog (Categories/Services) management.
     // `services.view` covers every read below (list/detail, including the

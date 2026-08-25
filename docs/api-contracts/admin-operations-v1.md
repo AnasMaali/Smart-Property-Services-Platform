@@ -1235,3 +1235,93 @@ domain detail page — the Dashboard never adds a duplicate action button of its
 "Recent activity" feed, and a static "Quick access" link row to every existing `/admin/*` module. Every
 value — including `0` — is rendered via `textContent`; no `innerHTML` is used anywhere in
 `resources/js/admin/dashboard/index.js`.
+
+## Admin Ratings visibility (BLUE V1 Phase B11)
+
+Read-only Admin visibility into `ratings` — the exact table
+`docs/03-features-and-requirements/10-rating-and-feedback.md` describes ("The Admin / Service
+Management Team should be able to: View customer ratings. View customer comments. View the booking
+related to the rating. Review low ratings."). This phase implements exactly that read surface — never
+a second feedback store, and never a rating-creation or moderation feature that does not already exist.
+
+### Why this phase, and why it is entirely read-only
+
+Exhaustive search of `backend/app` confirms **zero application code references `ratings` anywhere** —
+there is no customer-facing rating-creation endpoint at all yet, in addition to no Admin surface. The
+requirements document itself defers the only two mutations anyone might expect ("Editing or deleting a
+submitted rating can be considered in a future version") — an explicitly undefined policy. Per BLUE V1
+standing policy against inventing business rules, this phase adds **no mutation of any kind**: no
+create (that is a Customer-app gap, out of scope for an Admin phase), no edit, no delete, no
+moderation/hide flag. The `ratings` schema itself has no column that could represent such a flag
+(`booking_id`, `rating_value`, `comment`, `created_at` only) — inventing one would be an unauthorized
+schema change.
+
+### Reused logic
+
+Customer resolution reuses the exact `bookings JOIN carts → carts.customer_user_id` join
+`App\Support\Admin\AdminBookingPresenter`/`AdminListBookingsAction` (B2) already established for "the
+customer who owns this Booking" — no new path to that answer was invented. The Rating detail's
+"services in this booking" list reuses `booking_items.service_name_snapshot` — the same historical
+-safety snapshot column Booking detail already relies on — rather than joining live `services` rows.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Ratings | GET | `/v1/admin/ratings` | `ratings.view` |
+| Get Rating | GET | `/v1/admin/ratings/{booking}` | `ratings.view` |
+
+`ratings.booking_id` is the table's own primary key — a Booking has at most one Rating, and there is no
+separate "rating id" anywhere in the schema — so the Admin identifier for a Rating is simply the
+Booking's own UUID. `ratings.view` is a new BLUE V1 Phase B11 `admin_permissions` row, granted to
+`ADMIN` the same way every other capability in this document already is (`SUPER_ADMIN` needs no row).
+There is no `ratings.manage` — mirroring the `payments.view`/`billing.view` precedent of a single
+view-only capability with no mutation counterpart.
+
+### List Ratings — `GET /v1/admin/ratings`
+
+`App\Actions\Admin\Rating\AdminListRatingsAction`. Deterministic ordering (`created_at DESC, booking_id
+DESC`) and the same pagination convention as every other Admin list endpoint (default 20, hard max
+100). Query filters — all optional: `rating_value` (exact match, 1–5), `max_rating` (`<=`, e.g. `2` to
+directly answer "review low ratings" from the requirements doc), `booking_uuid`, `customer_uuid` (both
+exact-match UUIDs; malformed values are rejected with a `422` by the FormRequest, consistent with every
+other Admin list endpoint's UUID filters — never silently ignored).
+
+Each row: `booking_uuid`, `booking_number`, `rating_value`, `comment`, `customer { uuid, full_name }`
+(nullable if the customer account no longer resolves), `created_at`.
+
+### Get Rating — `GET /v1/admin/ratings/{booking}`
+
+`App\Actions\Admin\Rating\AdminGetRatingAction`. A malformed UUID, an unknown Booking, or a Booking
+with no Rating all return the same generic `404` — never distinguishing which case applied. Returns
+`booking_uuid`, `booking_number`, `booking_status` (e.g. `COMPLETED`), `rating_value`, `comment`,
+`customer { uuid, full_name, phone_number }`, `services` (array of service names from the Booking,
+via `service_name_snapshot`), `created_at`.
+
+**Never returned**: raw binary ids (every identifier is the standard UUID string), `password_hash`,
+`refresh_token_hash`, any payment/checkout material — a Rating has no relationship to payment data at
+all, so none is ever queried for this endpoint in the first place.
+
+### No Step-Up, no audit events
+
+Nothing here mutates state, so there is nothing to protect with WebAuthn Step-Up and nothing for
+`AdminAuditLogger` to record — consistent with every other read-only Admin module (Payments, Contract
+Billing, Customers).
+
+### Frontend
+
+Sidebar "Ratings" (under Application, alongside Customers/Services/Support) points at `/admin/ratings`
+(list, with rating-value/max-rating/customer-uuid filters and a labeled "review low ratings" option)
+and `/admin/ratings/{booking}` (detail: rating, customer, the Booking's services, and the full
+comment). Both link back into their owning Booking (`/admin/bookings/{uuid}`) and Customer
+(`/admin/customers/{uuid}`) detail pages rather than duplicating any of that information. The Customer
+detail page's existing operational-links row (B6) now also links to
+`/admin/ratings?customer_uuid=...`, exactly like every other cross-module link already there. The
+customer-authored comment is rendered exclusively via `textContent`, never `innerHTML`.
+
+### No schema changes; `blue_db` note
+
+No table, column, migration, or index was added. The one new `ratings.view` `admin_permissions` row
+was added via the existing `INSERT ... ON DUPLICATE KEY UPDATE` seed convention in
+`database/blue_v1_seed.sql`, with equivalent DML applied only to `blue_test_db` — the pre-existing
+`blue_db` Admin-schema gap, reported in every phase since B5, remains untouched and unrelated to B11.

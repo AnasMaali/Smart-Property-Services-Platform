@@ -111,6 +111,17 @@ enum AdminCapability: string
     case DASHBOARD_VIEW = 'dashboard.view';
 
     /**
+     * BLUE V1 Phase B11. Read-only visibility into `ratings` (one row per
+     * completed Booking, at most). No customer-facing rating-creation
+     * endpoint exists anywhere in this codebase yet, and
+     * docs/03-features-and-requirements/10-rating-and-feedback.md
+     * explicitly defers edit/delete to "a future version" - so there is no
+     * `ratings.manage` counterpart, mirroring the `payments.view`/
+     * `billing.view` precedent of a single view-only capability.
+     */
+    case RATINGS_VIEW = 'ratings.view';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).
