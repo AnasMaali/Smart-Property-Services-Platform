@@ -94,6 +94,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/auth/mfa/enroll',
             'api/v1/admin/auth/mfa/verify',
             'api/v1/admin/auth/refresh',
+            'api/v1/admin/auth/step-up/request',
+            'api/v1/admin/auth/step-up/verify',
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',
             'api/v1/admin/booking-items/{bookingItem}/complete-work',
             'api/v1/admin/booking-items/{bookingItem}/reassign-technician',

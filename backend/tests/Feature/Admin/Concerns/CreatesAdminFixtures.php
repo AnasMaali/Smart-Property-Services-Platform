@@ -36,7 +36,7 @@ trait CreatesAdminFixtures
 
     /**
      * @param  array<int, string>  $roleCodes
-     * @return array{user_uuid: string, access_token: string}
+     * @return array{user_uuid: string, access_token: string, session_uuid: string, refresh_token: string}
      */
     private function createAndLoginAdmin(array $roleCodes = ['ADMIN']): array
     {
@@ -78,7 +78,29 @@ trait CreatesAdminFixtures
         return [
             'user_uuid' => $userUuid,
             'access_token' => $session['access_token'],
+            'session_uuid' => $session['session_uuid'],
+            'refresh_token' => $session['refresh_token'],
         ];
+    }
+
+    /**
+     * Mints an Admin session exactly like createAndLoginAdmin() above, but
+     * with its step_up_verified_at already marked fresh (BLUE V1 Phase
+     * A2.5) - for tests that need "an Admin who can immediately pass
+     * admin.stepup" as setup for an unrelated route (e.g. contracts.cancel)
+     * without driving the real Step-Up HTTP ceremony. Tests that exercise
+     * the Step-Up ceremony itself use real WebAuthn cryptography instead -
+     * see AdminStepUpTest.
+     *
+     * @param  array<int, string>  $roleCodes
+     * @return array{user_uuid: string, access_token: string, session_uuid: string}
+     */
+    private function createAndLoginAdminWithStepUp(array $roleCodes = ['ADMIN']): array
+    {
+        $admin = $this->createAndLoginAdmin($roleCodes);
+        $this->markStepUpVerified($admin['session_uuid']);
+
+        return $admin;
     }
 
     /**

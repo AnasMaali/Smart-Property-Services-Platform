@@ -3,6 +3,7 @@
 namespace Tests\Support;
 
 use App\Actions\Auth\Concerns\IssuesAdminAuthSession;
+use App\Models\AuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
 use App\Support\Admin\AdminSessionPolicy;
@@ -66,5 +67,24 @@ trait AuthenticatesAdminsForTests
         $user = User::where('id', UuidBinary::toBinary($userUuid))->firstOrFail();
 
         return $this->issueAdminAuthSession($user, $activeAdminRoleCodes, null, null, null, null, $now ?? now());
+    }
+
+    /**
+     * Marks $sessionUuid's step_up_verified_at directly (BLUE V1 Phase
+     * A2.5) - the same "mint/mutate session state directly rather than
+     * driving a real ceremony" convention issueAdminSession() above already
+     * establishes for login. For tests that merely need "this Admin session
+     * already has a fresh step-up" as setup for an unrelated
+     * admin.stepup-protected route (e.g. contracts.cancel), not for tests
+     * that exercise the Step-Up ceremony itself (see AdminStepUpTest, which
+     * drives the real HTTP endpoints with real WebAuthn cryptography).
+     */
+    private function markStepUpVerified(string $sessionUuid, ?Carbon $now = null): void
+    {
+        $this->sessionPolicy ??= app(AdminSessionPolicy::class);
+
+        $session = AuthSession::where('id', UuidBinary::toBinary($sessionUuid))->firstOrFail();
+
+        $this->sessionPolicy->markStepUpVerified($session, $now ?? now());
     }
 }

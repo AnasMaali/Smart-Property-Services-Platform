@@ -46,6 +46,22 @@ final class AdminSessionPolicy
     }
 
     /**
+     * Minutes a successful WebAuthn STEP_UP ceremony (BLUE V1 Phase A2.5)
+     * keeps a session's step-up "fresh" for admin.stepup-protected routes.
+     * Clamped to never exceed idleTimeoutMinutes() - the step-up window
+     * must never outlive the idle window it is checked alongside, so a
+     * misconfigured (too-large) AUTH_ADMIN_STEP_UP_TTL_MINUTES can never
+     * widen the effective freshness window past the session's own idle
+     * timeout, regardless of what value an operator sets.
+     */
+    public function stepUpTtlMinutes(): int
+    {
+        $configured = $this->positiveIntOrDefault(config('admin_session.step_up_ttl_minutes'), 5);
+
+        return min($configured, $this->idleTimeoutMinutes());
+    }
+
+    /**
      * The absolute `auth_sessions.expires_at` a brand-new Admin session
      * should be created with. Never used again after creation - refresh
      * never extends it (see AdminRefreshTokenAction, which only ever reads
@@ -127,6 +143,42 @@ final class AdminSessionPolicy
                 $query->whereNull('last_used_at')->orWhere('last_used_at', '<=', $staleThreshold);
             })
             ->update(['last_used_at' => $now, 'updated_at' => $now]);
+    }
+
+    /**
+     * True if $session has completed a WebAuthn STEP_UP ceremony within the
+     * last stepUpTtlMinutes() (BLUE V1 Phase A2.5), per this class's
+     * boundary convention (see class docblock): "fresh" while `now` is
+     * strictly before `step_up_verified_at + stepUpTtlMinutes()`, expired at
+     * and after that instant. A session with no recorded step-up at all
+     * (never verified, or the field was never set - e.g. immediately after
+     * login) fails closed as not fresh.
+     */
+    public function isStepUpFresh(AuthSession $session, Carbon $now): bool
+    {
+        if ($session->step_up_verified_at === null) {
+            return false;
+        }
+
+        $deadline = $session->step_up_verified_at->copy()->addMinutes($this->stepUpTtlMinutes());
+
+        return $now->lessThan($deadline);
+    }
+
+    /**
+     * Records that $session just completed a fresh WebAuthn STEP_UP
+     * ceremony. Only ever called for the CURRENT authenticated session
+     * (App\Actions\Auth\AdminStepUpVerifyAction) - never applied to any
+     * other session belonging to the same Admin, per the Phase A2.5
+     * current-session-only requirement. Deliberately separate from
+     * touchIfDue() above: a step-up ceremony is not "activity" in the idle-
+     * timeout sense, and this method never reads or writes `last_used_at`.
+     */
+    public function markStepUpVerified(AuthSession $session, Carbon $now): void
+    {
+        DB::table('auth_sessions')
+            ->where('id', UuidBinary::toBinary($session->id))
+            ->update(['step_up_verified_at' => $now, 'updated_at' => $now]);
     }
 
     private function positiveIntOrDefault(mixed $value, int $default): int

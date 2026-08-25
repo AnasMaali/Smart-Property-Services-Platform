@@ -778,6 +778,11 @@ class ContractBillingTest extends TestCase
         $contractUuid = UuidBinary::toString($built['contract']->id);
         $subscriptionId = $this->billingRow($contractUuid)->stripe_subscription_id;
 
+        // BLUE V1 Phase A2.5 - contracts.cancel now also requires a fresh
+        // WebAuthn step-up; grant it directly (reusable across all three
+        // calls below - step-up is a window, not consumed per action).
+        $this->markStepUpVerified($built['admin']['session_uuid']);
+
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
@@ -813,6 +818,10 @@ class ContractBillingTest extends TestCase
         $contractUuid = UuidBinary::toString($built['contract']->id);
         $subscriptionId = $this->billingRow($contractUuid)->stripe_subscription_id;
 
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
+
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
 
         $this->assertSame([$subscriptionId], $this->fakeBillingGateway()->cancelSubscriptionCalls);
@@ -847,6 +856,10 @@ class ContractBillingTest extends TestCase
         $built = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($built['contract']->id);
 
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
+
         $this->fakeBillingGateway()->queueCancellationFailure(new \RuntimeException('simulated provider outage'));
 
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
@@ -865,6 +878,10 @@ class ContractBillingTest extends TestCase
         $built = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($built['contract']->id);
         $subscriptionId = $this->billingRow($contractUuid)->stripe_subscription_id;
+
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
 
         $this->fakeBillingGateway()->queueCancellationFailure(new \RuntimeException('simulated provider outage'));
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
@@ -886,6 +903,10 @@ class ContractBillingTest extends TestCase
         $built = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($built['contract']->id);
         $subscriptionId = $this->billingRow($contractUuid)->stripe_subscription_id;
+
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
 
         $this->fakeBillingGateway()->queueCancellationFailure(new \RuntimeException('simulated provider outage'));
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
@@ -912,6 +933,10 @@ class ContractBillingTest extends TestCase
         $built = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($built['contract']->id);
         $subscriptionId = $this->billingRow($contractUuid)->stripe_subscription_id;
+
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
 
         $this->fakeBillingGateway()->queueCancellationFailure(new \RuntimeException('simulated provider outage'));
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
@@ -960,6 +985,10 @@ class ContractBillingTest extends TestCase
     {
         $built = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($built['contract']->id);
+
+        // BLUE V1 Phase A2.5 - see note in
+        // test_admin_cancel_sends_provider_cancellation_exactly_once_across_retries_before_webhook.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
 
         $this->adminCancelContract($built['admin']['access_token'], $contractUuid)->assertStatus(200);
         $requestedAtFirst = $this->billingRow($contractUuid)->provider_cancellation_requested_at;

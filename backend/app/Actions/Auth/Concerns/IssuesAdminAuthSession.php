@@ -94,6 +94,13 @@ trait IssuesAdminAuthSession
             'ip_address' => $this->packIp($ipAddress),
             'user_agent' => $userAgent,
             'last_used_at' => $now,
+            // BLUE V1 Phase A2.5: a fresh MFA-authenticated login never
+            // counts as step-up for sensitive operations - login MFA proves
+            // login authentication, not the separate, explicit STEP_UP
+            // ceremony admin.stepup-protected routes require. Set
+            // explicitly (rather than relying on the column's DB default)
+            // to make this deliberate, not incidental.
+            'step_up_verified_at' => null,
             'expires_at' => $sessionExpiresAt,
             'revoked_at' => null,
         ]);

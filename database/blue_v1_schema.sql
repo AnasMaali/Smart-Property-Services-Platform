@@ -171,6 +171,7 @@ DROP TABLE IF EXISTS `admin_webauthn_challenges`;
 CREATE TABLE `admin_webauthn_challenges` (
   `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
   `user_id` binary(16) NOT NULL,
+  `auth_session_id` binary(16) DEFAULT NULL,
   `purpose_id` tinyint unsigned NOT NULL,
   `challenge_hash` binary(32) NOT NULL,
   `expires_at` datetime(6) NOT NULL,
@@ -183,7 +184,9 @@ CREATE TABLE `admin_webauthn_challenges` (
   KEY `idx_admin_webauthn_challenges_purpose` (`purpose_id`),
   KEY `idx_admin_webauthn_challenges_expires_at` (`expires_at`),
   KEY `idx_admin_webauthn_challenges_active` (`consumed_at`,`expires_at`),
+  KEY `idx_admin_webauthn_challenges_session` (`auth_session_id`),
   CONSTRAINT `fk_admin_webauthn_challenges_purpose` FOREIGN KEY (`purpose_id`) REFERENCES `admin_webauthn_challenge_purposes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_challenges_session` FOREIGN KEY (`auth_session_id`) REFERENCES `auth_sessions` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
   CONSTRAINT `fk_admin_webauthn_challenges_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
   CONSTRAINT `chk_admin_webauthn_challenges_consumed` CHECK (((`consumed_at` is null) or (`consumed_at` >= `created_at`))),
   CONSTRAINT `chk_admin_webauthn_challenges_expiration` CHECK ((`expires_at` > `created_at`))
@@ -450,6 +453,7 @@ CREATE TABLE `auth_sessions` (
   `ip_address` varbinary(16) DEFAULT NULL,
   `user_agent` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `last_used_at` datetime(6) DEFAULT NULL,
+  `step_up_verified_at` datetime(6) DEFAULT NULL,
   `expires_at` datetime(6) NOT NULL,
   `revoked_at` datetime(6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -464,7 +468,8 @@ CREATE TABLE `auth_sessions` (
   CONSTRAINT `fk_auth_sessions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
   CONSTRAINT `chk_auth_sessions_expiration` CHECK ((`expires_at` > `created_at`)),
   CONSTRAINT `chk_auth_sessions_last_used` CHECK (((`last_used_at` is null) or (`last_used_at` >= `created_at`))),
-  CONSTRAINT `chk_auth_sessions_revoked` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`)))
+  CONSTRAINT `chk_auth_sessions_revoked` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`))),
+  CONSTRAINT `chk_auth_sessions_step_up_verified` CHECK (((`step_up_verified_at` is null) or (`step_up_verified_at` >= `created_at`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

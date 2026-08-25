@@ -244,6 +244,38 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // BLUE V1 Phase A2.5 - Step-Up request (challenge issuance)
+        // flooding protection. Keyed on the authenticated Admin's own
+        // identity (auth.admin already ran and attached auth_user before
+        // throttle evaluates this route) rather than a request body field -
+        // this endpoint takes no input at all. Tighter than the login
+        // limiters above since a legitimate caller has no reason to request
+        // step-up challenges rapidly.
+        RateLimiter::for('admin-auth-step-up-request', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-step-up-request-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-step-up-request-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // BLUE V1 Phase A2.5 - Step-Up verify (WebAuthn assertion) flooding
+        // protection - brute-force assertion attempts against a genuine
+        // pending step-up ticket. Same shape as admin-auth-mfa-verify above,
+        // keyed on the authenticated Admin's identity instead of a ticket
+        // field, since this route is always behind auth.admin.
+        RateLimiter::for('admin-auth-step-up-verify', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-step-up-verify-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-step-up-verify-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Refresh tokens are deliberately NOT included in limiter keys.
         RateLimiter::for('auth-refresh', function (Request $request) use ($ipKey): Limit {
             return Limit::perMinute(60)

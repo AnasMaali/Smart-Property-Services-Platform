@@ -507,6 +507,107 @@ could otherwise keep an abandoned session alive indefinitely.
 
 ---
 
+## Admin WebAuthn Step-Up Authentication (Phase A2.5)
+
+Reusable fresh-WebAuthn re-proof for sensitive Admin operations on an already-authenticated
+session — **not** a second login. First (and, as of this phase, only) protected operation:
+`POST /v1/admin/contracts/{contract}/cancel`.
+
+**Prerequisites, unchanged by this phase:** the Admin must already have a valid `ADMIN_WEB`
+session (`auth.admin` passes — ACTIVE account, active `ADMIN`/`SUPER_ADMIN` role, non-idle
+session) and the operation's own `admin.capability:<code>` grant. Step-up adds a third, orthogonal
+requirement on top of both: a *recent* WebAuthn proof, specifically for this session.
+
+### Request — `POST /v1/admin/auth/step-up/request`
+
+Requires `auth.admin`. No request body. Confirms the caller holds ≥1 active WebAuthn credential
+(otherwise a generic `422` failure, same shape/message as every other MFA-family rejection — see
+"Anti-enumeration and timing" above), issues a `STEP_UP`-purpose WebAuthn challenge **bound to the
+caller's current `auth_sessions` row**, and returns it — the same `{rp_id, challenge,
+allow_credentials, user_verification, timeout}` shape §1/§1b already use. Creates no session, no
+token, and does not touch `auth_sessions.last_used_at`/`step_up_verified_at`.
+
+```json
+{
+  "success": true,
+  "message": "WebAuthn step-up verification required.",
+  "data": {
+    "step_up_ticket": "…uuid…",
+    "webauthn": { "rp_id": "…", "challenge": "…", "allow_credentials": [ … ], "user_verification": "required", "timeout": … }
+  }
+}
+```
+
+### Verify — `POST /v1/admin/auth/step-up/verify`
+
+Requires `auth.admin`. Body: `{ "step_up_ticket": "…", "credential": { …PublicKeyCredential JSON… } }`.
+On success, sets **only the current session's** `auth_sessions.step_up_verified_at = now()` and
+returns `{ "step_up_verified_until": "…ISO 8601…" }`. Every rejection reason — unknown/wrong-
+session/expired/already-consumed ticket, wrong or revoked credential, wrong origin/RP ID, missing
+user verification, bad signature, a sign-counter clone signal — returns the same generic `422`
+failure used throughout this document, and marks nothing.
+
+### Session binding (critical)
+
+A `STEP_UP` challenge is bound to **both** the Admin user **and** the exact `auth_sessions` row
+that requested it (`admin_webauthn_challenges.auth_session_id`, added by this phase). A challenge
+requested under session A can never be used to step up session B, even for the same Admin signed in
+twice (two tabs/devices) — enforced structurally at the database-row level (the verify lookup
+filters on the presented session's id), not merely by convention.
+
+### Freshness window
+
+`config/admin_session.php` → `AUTH_ADMIN_STEP_UP_TTL_MINUTES` (default **5 minutes**), always
+clamped to never exceed `AUTH_ADMIN_IDLE_TIMEOUT_MINUTES`. **Reusable, not consumed per action**: one
+successful verify keeps `admin.stepup`-protected routes open for this session until
+`step_up_verified_at + TTL`, using the same "boundary is the first invalid instant" convention as
+idle timeout (`now < step_up_verified_at + TTL` — fresh; `now >=` that instant — stale). The
+sensitive action itself never clears or extends `step_up_verified_at`.
+
+### `admin.stepup` middleware
+
+`App\Http\Middleware\EnsureAdminStepUpIsFresh`. Runs after `auth.admin` **and** after
+`admin.capability:<code>` on a given route — step-up proves identity freshness, never authorization;
+a caller who fails the capability check never learns whether their step-up is fresh. On a stale/
+missing step-up it returns **`428 Precondition Required`** with a machine-readable top-level `code`:
+
+```json
+{ "success": false, "message": "This action requires a fresh WebAuthn verification.", "code": "STEP_UP_REQUIRED" }
+```
+
+`428`, not `403`/`401`, was chosen deliberately: `403` already means "you can never do this without a
+role/permission change" (`admin.capability`'s own rejection), and the session itself is genuinely
+still valid, so `401` would be actively wrong. A step-up failure **never revokes the Admin session**
+— the caller stays fully authenticated and can immediately retry via request → verify.
+
+### Login / refresh / logout interaction
+
+- **Login** (§1b): a freshly MFA-issued session always starts with `step_up_verified_at = NULL`.
+  Login MFA proves login authentication; it is deliberately never treated as an automatic step-up for
+  sensitive-operation purposes.
+- **Refresh** (§2): rotating the refresh token never creates, resets, or extends
+  `step_up_verified_at` — whatever value the row already has is left completely untouched, mirroring
+  how refresh already never touches `last_used_at`.
+- **Logout / idle / absolute expiry**: once a session is revoked or expired by any existing
+  mechanism, it is rejected by `auth.admin` before `admin.stepup` is ever reached — there is no
+  separate step-up "session" to clean up.
+
+### `contracts.cancel`
+
+`POST /v1/admin/contracts/{contract}/cancel` middleware order:
+`auth.admin` → `admin.capability:contracts.cancel` → `admin.stepup`. A blocked attempt (missing/
+stale step-up) never reaches `App\Actions\Admin\Contract\AdminCancelContractAction` — no partial
+state change, no audit-log row. Every other Contract mutation (`approve`, `send-for-acceptance`,
+`suspend`) is unaffected by this phase.
+
+### Rate limiting
+
+`admin-auth-step-up-request` and `admin-auth-step-up-verify` — dual-bucket (authenticated-identity +
+IP), 10/min identity + 30/min IP each, registered in `App\Providers\AppServiceProvider` alongside
+the existing `admin-auth-*` limiters.
+
+---
+
 ## Not built in this phase (deliberately)
 
 - Any Admin operational endpoint (service management, booking management, technician assignment,
@@ -534,3 +635,11 @@ could otherwise keep an abandoned session alive indefinitely.
   which is exactly where the schema's `entity_type`/`entity_identifier` design is meant to be
   used); no current requirement document calls for authentication events specifically to be
   written there, so none was added speculatively.
+- `STEP_UP_VERIFIED`/`STEP_UP_FAILED` security-event audit rows — Phase A2.5 deliberately preserves
+  existing Contract cancellation audit behavior only (`CONTRACT_CANCELLED`, unchanged); dedicated
+  security-event audit logging for the step-up ceremony itself is BLUE V1 Phase A2.6.
+- Step-up protection on any operation other than `contracts.cancel` — the architecture
+  (`admin.stepup`, `AdminSessionPolicy::isStepUpFresh()`/`markStepUpVerified()`,
+  `AdminWebAuthnAssertionService`'s session-binding parameter) is intentionally reusable for future
+  sensitive operations (Admin user management, permission changes, WebAuthn credential management,
+  `pricing.publish`, `payments.refund`, …), but none of those routes were touched in this phase.

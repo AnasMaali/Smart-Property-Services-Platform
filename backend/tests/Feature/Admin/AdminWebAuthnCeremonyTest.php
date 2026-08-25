@@ -99,6 +99,32 @@ class AdminWebAuthnCeremonyTest extends TestCase
         return User::where('id', UuidBinary::toBinary($userUuid))->firstOrFail();
     }
 
+    /**
+     * Minimal real auth_sessions row (BLUE V1 Phase A2.5) - STEP_UP
+     * challenges are FK-bound to a real session id, so
+     * test_step_up_purpose_works_end_to_end needs one to exist, even though
+     * this file otherwise never drives session issuance (that is Phase
+     * A2.3/A2.4's own test files).
+     */
+    private function createAuthSession(User $user): string
+    {
+        $sessionUuid = UuidBinary::generate();
+        $now = now();
+
+        DB::table('auth_sessions')->insert([
+            'id' => UuidBinary::toBinary($sessionUuid),
+            'user_id' => UuidBinary::toBinary($user->id),
+            'client_type_id' => DB::table('auth_client_types')->where('code', 'ADMIN_WEB')->value('id'),
+            'refresh_token_hash' => hash('sha256', random_bytes(32), true),
+            'last_used_at' => $now,
+            'expires_at' => $now->copy()->addHours(12),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        return $sessionUuid;
+    }
+
     private function registerCredential(User $admin, ?WebAuthnTestAuthenticator $authenticator = null, bool $stepUpVerified = false): WebAuthnTestAuthenticator
     {
         $authenticator ??= new WebAuthnTestAuthenticator;
@@ -556,12 +582,23 @@ class AdminWebAuthnCeremonyTest extends TestCase
     {
         $admin = $this->createUser(['SUPER_ADMIN']);
         $authenticator = $this->registerCredential($admin);
+        $sessionIdBinary = UuidBinary::toBinary($this->createAuthSession($admin));
 
-        $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::STEP_UP);
+        $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::STEP_UP, $sessionIdBinary);
         $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
-        $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::STEP_UP, $json, self::RP_ID);
+        $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::STEP_UP, $json, self::RP_ID, $sessionIdBinary);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $result->outcome);
+    }
+
+    public function test_step_up_purpose_without_a_session_id_throws(): void
+    {
+        $admin = $this->createUser(['SUPER_ADMIN']);
+        $this->registerCredential($admin);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::STEP_UP);
     }
 
     public function test_assertion_service_rejects_the_registration_purpose(): void

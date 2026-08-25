@@ -121,6 +121,11 @@ class AdminRefreshTokenAction
 
             // Deliberately does NOT set last_used_at here - see class
             // docblock. A silent refresh must never count as Admin activity.
+            // Also deliberately never touches step_up_verified_at (BLUE V1
+            // Phase A2.5) - a refresh must never create, reset, or extend a
+            // sensitive-operation step-up window; whatever value the row
+            // already has (fresh, stale, or NULL) is left completely
+            // untouched by rotating the refresh token.
             $session->refresh_token_hash = hash('sha256', $newRawRefreshToken, true);
             $session->save();
 

@@ -4,6 +4,8 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaEnrollController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
@@ -187,6 +189,18 @@ Route::post('/v1/admin/auth/mfa/enroll', AdminMfaEnrollController::class)->middl
 Route::post('/v1/admin/auth/mfa/verify', AdminMfaVerifyController::class)->middleware('throttle:admin-auth-mfa-verify');
 Route::post('/v1/admin/auth/refresh', AdminRefreshController::class)->middleware('throttle:auth-refresh');
 
+// BLUE V1 Phase A2.5 - WebAuthn step-up authentication. Unlike the four
+// routes directly above (all reachable by an unauthenticated caller mid-
+// login), both of these REQUIRE auth.admin - a step-up ceremony re-verifies
+// an already-authenticated Admin's identity for a sensitive operation, it
+// is never itself a login path. See App\Actions\Auth\AdminStepUpRequestAction/
+// AdminStepUpVerifyAction and App\Http\Middleware\EnsureAdminStepUpIsFresh
+// (`admin.stepup`, applied to contracts.cancel below).
+Route::post('/v1/admin/auth/step-up/request', AdminStepUpRequestController::class)
+    ->middleware(['auth.admin', 'throttle:admin-auth-step-up-request']);
+Route::post('/v1/admin/auth/step-up/verify', AdminStepUpVerifyController::class)
+    ->middleware(['auth.admin', 'throttle:admin-auth-step-up-verify']);
+
 Route::middleware('auth.admin')->group(function () {
     // No capability gate: every authenticated Admin/Super Admin may read
     // their own identity regardless of which capabilities they hold.
@@ -240,8 +254,14 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::CONTRACTS_MANAGE->middleware());
     Route::post('/v1/admin/contracts/{contract}/suspend', SuspendContractController::class)
         ->middleware(AdminCapability::CONTRACTS_MANAGE->middleware());
+    // BLUE V1 Phase A2.5 - the first admin.stepup-protected route: a fresh
+    // WebAuthn re-proof (see App\Http\Middleware\EnsureAdminStepUpIsFresh)
+    // is required IN ADDITION to the existing contracts.cancel capability
+    // check above - step-up never replaces authorization, it only adds an
+    // identity-freshness precondition on top of it (hence admin.capability
+    // running first in this list, admin.stepup second).
     Route::post('/v1/admin/contracts/{contract}/cancel', CancelContractController::class)
-        ->middleware(AdminCapability::CONTRACTS_CANCEL->middleware());
+        ->middleware([AdminCapability::CONTRACTS_CANCEL->middleware(), 'admin.stepup']);
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

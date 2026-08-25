@@ -49,4 +49,27 @@ return [
 
     'activity_touch_minutes' => (int) env('AUTH_ADMIN_ACTIVITY_TOUCH_MINUTES', 5),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Step-Up Freshness Window
+    |--------------------------------------------------------------------------
+    |
+    | Minutes after a successful WebAuthn STEP_UP ceremony that the current
+    | ADMIN_WEB session's step-up remains "fresh" enough to satisfy
+    | admin.stepup-protected routes (e.g. contracts.cancel) - BLUE V1 Phase
+    | A2.5. Reusable within this window (one ceremony can cover several
+    | sensitive actions), never extended by a refresh, and never counted at
+    | login (auth_sessions.step_up_verified_at starts NULL every session -
+    | see App\Actions\Auth\Concerns\IssuesAdminAuthSession).
+    |
+    | App\Support\Admin\AdminSessionPolicy::stepUpTtlMinutes() additionally
+    | clamps this value to never exceed idle_timeout_minutes above, per the
+    | Phase A2.5 requirement that the step-up window can never outlive the
+    | idle window - a misconfigured value here can widen the freshness
+    | window at most up to the idle timeout, never beyond it.
+    |
+    */
+
+    'step_up_ttl_minutes' => (int) env('AUTH_ADMIN_STEP_UP_TTL_MINUTES', 5),
+
 ];

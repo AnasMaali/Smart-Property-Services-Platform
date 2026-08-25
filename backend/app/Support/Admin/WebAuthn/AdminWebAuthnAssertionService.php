@@ -28,6 +28,17 @@ use Webauthn\PublicKeyCredentialRequestOptions;
  * credential are cross-checked against $expectedActor's own binary user id,
  * matching how Phase A2.1's challenge table is itself always bound to one
  * user.
+ *
+ * SESSION BINDING (BLUE V1 Phase A2.5): both options() and verify() accept
+ * an optional $authSessionIdBinary. It is required (an InvalidArgumentException
+ * is thrown otherwise - a caller/programmer error, never user input) whenever
+ * $purpose is STEP_UP, and forwarded to AdminWebAuthnChallengeService so the
+ * issued/consumed challenge row is bound to that exact auth_sessions row -
+ * see AdminWebAuthnChallengeService's own docblock for why this is the
+ * actual enforcement of "a STEP_UP challenge from session A cannot step up
+ * session B". LOGIN_ASSERTION never passes this (no session exists yet at
+ * login time), and the two call sites in AdminMfaVerifyAction are
+ * unaffected by this parameter's addition.
  */
 final class AdminWebAuthnAssertionService
 {
@@ -43,11 +54,11 @@ final class AdminWebAuthnAssertionService
         private readonly AdminWebAuthnCredentialRepository $credentialRepository,
     ) {}
 
-    public function options(User $expectedActor, AdminWebAuthnChallengePurpose $purpose): AdminWebAuthnAssertionOptionsResult
+    public function options(User $expectedActor, AdminWebAuthnChallengePurpose $purpose, ?string $authSessionIdBinary = null): AdminWebAuthnAssertionOptionsResult
     {
-        $this->assertAllowedPurpose($purpose);
+        $this->assertAllowedPurpose($purpose, $authSessionIdBinary);
 
-        $issued = $this->challengeService->issue($expectedActor, $purpose);
+        $issued = $this->challengeService->issue($expectedActor, $purpose, $authSessionIdBinary);
 
         $allowCredentials = array_map(
             fn ($record): PublicKeyCredentialDescriptor => PublicKeyCredentialDescriptor::create(
@@ -68,9 +79,9 @@ final class AdminWebAuthnAssertionService
         return new AdminWebAuthnAssertionOptionsResult($issued->ticket, $options);
     }
 
-    public function verify(User $expectedActor, AdminWebAuthnChallengePurpose $purpose, string $rawResponseJson, string $host): AdminWebAuthnAssertionResult
+    public function verify(User $expectedActor, AdminWebAuthnChallengePurpose $purpose, string $rawResponseJson, string $host, ?string $authSessionIdBinary = null): AdminWebAuthnAssertionResult
     {
-        $this->assertAllowedPurpose($purpose);
+        $this->assertAllowedPurpose($purpose, $authSessionIdBinary);
 
         try {
             $publicKeyCredential = $this->ceremonyFactory->serializer()->deserialize(
@@ -90,7 +101,7 @@ final class AdminWebAuthnAssertionService
         $expectedActorIdBinary = UuidBinary::toBinary($expectedActor->id);
         $rawChallenge = $publicKeyCredential->response->clientDataJSON->challenge;
 
-        $challengeOutcome = $this->challengeService->consume($expectedActorIdBinary, $purpose, $rawChallenge);
+        $challengeOutcome = $this->challengeService->consume($expectedActorIdBinary, $purpose, $rawChallenge, $authSessionIdBinary);
 
         if ($challengeOutcome !== AdminWebAuthnChallengeOutcome::VALID) {
             return new AdminWebAuthnAssertionResult(AdminWebAuthnAssertionOutcome::CHALLENGE_INVALID);
@@ -128,10 +139,14 @@ final class AdminWebAuthnAssertionService
         return new AdminWebAuthnAssertionResult(AdminWebAuthnAssertionOutcome::VERIFIED, $verifiedRecord);
     }
 
-    private function assertAllowedPurpose(AdminWebAuthnChallengePurpose $purpose): void
+    private function assertAllowedPurpose(AdminWebAuthnChallengePurpose $purpose, ?string $authSessionIdBinary): void
     {
         if (! in_array($purpose, self::ALLOWED_PURPOSES, true)) {
             throw new InvalidArgumentException('AdminWebAuthnAssertionService only supports LOGIN_ASSERTION and STEP_UP.');
+        }
+
+        if ($purpose === AdminWebAuthnChallengePurpose::STEP_UP && $authSessionIdBinary === null) {
+            throw new InvalidArgumentException('STEP_UP purpose requires a bound auth session id.');
         }
     }
 

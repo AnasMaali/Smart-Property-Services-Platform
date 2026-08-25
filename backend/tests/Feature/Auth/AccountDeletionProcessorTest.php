@@ -109,6 +109,12 @@ class AccountDeletionProcessorTest extends TestCase
 
         $this->deleteAccount($customer['access_token'])->assertStatus(202);
 
+        // BLUE V1 Phase A2.5 - contracts.cancel now also requires a fresh
+        // WebAuthn step-up; grant it directly rather than driving the real
+        // ceremony, exactly like activeContractWithItem() itself mints the
+        // Admin session directly instead of via HTTP.
+        $this->markStepUpVerified($fixture['admin']['session_uuid']);
+
         $this->adminCancelContract($fixture['admin']['access_token'], UuidBinary::toString($fixture['contract']->id))
             ->assertStatus(200);
 
