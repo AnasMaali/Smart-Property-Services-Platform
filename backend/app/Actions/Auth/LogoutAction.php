@@ -5,7 +5,10 @@ namespace App\Actions\Auth;
 use App\Models\AuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminSecurityAuditAction;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
@@ -18,17 +21,17 @@ class LogoutAction
 
     /**
      * Validate the presented access token and revoke the auth_sessions row
-     * referenced by its `sid` claim.
+     * referenced by its sid claim.
      *
-     * Every rejection reason below - missing/malformed token, invalid
-     * signature, expired token, unknown session, session/user mismatch,
-     * already-revoked session, expired session, or non-ACTIVE user -
-     * returns the exact same generic message so a caller cannot use the
-     * response to determine why a given access token was rejected.
+     * BLUE V1 Phase A2.6:
+     * if and only if the resolved session is ADMIN_WEB, the successful
+     * revocation and ADMIN_LOGOUT audit row are written in the same
+     * transaction. Customer/mobile sessions retain their existing behavior
+     * and never produce Admin security-audit rows.
      *
      * @return array{success: bool, message: string}
      */
-    public function handle(?string $accessToken): array
+    public function handle(Request $request, ?string $accessToken): array
     {
         if ($accessToken === null || $accessToken === '') {
             return $this->failure();
@@ -47,7 +50,7 @@ class LogoutAction
             return $this->failure();
         }
 
-        return DB::transaction(function () use ($sessionId, $userId, $decoded) {
+        return DB::transaction(function () use ($request, $sessionId, $userId, $decoded) {
             $session = AuthSession::where('id', $sessionId)->lockForUpdate()->first();
 
             if ($session === null || $session->user_id !== $decoded->sub) {
@@ -66,8 +69,20 @@ class LogoutAction
                 return $this->failure();
             }
 
+            $isAdminWeb = (int) $session->client_type_id === $this->lookupId('auth_client_types', 'ADMIN_WEB');
+
             $session->revoked_at = $now;
             $session->save();
+
+            if ($isAdminWeb) {
+                AdminAuditLogger::record(
+                    $request,
+                    $user,
+                    AdminSecurityAuditAction::ADMIN_LOGOUT->value,
+                    'AUTH_SESSION',
+                    $session->id,
+                );
+            }
 
             return $this->success();
         });

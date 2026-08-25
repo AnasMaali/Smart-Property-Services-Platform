@@ -9,5 +9,6 @@ final readonly class AdminWebAuthnRegistrationResult
     public function __construct(
         public AdminWebAuthnRegistrationOutcome $outcome,
         public ?CredentialRecord $credential = null,
+        public ?string $credentialUuid = null,
     ) {}
 }

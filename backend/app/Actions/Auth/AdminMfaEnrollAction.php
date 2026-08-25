@@ -4,35 +4,32 @@ namespace App\Actions\Auth;
 
 use App\Actions\Auth\Concerns\BuildsAdminMfaChallengeResponses;
 use App\Actions\Auth\Concerns\ChecksActiveAdminEligibility;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminSecurityAuditAction;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengePurpose;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnConfig;
 use App\Support\Admin\WebAuthn\AdminWebAuthnRegistrationOutcome;
 use App\Support\Admin\WebAuthn\AdminWebAuthnRegistrationService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
- * FIRST-CREDENTIAL BOOTSTRAP (BLUE V1 Phase A2.3) - the one and only
- * password-authenticated WebAuthn credential registration path, reachable
- * only via the short-lived `login_ticket` AdminLoginAction issued for an
- * Admin with zero active credentials (`MFA_ENROLLMENT_REQUIRED`).
+ * FIRST-CREDENTIAL WebAuthn bootstrap for Admin login.
  *
- * This is deliberately NOT a general "register a new WebAuthn credential"
- * endpoint. If the caller already holds >=1 active credential by the time
- * this runs (e.g. a stale/replayed enrollment ticket, or a race with a
- * separately-completed enrollment), AdminWebAuthnRegistrationService::verify()
- * itself rejects with STEP_UP_REQUIRED - the exact same rule Phase A2.2
- * already built and tested, reused here for free, never re-implemented.
- * Adding further credentials to an Admin who already has one belongs to a
- * later phase (step-up protected, Phase A2.5+) and has no route here.
+ * BLUE V1 Phase A2.6 additionally writes
+ * WEBAUTHN_CREDENTIAL_REGISTERED after successful persistence, identifying
+ * the credential only by BLUE's internal admin_webauthn_credentials UUID.
  *
- * STRICTER MODEL: a successful registration alone never issues a session.
- * Per the Phase A2.3 architecture ("prefer the stricter model if there is
- * ambiguity: registration -> assertion -> session"), this action responds
- * with a fresh `MFA_REQUIRED` challenge for the credential just registered,
- * exactly like AdminLoginAction would for an Admin who already had one -
- * AdminMfaVerifyAction is what actually creates the session, unconditionally,
- * regardless of how the credential came to exist.
+ * Registration, its audit row, and issuance of the following LOGIN_ASSERTION
+ * challenge are wrapped by one outer transaction. The registration service's
+ * own transaction therefore becomes nested inside this transaction; if the
+ * audit insert or subsequent challenge issuance fails, the newly-created
+ * credential is rolled back as well.
+ *
+ * Raw credential ids, public keys, attestation data, challenges, signatures,
+ * passwords, and tokens are never written to admin_audit_logs.
  */
 class AdminMfaEnrollAction
 {
@@ -52,32 +49,56 @@ class AdminMfaEnrollAction
      * @param  array{login_ticket: string, credential: array<string, mixed>}  $data
      * @return array{success: bool, message: string, data: array|null}
      */
-    public function handle(array $data): array
+    public function handle(Request $request, array $data): array
     {
-        $user = $this->challengeService->resolvePendingTicket($data['login_ticket'], AdminWebAuthnChallengePurpose::REGISTRATION);
+        $user = $this->challengeService->resolvePendingTicket(
+            $data['login_ticket'],
+            AdminWebAuthnChallengePurpose::REGISTRATION
+        );
 
         if ($user === null) {
             return $this->failure();
         }
 
-        // Re-check eligibility fresh - the ticket alone proves a valid
-        // enrollment challenge was issued, never that the Admin is still
-        // eligible right now.
         if ($this->activeAdminRoleCodesFor($user) === null) {
             return $this->failure();
         }
 
         $rawResponseJson = json_encode($data['credential'], JSON_THROW_ON_ERROR);
 
-        $result = $this->registrationService->verify($user, stepUpVerified: false, rawResponseJson: $rawResponseJson, host: $this->config->rpId());
+        return DB::transaction(function () use ($request, $user, $rawResponseJson): array {
+            $result = $this->registrationService->verify(
+                $user,
+                stepUpVerified: false,
+                rawResponseJson: $rawResponseJson,
+                host: $this->config->rpId(),
+            );
 
-        if ($result->outcome !== AdminWebAuthnRegistrationOutcome::REGISTERED) {
-            return $this->failure();
-        }
+            if ($result->outcome !== AdminWebAuthnRegistrationOutcome::REGISTERED) {
+                return $this->failure();
+            }
 
-        return $this->mfaRequiredResponse(
-            $this->assertionService->options($user, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION)
-        );
+            if ($result->credentialUuid === null) {
+                throw new \RuntimeException(
+                    'Successful Admin WebAuthn registration did not return its internal credential UUID.'
+                );
+            }
+
+            AdminAuditLogger::record(
+                $request,
+                $user,
+                AdminSecurityAuditAction::WEBAUTHN_CREDENTIAL_REGISTERED->value,
+                'ADMIN_WEBAUTHN_CREDENTIAL',
+                $result->credentialUuid,
+            );
+
+            return $this->mfaRequiredResponse(
+                $this->assertionService->options(
+                    $user,
+                    AdminWebAuthnChallengePurpose::LOGIN_ASSERTION
+                )
+            );
+        });
     }
 
     /**

@@ -61,12 +61,13 @@ final class AdminWebAuthnCredentialRepository
      * biometric data, or authenticator PIN, none of which this object ever
      * carries in the first place.
      */
-    public function store(CredentialRecord $record, User $owner, ?string $label = null): void
+    public function store(CredentialRecord $record, User $owner, ?string $label = null): string
     {
         $now = now();
+        $credentialUuid = UuidBinary::generate();
 
         DB::table('admin_webauthn_credentials')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+            'id' => UuidBinary::toBinary($credentialUuid),
             'user_id' => UuidBinary::toBinary($owner->id),
             'label' => $label,
             'credential_id' => $record->publicKeyCredentialId,
@@ -83,6 +84,8 @@ final class AdminWebAuthnCredentialRepository
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+
+        return $credentialUuid;
     }
 
     /**

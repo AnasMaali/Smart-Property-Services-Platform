@@ -608,6 +608,93 @@ the existing `admin-auth-*` limiters.
 
 ---
 
+## Admin Security Audit Trail (Phase A2.6)
+
+Security-sensitive Admin authentication events are written to the existing
+`admin_audit_logs` table through `App\Support\Admin\AdminAuditLogger`.
+
+No new audit table or schema change was required: the existing
+`was_successful` / `failure_reason` columns already support both successful
+and failed security events.
+
+### Events recorded
+
+| Action code | When it is written |
+|---|---|
+| `ADMIN_LOGIN_SUCCESS` | After a valid WebAuthn `LOGIN_ASSERTION` succeeds and the new `ADMIN_WEB` session is created |
+| `ADMIN_LOGIN_MFA_FAILED` | When a valid Stage-2 login ticket resolves to a real Admin but WebAuthn verification fails |
+| `WEBAUTHN_CREDENTIAL_REGISTERED` | After the first Admin WebAuthn credential is successfully persisted |
+| `STEP_UP_VERIFIED` | After a valid session-bound WebAuthn `STEP_UP` assertion succeeds and `step_up_verified_at` is updated |
+| `STEP_UP_FAILED` | When an authenticated Admin attempts Step-Up verification and the ceremony fails |
+| `ADMIN_LOGOUT` | When an `ADMIN_WEB` session is successfully revoked through `/v1/auth/logout` |
+| `ADMIN_LOGOUT_ALL` | When an Admin-initiated `/v1/auth/logout-all` successfully revokes the user's sessions |
+
+### Success / failure semantics
+
+Successful state changes and their corresponding audit rows are committed
+inside the same database transaction wherever the two belong together.
+
+Failed MFA and Step-Up records use a deliberately generic failure reason.
+The audit trail does not persist the granular cryptographic rejection cause,
+preventing it from becoming an oracle for credential, challenge, origin,
+signature, or authenticator state.
+
+Pre-authentication password-stage failures are deliberately not written to
+`admin_audit_logs`. In particular, an unknown phone number / wrong password
+attempt remains externally and internally unsuitable as an Admin identity
+audit event because doing otherwise could create an account-enumeration side
+channel.
+
+Account/role eligibility failures occurring before a WebAuthn ceremony is
+accepted are likewise not mislabeled as `ADMIN_LOGIN_MFA_FAILED`.
+
+### Audit data minimization
+
+The Admin security audit trail never stores:
+
+- passwords or password hashes
+- access tokens or refresh tokens
+- refresh-token hashes
+- raw WebAuthn challenges or assertions
+- WebAuthn signatures
+- raw WebAuthn `credential_id`
+- credential public keys
+- authenticator PINs or biometric data
+- full request bodies
+
+`WEBAUTHN_CREDENTIAL_REGISTERED.entity_identifier` contains only BLUE's own
+internal `admin_webauthn_credentials.id` UUID, never the authenticator's raw
+credential identifier.
+
+For login/logout/step-up events, identifiers are limited to server-resolved
+BLUE user/session identifiers and small safe metadata such as Admin role,
+client type, or revoked-session count.
+
+### Customer isolation
+
+`/v1/auth/logout` and `/v1/auth/logout-all` remain shared Customer/Admin
+routes. Their Actions resolve the actual session first and write
+`ADMIN_LOGOUT` / `ADMIN_LOGOUT_ALL` only when the initiating session's client
+type is `ADMIN_WEB`.
+
+Customer `MOBILE_IOS` / `MOBILE_ANDROID` logout behavior is unchanged and
+never creates Admin security-audit rows.
+
+### Events deliberately not audited
+
+Routine high-frequency lifecycle events are intentionally excluded:
+
+- successful Admin refresh
+- idle-timeout expiry
+- absolute-session expiry
+- ordinary authenticated activity touches
+
+These states are already represented by `auth_sessions` and auditing every
+occurrence would create high-volume operational noise without materially
+improving the security trail.
+
+---
+
 ## Not built in this phase (deliberately)
 
 - Any Admin operational endpoint (service management, booking management, technician assignment,
@@ -630,14 +717,10 @@ the existing `admin-auth-*` limiters.
   unauthenticated OTP flows respectively) and were not extended to Admin accounts in this phase.
   Admin password management is a `CAN WAIT` item for a later phase; nothing in this phase weakens
   or duplicates the existing password-security mechanisms.
-- Login/logout audit trail writes to `admin_audit_logs` — that table exists in the schema for
-  privileged *operational* actions (the natural fit is Phase 9B's Admin operational endpoints,
-  which is exactly where the schema's `entity_type`/`entity_identifier` design is meant to be
-  used); no current requirement document calls for authentication events specifically to be
-  written there, so none was added speculatively.
-- `STEP_UP_VERIFIED`/`STEP_UP_FAILED` security-event audit rows — Phase A2.5 deliberately preserves
-  existing Contract cancellation audit behavior only (`CONTRACT_CANCELLED`, unchanged); dedicated
-  security-event audit logging for the step-up ceremony itself is BLUE V1 Phase A2.6.
+- ~~Login/logout and WebAuthn security-event audit rows.~~ **Implemented by BLUE V1 Phase A2.6** —
+  see "Admin Security Audit Trail (Phase A2.6)" above. The seven implemented security events are
+  `ADMIN_LOGIN_SUCCESS`, `ADMIN_LOGIN_MFA_FAILED`, `ADMIN_LOGOUT`, `ADMIN_LOGOUT_ALL`,
+  `WEBAUTHN_CREDENTIAL_REGISTERED`, `STEP_UP_VERIFIED`, and `STEP_UP_FAILED`.
 - Step-up protection on any operation other than `contracts.cancel` — the architecture
   (`admin.stepup`, `AdminSessionPolicy::isStepUpFresh()`/`markStepUpVerified()`,
   `AdminWebAuthnAssertionService`'s session-binding parameter) is intentionally reusable for future

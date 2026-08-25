@@ -19,7 +19,12 @@ class AdminStepUpVerifyController extends Controller
         /** @var AuthSession $authSession */
         $authSession = $request->attributes->get('auth_session');
 
-        $result = $action->handle($authUser, $authSession, $request->validated());
+        $result = $action->handle(
+            $request,
+            $authUser,
+            $authSession,
+            $request->validated(),
+        );
 
         return response()->json([
             'success' => $result['success'],

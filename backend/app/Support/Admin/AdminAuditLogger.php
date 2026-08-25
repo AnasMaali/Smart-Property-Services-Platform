@@ -8,33 +8,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Writes one `admin_audit_logs` row for a successful privileged Admin
- * mutation (BLUE V1 Phase 9B) - technician assigned/reassigned, work
- * started/completed, Booking completed. Never called for a rejected or
- * idempotent-no-op outcome (see each App\Actions\Admin\* wrapper's own
- * outcome mapping) - only a real state change is audited, so a retried call
- * never produces a duplicate row.
+ * Central writer for BLUE Admin audit records.
+ *
+ * Existing privileged Admin domain mutations use record() for successful
+ * state changes. BLUE V1 Phase A2.6 extends the same logger with
+ * recordFailure() for authenticated security failures such as failed MFA
+ * and failed WebAuthn step-up verification.
  *
  * This logger deliberately does not open or commit a transaction itself.
- * Transaction ownership belongs to the privileged domain mutation that
- * calls it. Security-sensitive Admin mutations invoke record() before that
- * transaction commits, making the mutation and its audit row atomic.
+ * The calling Action owns transaction boundaries. This allows successful
+ * security/domain state changes and their audit row to be committed
+ * atomically whenever the caller places both inside the same transaction.
  *
- * Technician mutations preserve their required Booking Item lock ordering by
- * exposing an internal afterMutation callback that executes inside the
- * Booking Item transaction. Parent Booking aggregation still runs only after
- * that transaction commits, exactly as required by
- * SyncBookingStatusFromItemsAction's deadlock-avoidance policy.
- *
- * Only the actor's own server-resolved identity
- * (`$request->attributes->get('auth_user')`, never a request field) is ever
- * recorded as `admin_user_id`. Never stores secrets, full request bodies, or
- * raw binary ids - `new_values`/`old_values` are small, caller-chosen JSON
- * objects of already-safe, already-public identifiers.
+ * Never pass secrets, raw request bodies, passwords, access/refresh tokens,
+ * WebAuthn challenges/assertions/signatures, credential IDs, or public keys
+ * through old_values/new_values.
  */
 final class AdminAuditLogger
 {
     /**
+     * Record a successful Admin audit event.
+     *
+     * Existing call sites remain source-compatible with the pre-A2.6 API.
+     *
      * @param  array<string, mixed>|null  $newValues
      * @param  array<string, mixed>|null  $oldValues
      */
@@ -43,9 +39,70 @@ final class AdminAuditLogger
         User $actor,
         string $actionCode,
         string $entityType,
-        string $entityIdentifier,
+        ?string $entityIdentifier,
         ?array $newValues = null,
         ?array $oldValues = null,
+    ): void {
+        self::write(
+            request: $request,
+            actor: $actor,
+            actionCode: $actionCode,
+            entityType: $entityType,
+            entityIdentifier: $entityIdentifier,
+            wasSuccessful: true,
+            failureReason: null,
+            newValues: $newValues,
+            oldValues: $oldValues,
+        );
+    }
+
+    /**
+     * Record a failed authenticated Admin security event.
+     *
+     * failureReason must remain generic and must never contain raw
+     * WebAuthn/credential/token material or attacker-controlled request
+     * payloads.
+     *
+     * @param  array<string, mixed>|null  $newValues
+     * @param  array<string, mixed>|null  $oldValues
+     */
+    public static function recordFailure(
+        Request $request,
+        User $actor,
+        string $actionCode,
+        string $entityType,
+        ?string $entityIdentifier,
+        string $failureReason,
+        ?array $newValues = null,
+        ?array $oldValues = null,
+    ): void {
+        self::write(
+            request: $request,
+            actor: $actor,
+            actionCode: $actionCode,
+            entityType: $entityType,
+            entityIdentifier: $entityIdentifier,
+            wasSuccessful: false,
+            failureReason: $failureReason,
+            newValues: $newValues,
+            oldValues: $oldValues,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $newValues
+     * @param  array<string, mixed>|null  $oldValues
+     */
+    private static function write(
+        Request $request,
+        User $actor,
+        string $actionCode,
+        string $entityType,
+        ?string $entityIdentifier,
+        bool $wasSuccessful,
+        ?string $failureReason,
+        ?array $newValues,
+        ?array $oldValues,
     ): void {
         $now = now();
 
@@ -58,8 +115,8 @@ final class AdminAuditLogger
             'action_description' => null,
             'old_values' => $oldValues === null ? null : json_encode($oldValues),
             'new_values' => $newValues === null ? null : json_encode($newValues),
-            'was_successful' => 1,
-            'failure_reason' => null,
+            'was_successful' => $wasSuccessful ? 1 : 0,
+            'failure_reason' => $failureReason,
             'request_trace_id' => null,
             'ip_address' => self::packIp($request->ip()),
             'user_agent' => self::truncatedUserAgent($request->userAgent()),

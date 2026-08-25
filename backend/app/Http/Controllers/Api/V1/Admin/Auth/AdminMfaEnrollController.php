@@ -11,7 +11,7 @@ class AdminMfaEnrollController extends Controller
 {
     public function __invoke(AdminMfaEnrollRequest $request, AdminMfaEnrollAction $action): JsonResponse
     {
-        $result = $action->handle($request->validated());
+        $result = $action->handle($request, $request->validated());
 
         return response()->json([
             'success' => $result['success'],

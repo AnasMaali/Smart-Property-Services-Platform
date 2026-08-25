@@ -5,7 +5,10 @@ namespace App\Actions\Auth;
 use App\Models\AuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminSecurityAuditAction;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
@@ -17,18 +20,18 @@ class LogoutAllAction
     public function __construct(private readonly JwtTokenService $jwtTokenService) {}
 
     /**
-     * Validate the presented access token and revoke every auth_sessions
-     * row belonging to its `sub` user, including the current session.
+     * Validate the current access token and revoke every auth_sessions row
+     * belonging to its user.
      *
-     * Every rejection reason below - missing/malformed token, invalid
-     * signature, expired token, unknown session, session/user mismatch,
-     * already-revoked session, expired session, or non-ACTIVE user -
-     * returns the exact same generic message so a caller cannot use the
-     * response to determine why a given access token was rejected.
+     * BLUE V1 Phase A2.6:
+     * when the session initiating logout-all is ADMIN_WEB, the revocation
+     * set and ADMIN_LOGOUT_ALL audit row are committed atomically.
+     * Customer/mobile initiated logout-all remains unaudited by the Admin
+     * security audit trail.
      *
      * @return array{success: bool, message: string}
      */
-    public function handle(?string $accessToken): array
+    public function handle(Request $request, ?string $accessToken): array
     {
         if ($accessToken === null || $accessToken === '') {
             return $this->failure();
@@ -47,23 +50,13 @@ class LogoutAllAction
             return $this->failure();
         }
 
-        return DB::transaction(function () use ($sessionId, $userId, $decoded) {
-            // Lock the user row first so logout-all serializes with a
-            // concurrent Login for the same user: Login also locks the
-            // user row before inserting its new auth_sessions row, so
-            // whichever transaction commits first is guaranteed to be
-            // visible to the other - a session created by a Login that
-            // committed first will be seen and revoked below, and a Login
-            // that starts after logout-all commits creates its session
-            // unaffected by this now-finished revocation.
+        return DB::transaction(function () use ($request, $sessionId, $userId, $decoded) {
             $user = User::where('id', $userId)->lockForUpdate()->first();
 
             if ($user === null) {
                 return $this->failure();
             }
 
-            // Re-fetch and revalidate the current session now that the
-            // user row is locked, mirroring the Step 1.6 Logout checks.
             $session = AuthSession::where('id', $sessionId)->lockForUpdate()->first();
 
             if ($session === null || $session->user_id !== $decoded->sub) {
@@ -80,20 +73,31 @@ class LogoutAllAction
                 return $this->failure();
             }
 
-            // Lock every session row belonging to this user, in
-            // deterministic (id-ascending) order, before revoking any of
-            // them - including the current session and MOBILE_IOS /
-            // MOBILE_ANDROID sessions alike.
+            $isAdminWeb = (int) $session->client_type_id === $this->lookupId('auth_client_types', 'ADMIN_WEB');
+
             DB::table('auth_sessions')
                 ->where('user_id', $userId)
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get(['id']);
 
-            DB::table('auth_sessions')
+            $revokedSessions = DB::table('auth_sessions')
                 ->where('user_id', $userId)
                 ->whereNull('revoked_at')
                 ->update(['revoked_at' => $now]);
+
+            if ($isAdminWeb) {
+                AdminAuditLogger::record(
+                    $request,
+                    $user,
+                    AdminSecurityAuditAction::ADMIN_LOGOUT_ALL->value,
+                    'ADMIN_USER',
+                    $user->id,
+                    [
+                        'revoked_sessions' => $revokedSessions,
+                    ],
+                );
+            }
 
             return $this->success();
         });

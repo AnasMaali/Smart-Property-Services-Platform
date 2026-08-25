@@ -4,36 +4,32 @@ namespace App\Actions\Auth;
 
 use App\Actions\Auth\Concerns\ChecksActiveAdminEligibility;
 use App\Actions\Auth\Concerns\IssuesAdminAuthSession;
+use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminSecurityAuditAction;
 use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionOutcome;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengePurpose;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnConfig;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
- * STAGE 2 of the two-stage Admin login flow (BLUE V1 Phase A2.3): WebAuthn
- * LOGIN_ASSERTION verification. This is the ONLY place an Admin
- * auth_sessions row / access / refresh token is ever created as a result of
- * a login attempt - see IssuesAdminAuthSession, the exact same production
- * session-issuance mechanism Stage 1 (AdminLoginAction) used to call
- * directly before this phase, now reached only after a successful WebAuthn
- * assertion.
+ * STAGE 2 of the two-stage Admin login flow.
  *
- * RE-CHECK AFTER MFA: password (Stage 1) and this step may be separated by
- * minutes, and the WebAuthn ceremony itself takes real wall-clock time
- * (network round trip + user interaction). Nothing from Stage 1 is trusted
- * here - account/role eligibility is re-read fresh from the database both
- * before AND immediately after the assertion is verified, right before
- * session issuance. A revocation landing in that window is never missed.
+ * BLUE V1 Phase A2.6 additionally audits:
  *
- * Every rejection reason - unknown/expired/consumed ticket, wrong
- * credential, revoked credential, wrong origin/RP ID, missing user
- * verification, bad signature, a sign-counter clone signal, or an
- * account/role that is no longer eligible - returns the exact same generic
- * message and creates nothing. There is no code path that issues a session
- * before AdminWebAuthnAssertionOutcome::VERIFIED is confirmed.
+ * - ADMIN_LOGIN_SUCCESS only after WebAuthn succeeds and the Admin session
+ *   has been created successfully.
+ * - ADMIN_LOGIN_MFA_FAILED only after a valid Stage-2 login ticket resolves
+ *   to a real Admin user. Unknown/invalid tickets remain unaudited here so
+ *   admin_audit_logs never becomes a pre-authentication identity oracle.
+ *
+ * Session creation and ADMIN_LOGIN_SUCCESS are written inside the same DB
+ * transaction. If either fails, both roll back.
  */
 class AdminMfaVerifyAction
 {
@@ -41,6 +37,8 @@ class AdminMfaVerifyAction
     use IssuesAdminAuthSession;
 
     private const GENERIC_INVALID_MESSAGE = 'This WebAuthn verification could not be completed.';
+
+    private const MFA_FAILURE_REASON = 'MFA_VERIFICATION_FAILED';
 
     public function __construct(
         private readonly AdminWebAuthnConfig $config,
@@ -61,10 +59,15 @@ class AdminMfaVerifyAction
      * }  $data
      * @return array{success: bool, message: string, data: array|null}
      */
-    public function handle(array $data): array
+    public function handle(Request $request, array $data): array
     {
-        $user = $this->challengeService->resolvePendingTicket($data['login_ticket'], AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
+        $user = $this->challengeService->resolvePendingTicket(
+            $data['login_ticket'],
+            AdminWebAuthnChallengePurpose::LOGIN_ASSERTION
+        );
 
+        // No trusted actor can be established from an invalid/unknown ticket,
+        // so do not fabricate an admin_audit_logs actor row.
         if ($user === null) {
             return $this->failure();
         }
@@ -79,34 +82,76 @@ class AdminMfaVerifyAction
 
         $rawResponseJson = json_encode($data['credential'], JSON_THROW_ON_ERROR);
 
-        $result = $this->assertionService->verify($user, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $rawResponseJson, $this->config->rpId());
+        $result = $this->assertionService->verify(
+            $user,
+            AdminWebAuthnChallengePurpose::LOGIN_ASSERTION,
+            $rawResponseJson,
+            $this->config->rpId()
+        );
 
         if ($result->outcome !== AdminWebAuthnAssertionOutcome::VERIFIED) {
-            return $this->failure();
+            return $this->auditedFailure($request, $user);
         }
 
-        // Immediately-before-session-issuance re-check - see class docblock.
+        // Immediately-before-session-issuance re-check. Nothing from the
+        // password stage is trusted after the WebAuthn round trip.
         $activeAdminRoleCodes = $this->activeAdminRoleCodesFor($user);
 
         if ($activeAdminRoleCodes === null) {
             return $this->failure();
         }
 
-        $session = $this->issueAdminAuthSession(
+        return DB::transaction(function () use ($request, $user, $activeAdminRoleCodes, $data): array {
+            $session = $this->issueAdminAuthSession(
+                $user,
+                $activeAdminRoleCodes,
+                $data['device_name'] ?? null,
+                $data['app_version'] ?? null,
+                $data['ip_address'] ?? null,
+                $data['user_agent'] ?? null,
+                now(),
+            );
+
+            AdminAuditLogger::record(
+                $request,
+                $user,
+                AdminSecurityAuditAction::ADMIN_LOGIN_SUCCESS->value,
+                'AUTH_SESSION',
+                $session['session_uuid'],
+                [
+                    'client_type' => 'ADMIN_WEB',
+                    'role' => $session['role'],
+                ],
+            );
+
+            return [
+                'success' => true,
+                'message' => 'Login successful.',
+                'data' => $session,
+            ];
+        });
+    }
+
+    /**
+     * A Stage-2 failure for a user whose valid login ticket already resolved.
+     *
+     * No WebAuthn rejection details, challenge, credential id, assertion,
+     * signature, public key, password, or token material is persisted.
+     *
+     * @return array{success: bool, message: string, data: null}
+     */
+    private function auditedFailure(Request $request, User $user): array
+    {
+        AdminAuditLogger::recordFailure(
+            $request,
             $user,
-            $activeAdminRoleCodes,
-            $data['device_name'] ?? null,
-            $data['app_version'] ?? null,
-            $data['ip_address'] ?? null,
-            $data['user_agent'] ?? null,
-            now(),
+            AdminSecurityAuditAction::ADMIN_LOGIN_MFA_FAILED->value,
+            'ADMIN_USER',
+            $user->id,
+            self::MFA_FAILURE_REASON,
         );
 
-        return [
-            'success' => true,
-            'message' => 'Login successful.',
-            'data' => $session,
-        ];
+        return $this->failure();
     }
 
     /**

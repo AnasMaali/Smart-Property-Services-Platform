@@ -4,6 +4,8 @@ namespace App\Actions\Auth;
 
 use App\Models\AuthSession;
 use App\Models\User;
+use App\Support\Admin\AdminAuditLogger;
+use App\Support\Admin\AdminSecurityAuditAction;
 use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionOutcome;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService;
@@ -11,46 +13,28 @@ use App\Support\Admin\WebAuthn\AdminWebAuthnChallengePurpose;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnConfig;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
- * POST /v1/admin/auth/step-up/verify (BLUE V1 Phase A2.5) - verifies a
- * WebAuthn STEP_UP assertion for the CURRENT authenticated Admin session
- * and, on success, marks ONLY that session's auth_sessions.step_up_verified_at
- * as fresh (App\Support\Admin\AdminSessionPolicy::markStepUpVerified()) -
- * never any other session belonging to the same Admin.
+ * Verifies a WebAuthn STEP_UP assertion for the CURRENT authenticated
+ * ADMIN_WEB session.
  *
- * Sits entirely behind `auth.admin`, exactly like AdminStepUpRequestAction -
- * account/role/session eligibility is already freshly re-checked by
- * AuthenticateAdmin on this exact request, so a deactivated account or a
- * role removed between the request and verify calls is already rejected
- * before this Action ever runs (no separate re-check needed here, unlike
- * the pre-authentication login flow).
+ * BLUE V1 Phase A2.6 audit behavior:
  *
- * TWO independent checks must both pass before a session is marked
- * step-up-verified, per the Phase A2.5 SESSION BINDING requirement:
- *   1. `step_up_ticket` must resolve (via AdminWebAuthnChallengeService::
- *      resolvePendingTicket(), filtered by this exact session id) to this
- *      same authenticated Admin - an early, cheap rejection for a
- *      mismatched/wrong-session/unknown/expired/consumed ticket, before any
- *      WebAuthn response is even deserialized.
- *   2. The WebAuthn assertion's own embedded challenge must independently
- *      hash-match a challenge row bound to this exact session
- *      (AdminWebAuthnAssertionService::verify() -> AdminWebAuthnChallengeService::
- *      consume(), also filtered by session id) - the structural guarantee
- *      that actually prevents cross-session reuse regardless of what
- *      `step_up_ticket` value was presented alongside it.
+ * - STEP_UP_VERIFIED is written only after the real WebAuthn assertion
+ *   succeeds and the current session's step_up_verified_at is updated.
+ * - STEP_UP_FAILED is written for authenticated Step-Up verification
+ *   failures using one generic failure reason only.
  *
- * Every rejection reason - unknown/wrong-session/expired/consumed ticket,
- * wrong credential, revoked credential, wrong origin/RP ID, missing user
- * verification, bad signature, a sign-counter clone signal - returns the
- * exact same generic message and marks nothing. Never returns 401/revokes
- * the session on failure - see App\Http\Middleware\EnsureAdminStepUpIsFresh's
- * docblock for why a step-up failure is a distinct concept from an
- * authentication failure.
+ * No raw WebAuthn challenge, assertion, credential id, signature, public
+ * key, access token, or refresh token is ever placed in admin_audit_logs.
  */
 class AdminStepUpVerifyAction
 {
     private const GENERIC_FAILURE_MESSAGE = 'This WebAuthn verification could not be completed.';
+
+    private const AUDIT_FAILURE_REASON = 'STEP_UP_VERIFICATION_FAILED';
 
     public function __construct(
         private readonly AdminWebAuthnConfig $config,
@@ -63,8 +47,12 @@ class AdminStepUpVerifyAction
      * @param  array{step_up_ticket: string, credential: array<string, mixed>}  $data
      * @return array{success: bool, message: string, data: array|null}
      */
-    public function handle(User $user, AuthSession $session, array $data): array
-    {
+    public function handle(
+        Request $request,
+        User $user,
+        AuthSession $session,
+        array $data,
+    ): array {
         $sessionIdBinary = UuidBinary::toBinary($session->id);
 
         $ticketUser = $this->challengeService->resolvePendingTicket(
@@ -74,7 +62,7 @@ class AdminStepUpVerifyAction
         );
 
         if ($ticketUser === null || $ticketUser->id !== $user->id) {
-            return $this->failure();
+            return $this->auditedFailure($request, $user, $session);
         }
 
         $rawResponseJson = json_encode($data['credential'], JSON_THROW_ON_ERROR);
@@ -88,19 +76,57 @@ class AdminStepUpVerifyAction
         );
 
         if ($result->outcome !== AdminWebAuthnAssertionOutcome::VERIFIED) {
-            return $this->failure();
+            return $this->auditedFailure($request, $user, $session);
         }
 
         $now = now();
-        $this->sessionPolicy->markStepUpVerified($session, $now);
 
-        return [
-            'success' => true,
-            'message' => 'Step-up verification successful.',
-            'data' => [
-                'step_up_verified_until' => $now->copy()->addMinutes($this->sessionPolicy->stepUpTtlMinutes())->toIso8601String(),
-            ],
-        ];
+        return DB::transaction(function () use ($request, $user, $session, $now): array {
+            $this->sessionPolicy->markStepUpVerified($session, $now);
+
+            $verifiedUntil = $now
+                ->copy()
+                ->addMinutes($this->sessionPolicy->stepUpTtlMinutes());
+
+            AdminAuditLogger::record(
+                $request,
+                $user,
+                AdminSecurityAuditAction::STEP_UP_VERIFIED->value,
+                'AUTH_SESSION',
+                $session->id,
+                [
+                    'step_up_verified_until' => $verifiedUntil->toIso8601String(),
+                ],
+            );
+
+            return [
+                'success' => true,
+                'message' => 'Step-up verification successful.',
+                'data' => [
+                    'step_up_verified_until' => $verifiedUntil->toIso8601String(),
+                ],
+            ];
+        });
+    }
+
+    /**
+     * @return array{success: bool, message: string, data: null}
+     */
+    private function auditedFailure(
+        Request $request,
+        User $user,
+        AuthSession $session,
+    ): array {
+        AdminAuditLogger::recordFailure(
+            $request,
+            $user,
+            AdminSecurityAuditAction::STEP_UP_FAILED->value,
+            'AUTH_SESSION',
+            $session->id,
+            self::AUDIT_FAILURE_REASON,
+        );
+
+        return $this->failure();
     }
 
     /**

@@ -121,12 +121,16 @@ final class AdminWebAuthnRegistrationService
             }
 
             try {
-                $this->credentialRepository->store($credentialRecord, $actor, $label);
+                $credentialUuid = $this->credentialRepository->store($credentialRecord, $actor, $label);
             } catch (QueryException) {
                 return new AdminWebAuthnRegistrationResult(AdminWebAuthnRegistrationOutcome::DUPLICATE_CREDENTIAL);
             }
 
-            return new AdminWebAuthnRegistrationResult(AdminWebAuthnRegistrationOutcome::REGISTERED, $credentialRecord);
+            return new AdminWebAuthnRegistrationResult(
+                AdminWebAuthnRegistrationOutcome::REGISTERED,
+                $credentialRecord,
+                $credentialUuid,
+            );
         });
     }
 

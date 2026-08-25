@@ -11,7 +11,7 @@ class AdminMfaVerifyController extends Controller
 {
     public function __invoke(AdminMfaVerifyRequest $request, AdminMfaVerifyAction $action): JsonResponse
     {
-        $result = $action->handle([
+        $result = $action->handle($request, [
             ...$request->validated(),
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
