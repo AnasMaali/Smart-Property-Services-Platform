@@ -193,6 +193,24 @@ VALUES
     'Manage Service Catalog',
     'Edit Service Category/Service display metadata (name, description, display order) and activate/deactivate Categories and Services. Options, capabilities, specializations, media, and pricing rules are not mutable through this capability.',
     TRUE
+),
+(
+    'pricing.view',
+    'View Pricing',
+    'View Pricing Scheme Versions and their rules/conditions/tiers for every Service. Read-only.',
+    TRUE
+),
+(
+    'pricing.manage',
+    'Manage Pricing (Draft)',
+    'Create a DRAFT Pricing Scheme Version and author/delete its DRAFT rules (with conditions and tiers). PUBLISHED/RETIRED versions and rules are never mutable through this capability.',
+    TRUE
+),
+(
+    'pricing.publish',
+    'Publish Pricing',
+    'Publish a DRAFT Pricing Scheme Version, making it live for real customer price calculations. Requires WebAuthn Step-Up, like contracts.cancel.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -241,7 +259,10 @@ WHERE r.code = 'ADMIN'
     'support.view',
     'support.manage',
     'services.view',
-    'services.manage'
+    'services.manage',
+    'pricing.view',
+    'pricing.manage',
+    'pricing.publish'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

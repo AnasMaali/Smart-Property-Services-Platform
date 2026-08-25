@@ -90,4 +90,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/services/{service}', function (string $service) {
         return view('admin.services.show', ['serviceUuid' => $service]);
     })->name('services.show');
+
+    // BLUE V1 Phase B9 - Pricing shell routes. Same convention as every
+    // other module above.
+    Route::view('/pricing', 'admin.pricing.index')->name('pricing.index');
+
+    Route::get('/pricing/{scheme}', function (string $scheme) {
+        return view('admin.pricing.show', ['schemeUuid' => $scheme]);
+    })->name('pricing.show');
 });

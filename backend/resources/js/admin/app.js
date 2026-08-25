@@ -19,3 +19,5 @@ import './services/categories-index';
 import './services/categories-show';
 import './services/index';
 import './services/show';
+import './pricing/index';
+import './pricing/show';

@@ -21,6 +21,12 @@ use App\Http\Controllers\Api\V1\Admin\Customer\ListAdminCustomersController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\CreateAdminPricingRuleController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\CreateAdminPricingSchemeDraftController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\DeleteAdminPricingRuleController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\GetAdminPricingSchemeController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\ListAdminPricingSchemesController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\PublishAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceController;
@@ -297,6 +303,28 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
     Route::get('/v1/admin/contract-billings/{billing}', GetAdminContractBillingController::class)
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
+
+    // BLUE V1 Phase B9 - Pricing management. Reads/authors the exact
+    // canonical `pricing_scheme_versions`/`pricing_rules` rows
+    // App\Support\Pricing\PricingEngine already reads - never a second
+    // pricing implementation. `pricing.view` covers reads; `pricing.manage`
+    // covers DRAFT-only authoring (create scheme draft, create/delete
+    // rules); `pricing.publish` + `admin.stepup` covers publishing, mirroring
+    // the `contracts.manage`/`contracts.cancel` split exactly, since
+    // publishing changes live customer prices and is uniquely
+    // dangerous/hard to reverse.
+    Route::get('/v1/admin/pricing-schemes', ListAdminPricingSchemesController::class)
+        ->middleware(AdminCapability::PRICING_VIEW->middleware());
+    Route::get('/v1/admin/pricing-schemes/{pricingScheme}', GetAdminPricingSchemeController::class)
+        ->middleware(AdminCapability::PRICING_VIEW->middleware());
+    Route::post('/v1/admin/pricing-schemes', CreateAdminPricingSchemeDraftController::class)
+        ->middleware(AdminCapability::PRICING_MANAGE->middleware());
+    Route::post('/v1/admin/pricing-schemes/{pricingScheme}/rules', CreateAdminPricingRuleController::class)
+        ->middleware(AdminCapability::PRICING_MANAGE->middleware());
+    Route::delete('/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}', DeleteAdminPricingRuleController::class)
+        ->middleware(AdminCapability::PRICING_MANAGE->middleware());
+    Route::post('/v1/admin/pricing-schemes/{pricingScheme}/publish', PublishAdminPricingSchemeController::class)
+        ->middleware([AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
 
     // BLUE V1 Phase B6 - read-only global Admin visibility into Customers
     // and their Properties. A Property is always Customer-owned, so it

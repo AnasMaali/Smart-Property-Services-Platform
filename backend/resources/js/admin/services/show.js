@@ -211,7 +211,9 @@ if (page) {
             const item = document.createElement('li');
             item.className = 'flex items-center justify-between gap-2 text-slate-700';
 
-            const label = document.createElement('span');
+            const label = document.createElement('a');
+            label.href = `/admin/pricing/${encodeURIComponent(version.id)}`;
+            label.className = 'font-medium text-blue-600 hover:text-blue-800';
             label.textContent = version.effective_from
                 ? `${formatDateTime(version.effective_from)} → ${version.effective_to ? formatDateTime(version.effective_to) : 'open-ended'}`
                 : 'Not yet effective';

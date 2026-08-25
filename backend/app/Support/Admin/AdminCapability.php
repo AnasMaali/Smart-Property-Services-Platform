@@ -72,6 +72,30 @@ enum AdminCapability: string
     case SERVICES_MANAGE = 'services.manage';
 
     /**
+     * BLUE V1 Phase B9. `pricing.view` covers list/detail reads of
+     * pricing_scheme_versions and their nested rules/conditions/tiers.
+     */
+    case PRICING_VIEW = 'pricing.view';
+
+    /**
+     * Covers DRAFT-only authoring: creating a new DRAFT scheme version and
+     * creating/deleting its rules (with their condition groups/conditions
+     * and tiers). PUBLISHED/RETIRED versions and rules are never mutable
+     * through this or any capability - see App\Actions\Admin\Pricing\
+     * AdminCreatePricingRuleAction's docblock.
+     */
+    case PRICING_MANAGE = 'pricing.manage';
+
+    /**
+     * Mirrors the `contracts.manage`/`contracts.cancel` split: publishing a
+     * DRAFT makes it live for real customer price calculations, which is
+     * uniquely dangerous and hard to reverse (like a Contract cancellation)
+     * - it therefore gets its own capability AND `admin.stepup`, never
+     * folded into `pricing.manage`.
+     */
+    case PRICING_PUBLISH = 'pricing.publish';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

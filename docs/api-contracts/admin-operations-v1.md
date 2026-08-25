@@ -907,3 +907,197 @@ sidebar entry; the global cross-category Services list (`/admin/services`) is re
 read-only cards alongside the metadata-edit form and the Activate/Deactivate control. Every mutation
 reloads the authoritative server response afterward rather than patching local state; Service/Category
 names/descriptions are rendered exclusively via `textContent`/`createElement`, never `innerHTML`.
+
+## Admin Pricing Management (BLUE V1 Phase B9)
+
+Admin authoring of the exact canonical `pricing_scheme_versions`/`pricing_rules`/
+`pricing_rule_condition_groups`/`pricing_rule_conditions`/`pricing_rule_condition_values`/
+`pricing_rule_tiers` rows `App\Support\Pricing\PricingEngine` already reads for every real customer
+price calculation (service-details preview, Cart, Checkout) — **there is only one pricing engine in
+BLUE**. `App\Actions\Admin\Pricing\*` write that canonical configuration; nothing in this phase
+re-implements rule evaluation, condition matching, tier math, or scheme selection. No new schema,
+table, or column was added — `NO SCHEMA CHANGE`.
+
+### Existing pricing architecture (as discovered, not assumed)
+
+- **`pricing_scheme_versions`** — one row per (service, currency) pricing configuration revision.
+  `status` is a plain string (`DRAFT`/`PUBLISHED`/`RETIRED`, enforced by a CHECK constraint — there is
+  no PHP enum for it, unlike the calculation-result `PricingStatus` enum). `effective_from`/
+  `effective_to` may only be null while `status = 'DRAFT'` (`chk_pricing_scheme_versions_requires_from`).
+  A generated `open_ended_marker` column plus a unique key
+  (`service_id, currency_id, open_ended_marker`) means **at most one open-ended PUBLISHED version can
+  exist per service+currency at a time** — enforced by the schema itself, not application code. A
+  service may have any number of DRAFT versions simultaneously; nothing in the schema limits this.
+- **`App\Support\Pricing\PricingSchemeSelector`** — pure selection of the one currently-effective
+  PUBLISHED version for (service, currency, evaluation time): `status = PUBLISHED` and
+  `effective_from <= at < effective_to` (or open-ended). Both bounded and future-dated PUBLISHED
+  versions are supported.
+- **`App\Support\Pricing\SchemePublishValidator`** — the single, authoritative publish-readiness gate.
+  `validate()` checks: at least one rule exists; no duplicate rule priorities; every referenced
+  `service_option` belongs to this scheme's own service; condition shapes are structurally complete
+  (e.g. `IN`/`NOT_IN` has values); `ADD_PER_UNIT` rules have tiers with no gap/overlap and a coherent
+  tier-mode combination; `QUOTE_REQUIRED` rules have `stop_processing` enabled. `publish()` then
+  atomically (inside its own `DB::transaction`, `lockForUpdate()` on the target version and every
+  existing PUBLISHED version for the same service+currency) rejects any effective-period overlap with
+  an existing PUBLISHED version, then flips the version to `PUBLISHED` with the given effective dates.
+  **This validator is never duplicated anywhere in Admin Pricing — it is called, not reimplemented.**
+- **`App\Support\Pricing\PricingRuleEvaluator`** — the pure calculation core. Rules are sorted by
+  `priority` ascending; a rule fires if **any** of its condition groups matches (OR between groups),
+  and a group matches only if **all** of its conditions match (AND within a group) — a rule with no
+  condition groups always fires. `stop_processing` halts evaluation after that rule. Effect types:
+  `SET_PRICE`, `ADD_FIXED`, `ADD_PER_UNIT` (tiered, keyed to one `OPTION_NUMERIC_VALUE` service
+  option), `MULTIPLY`, `MIN_TOTAL`, `MAX_TOTAL`, `QUOTE_REQUIRED`. Tiers support `VOLUME` (one matching
+  band, `FLAT` or `PER_UNIT`) and `GRADUATED` (sum across bands, `PER_UNIT` only) calculation modes.
+  Condition subject types: `OPTION_CHOICE`, `OPTION_NUMERIC_VALUE`, `OPTION_BOOLEAN_VALUE`,
+  `ITEM_QUANTITY`, `CONTEXT_ATTRIBUTE` (resolved from `pricing_context_attributes`, e.g.
+  `SERVICE_ZONE`, supplied by `App\Support\Checkout\CheckoutContextResolver`). Operators: `EQ`, `NEQ`,
+  `GT`, `GTE`, `LT`, `LTE`, `IN`, `NOT_IN`, `BETWEEN` (validity per subject type is enforced by CHECK
+  constraints, e.g. boolean conditions only support `EQ`/`NEQ`).
+- **Historical safety** — `booking_item_option_selections`/`booking_item_option_choice_selections`
+  snapshot every relevant field at booking time; a completed Booking never depends on a live
+  `service_options`/`service_option_choices` row. Live `cart_item_option_selections` rows do carry a
+  hard FK to `service_options` (`ON DELETE RESTRICT`), but nothing in Admin Pricing ever
+  deletes/mutates a `service_option` — only `pricing_rules` and their own children are written here.
+
+### Capabilities
+
+| Capability | Covers |
+|---|---|
+| `pricing.view` | List/detail reads of every pricing scheme version and its nested rules/conditions/tiers. |
+| `pricing.manage` | DRAFT-only authoring: create a DRAFT scheme version, create/delete a DRAFT rule. |
+| `pricing.publish` | Publish a DRAFT scheme version. Requires `admin.stepup` (see below). |
+
+Mirrors the `contracts.manage`/`contracts.cancel` split exactly: publishing changes live customer
+prices and is uniquely dangerous and hard to reverse (like cancelling a Contract), so it gets its own
+capability and Step-Up rather than folding into `pricing.manage`.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Pricing Schemes | GET | `/v1/admin/pricing-schemes` | `pricing.view` |
+| Get Pricing Scheme | GET | `/v1/admin/pricing-schemes/{pricingScheme}` | `pricing.view` |
+| Create Pricing Scheme Draft | POST | `/v1/admin/pricing-schemes` | `pricing.manage` |
+| Create Pricing Rule | POST | `/v1/admin/pricing-schemes/{pricingScheme}/rules` | `pricing.manage` |
+| Delete Pricing Rule | DELETE | `/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}` | `pricing.manage` |
+| Publish Pricing Scheme | POST | `/v1/admin/pricing-schemes/{pricingScheme}/publish` | `pricing.publish` + `admin.stepup` |
+
+**List** filters (all optional): `service_uuid`, `status` (`DRAFT`/`PUBLISHED`/`RETIRED`), `currency`
+(ISO code). Pagination: default 20, hard max 100 — the same convention as every other Admin list.
+Each row: `uuid`, `service { uuid, name }`, `currency { code, symbol }`, `status`, `effective_from`,
+`effective_to`, `rules_count` (batched), `created_at`, `updated_at`.
+
+**Detail** additionally returns the full `rules` array (each: `uuid`, `rule_code`, `label`,
+`priority`, `effect_type`, `effect_amount`, `effect_subject_option { uuid, name }`,
+`tier_calculation_mode`, `stop_processing`, `condition_groups[{ conditions[...] }]`, `tiers[...]`) —
+human-readable option/choice/context-attribute names are joined in purely for display; the underlying
+codes/operators the real evaluator acts on are always included too. No raw binary UUID bytes are ever
+exposed; `service_categories`-style plain-int identifiers don't apply here since every pricing
+identifier is a binary(16) UUID.
+
+### Mutations implemented, and why the rest is deferred
+
+**Implemented** (DRAFT-only; a `PUBLISHED`/`RETIRED` version's rules and metadata are immutable,
+enforced centrally by each Action locking and checking `status` before writing):
+
+- **Create Pricing Scheme Draft** — `App\Actions\Admin\Pricing\AdminCreatePricingSchemeDraftAction`.
+  Validates the service and currency exist (currency must be active); creates a `DRAFT` row with no
+  effective dates (the schema only requires them once a version leaves `DRAFT`, and
+  `SchemePublishValidator::publish()` is what sets them). No limit on concurrent DRAFTs per service.
+- **Create Pricing Rule** — `App\Actions\Admin\Pricing\AdminCreatePricingRuleAction`. Accepts one full
+  rule (effect + optional condition groups/conditions + optional tiers) and writes it atomically.
+  Validates only field-level shape (mirroring the literal `pricing_rules`/`pricing_rule_conditions`
+  CHECK constraints, e.g. `ADD_PER_UNIT` requires `effect_subject_service_option_id` +
+  `tier_calculation_mode` + at least one tier; `QUOTE_REQUIRED` requires `stop_processing`) plus
+  lightweight FK-existence checks. **Deliberately does not duplicate `SchemePublishValidator`'s
+  cross-row checks** (duplicate priorities within the *whole* version, cross-service option
+  references, tier sequence/coverage) — a DRAFT rule may be saved before it is fully publish-ready;
+  the validator remains the single, authoritative "is this scheme safe to go live" gate, re-run in
+  full at publish time. Duplicate `rule_code`/`priority` *within this one create call* is still
+  rejected early (409) since that's a simple existence check, not a cross-row publish-readiness rule.
+- **Delete Pricing Rule** — `App\Actions\Admin\Pricing\AdminDeletePricingRuleAction`. Its condition
+  groups/conditions/condition values/tiers cascade-delete via the existing `ON DELETE CASCADE`
+  foreign keys — nothing extra is deleted manually.
+- **Publish Pricing Scheme** — `App\Actions\Admin\Pricing\AdminPublishPricingSchemeAction`. Locks the
+  version, rejects anything other than `DRAFT` (a check `SchemePublishValidator::publish()` itself
+  does not make — it would otherwise silently rewrite an already-PUBLISHED version's effective dates),
+  calls `validate()` for a friendly aggregated error list, then calls the real `publish()` — the exact
+  same transactional, row-locking, overlap-rejecting operation, never copied or reimplemented.
+
+**Deferred, and why**:
+
+- **Update an existing DRAFT rule (PATCH)** — no update endpoint exists; editing a DRAFT rule is
+  delete + recreate. This avoids inventing partial-update semantics for a rule's nested condition/tier
+  structure that no existing code establishes.
+- **Retire a PUBLISHED scheme** — `RETIRED` is a valid schema status (used only in
+  `PricingSchemeSelectorTest`'s fixtures to prove a retired version is correctly excluded from
+  selection), but **no existing Action or business rule anywhere in this codebase transitions a
+  version to `RETIRED`**. Inventing how/when that happens would mean guessing financial lifecycle
+  policy, which BLUE V1 standing policy forbids. A `RETIRED` version therefore stays reachable only via
+  direct read.
+- **Service Zones on the Service/Pricing pages** — confirmed in B8: `service_zones`/
+  `service_zone_areas` has no relationship to `services` at all in the schema; it is purely an
+  Area→pricing-context mapping. Nothing to author here.
+- **Pricing Preview / test calculation** — investigated `App\Support\Checkout\
+  CheckoutContextResolver`: it resolves `SERVICE_ZONE` (and any future context attribute) from a real
+  `cart_locations.area_id`, i.e. a genuine Cart/Checkout/Property context. Synthesizing a fake context
+  from the Admin panel to "preview" a rule would mean guessing what context values are realistic,
+  which is exactly the kind of invented business behavior this phase avoids. No
+  `POST .../preview` endpoint was built; an Admin instead uses the real, unmodified
+  `GET /v1/services/{slug}` pricing preview (which already calls the same `PricingEngine` with no
+  selections) to confirm a published change, exactly as the end-to-end test below does.
+- **Condition-group/tier authoring in the frontend UI** — the backend `Create Pricing Rule` endpoint
+  fully supports nested condition groups and multi-tier `ADD_PER_UNIT` rules (see the dedicated tests
+  in `AdminPricingTest`), but the Admin web UI's "Add a rule" form only covers the common unconditional
+  case (`SET_PRICE`/`ADD_FIXED`/`MULTIPLY`/`MIN_TOTAL`/`MAX_TOTAL`/`QUOTE_REQUIRED`, no conditions, no
+  tiers) to keep the form legible for a small trusted Admin team; a conditional or tiered rule is
+  authored by calling the Admin API directly. The page says so explicitly.
+
+### Step-Up
+
+`POST /v1/admin/pricing-schemes/{pricingScheme}/publish` is gated by
+`[AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']` — the exact existing WebAuthn A2.5
+Step-Up infrastructure (no new MFA code). The frontend needs no special-case handling:
+`resources/js/admin/lib/api-client.js`'s `request()` already detects a `428`/`STEP_UP_REQUIRED`
+response, runs the real WebAuthn ceremony, and retries the publish call exactly once.
+
+### Audit events
+
+`PRICING_SCHEME_DRAFT_CREATED`, `PRICING_RULE_CREATED`, `PRICING_RULE_DELETED`,
+`PRICING_SCHEME_PUBLISHED` — one row per successful, state-changing mutation. Logged metadata is
+always small and safe (service/currency codes, rule UUID/code, effective dates) — never the full rule/
+condition/tier structure, request body, or any customer payment data.
+
+### Payment/Billing isolation
+
+Nothing in `App\Actions\Admin\Pricing\*` or `App\Http\Controllers\Api\V1\Admin\Pricing\*` references
+Stripe or creates/mutates a Payment Attempt, Contract Billing subscription, or webhook event —
+verified by the existing `AdminFinancialIsolationTest::test_no_stripe_client_is_referenced_anywhere_in_
+the_admin_operations_source` source scan (extended to cover this phase's files automatically, since it
+scans the whole `app/Actions/Admin/**` and `app/Http/Controllers/Api/V1/Admin/**` trees). A published
+pricing change only ever affects a *future* price calculation through the existing
+`PricingSchemeSelector`/`PricingRuleEvaluator` path — never a direct side effect on any in-flight
+Payment or Billing state.
+
+### End-to-end proof: Admin Pricing drives the real customer price
+
+`AdminPricingTest::test_admin_authored_published_pricing_is_used_by_the_real_pricing_engine` creates a
+DRAFT scheme version and an unconditional `SET_PRICE` rule entirely through the Admin API, publishes it
+entirely through the Admin API (with Step-Up), then calls the real, unmodified customer-facing
+`GET /v1/services/{slug}` endpoint (`App\Actions\ServiceCatalog\GetServiceDetailsAction` →
+`PricingEngine`) and asserts the returned `pricing_preview.unit_total` matches the configured amount
+exactly. This proves Admin Pricing writes canonical configuration that the one real pricing engine
+reads — never a second, parallel pricing implementation.
+
+### Frontend
+
+Sidebar "Pricing" (under Financial, alongside Payments/Contract Billing) points at
+`/admin/pricing` (list, with filters + an inline "Create a Pricing Draft" form) and
+`/admin/pricing/{scheme}` (detail: Overview, a Publish form and an Add-rule form shown only while
+`status = DRAFT`, and a Rules list rendering each rule's effect, condition groups — with the real OR
+-between-groups/AND-within-group relationship spelled out, never a generic dump — and tiers as
+readable cards, never raw JSON). A B8 Service detail page's pricing-scheme-version links now navigate
+to the corresponding B9 detail page (`/admin/pricing/{scheme}`), replacing the earlier read-only-only
+summary — Pricing editing stays entirely in the Pricing domain; Service Catalog never gained pricing
+-mutation UI of its own. Every mutation reloads the authoritative server response afterward; all
+dynamic text is rendered via `textContent`/`createElement`, never `innerHTML`.

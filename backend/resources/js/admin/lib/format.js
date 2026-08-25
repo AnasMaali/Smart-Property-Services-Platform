@@ -54,6 +54,11 @@ const STATUS_BADGE_CLASSES = {
     OPEN: 'bg-amber-50 text-amber-700',
     RESOLVED: 'bg-emerald-50 text-emerald-700',
     CLOSED: 'bg-slate-100 text-slate-600',
+
+    // pricing_scheme_versions.status (DRAFT/PUBLISHED/RETIRED)
+    DRAFT: 'bg-amber-50 text-amber-700',
+    PUBLISHED: 'bg-emerald-50 text-emerald-700',
+    RETIRED: 'bg-slate-100 text-slate-600',
 };
 
 const DEFAULT_STATUS_BADGE_CLASSES = 'bg-slate-100 text-slate-600';
