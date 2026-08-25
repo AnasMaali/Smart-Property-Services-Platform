@@ -194,12 +194,21 @@ final class WebAuthnTestAuthenticator
             throw new RuntimeException('Unable to read EC key details for the test authenticator.');
         }
 
+        // openssl_pkey_get_details() returns each coordinate as the
+        // shortest big-endian byte string that represents its value - if
+        // the coordinate's high byte happens to be 0x00, that leading byte
+        // is silently dropped, occasionally yielding <32 bytes for a P-256
+        // coordinate (a well-known OpenSSL quirk). P-256 field elements are
+        // always exactly 32 bytes; left-pad with zero bytes to restore the
+        // fixed width the COSE encoding (and CheckSignature's key parsing)
+        // expects, rather than relying on the 255/256 chance this padding
+        // is never actually needed.
         return (new Encoder)->encode([
             1 => 2,   // kty: EC2
             3 => -7,  // alg: ES256
             -1 => 1,  // crv: P-256
-            -2 => ByteStringObject::create($details['ec']['x']),
-            -3 => ByteStringObject::create($details['ec']['y']),
+            -2 => ByteStringObject::create(str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT)),
+            -3 => ByteStringObject::create(str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT)),
         ]);
     }
 
