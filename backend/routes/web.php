@@ -106,4 +106,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/ratings/{booking}', function (string $booking) {
         return view('admin.ratings.show', ['bookingUuid' => $booking]);
     })->name('ratings.show');
+
+    // BLUE V1 Phase B12 - Admin Audit Log shell routes. Same convention as
+    // every other module above.
+    Route::view('/audit-log', 'admin.audit-log.index')->name('audit-log.index');
+
+    Route::get('/audit-log/{auditLog}', function (string $auditLog) {
+        return view('admin.audit-log.show', ['auditLogUuid' => $auditLog]);
+    })->name('audit-log.show');
 });

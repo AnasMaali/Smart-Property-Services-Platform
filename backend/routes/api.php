@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\Audit\GetAdminAuditLogController;
+use App\Http\Controllers\Api\V1\Admin\Audit\ListAdminAuditLogsController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaEnrollController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaVerifyController;
@@ -242,6 +244,15 @@ Route::middleware('auth.admin')->group(function () {
     // `admin.capability:<code>` middleware has no AND-combination support).
     Route::get('/v1/admin/dashboard', GetAdminDashboardController::class)
         ->middleware(AdminCapability::DASHBOARD_VIEW->middleware());
+
+    // BLUE V1 Phase B12 - Admin Audit Log viewer. Read-only, searchable
+    // visibility into `admin_audit_logs` beyond B10's 10-row Dashboard
+    // snippet - an audit ledger is append-only, so there is no mutation
+    // route/capability.
+    Route::get('/v1/admin/audit-logs', ListAdminAuditLogsController::class)
+        ->middleware(AdminCapability::AUDIT_VIEW->middleware());
+    Route::get('/v1/admin/audit-logs/{auditLog}', GetAdminAuditLogController::class)
+        ->middleware(AdminCapability::AUDIT_VIEW->middleware());
 
     // BLUE V1 Phase 9B - Admin Operations APIs: a thin, auth.admin-only
     // transport layer over the already-tested Phase 7B/8A/8B domain Actions.

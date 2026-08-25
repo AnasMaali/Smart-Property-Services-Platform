@@ -223,6 +223,12 @@ VALUES
     'View Ratings',
     'View customer ratings and feedback comments left on completed Bookings, and which Customer/Booking each rating belongs to. Read-only: no rating-creation flow exists yet, and editing/deleting a submitted rating is not yet policy-defined.',
     TRUE
+),
+(
+    'audit.view',
+    'View Audit Log',
+    'Search and inspect the Admin audit log (admin_audit_logs): who did what, when, and whether it succeeded. Read-only - an audit ledger is append-only, so there is no mutation capability.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -276,7 +282,8 @@ WHERE r.code = 'ADMIN'
     'pricing.manage',
     'pricing.publish',
     'dashboard.view',
-    'ratings.view'
+    'ratings.view',
+    'audit.view'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

@@ -122,6 +122,14 @@ enum AdminCapability: string
     case RATINGS_VIEW = 'ratings.view';
 
     /**
+     * BLUE V1 Phase B12. Read-only, searchable visibility into
+     * `admin_audit_logs` - B10's Dashboard only ever exposes its 10
+     * most-recent rows. An audit ledger is append-only by nature: nothing
+     * ever mutates a row, so there is no `audit.manage` counterpart.
+     */
+    case AUDIT_VIEW = 'audit.view';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

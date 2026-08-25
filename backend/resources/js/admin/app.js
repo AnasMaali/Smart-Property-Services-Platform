@@ -24,3 +24,5 @@ import './pricing/index';
 import './pricing/show';
 import './ratings/index';
 import './ratings/show';
+import './audit-log/index';
+import './audit-log/show';

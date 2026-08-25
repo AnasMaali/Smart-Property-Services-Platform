@@ -191,9 +191,11 @@
                     Security
                 </p>
 
-                <a href="#"
-                   class="block rounded-lg px-3 py-2.5 text-sm text-slate-400
-                          hover:bg-slate-900 hover:text-white">
+                <a
+                    href="/admin/audit-log"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/audit-log*') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
                     Activity
                 </a>
 

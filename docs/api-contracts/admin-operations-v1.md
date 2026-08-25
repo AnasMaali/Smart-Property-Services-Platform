@@ -1325,3 +1325,90 @@ No table, column, migration, or index was added. The one new `ratings.view` `adm
 was added via the existing `INSERT ... ON DUPLICATE KEY UPDATE` seed convention in
 `database/blue_v1_seed.sql`, with equivalent DML applied only to `blue_test_db` — the pre-existing
 `blue_db` Admin-schema gap, reported in every phase since B5, remains untouched and unrelated to B11.
+
+## Admin Audit Log viewer (BLUE V1 Phase B12)
+
+Read-only, searchable visibility into `admin_audit_logs` beyond what BLUE V1 Phase B10's Dashboard
+already exposes (its "Recent activity" widget is hard-limited to the 10 most recent rows across the
+whole application). This phase adds a dedicated, filterable page over the exact same table — never a
+second audit trail, and every row here was already written by an existing phase's
+`App\Support\Admin\AdminAuditLogger::record()`/`recordFailure()` call.
+
+### Why this phase, and why it is entirely read-only
+
+An audit ledger is append-only by nature: nothing in the existing codebase ever updates or deletes an
+`admin_audit_logs` row, and this phase does not change that — there is no mutation route, and
+therefore no `audit.manage` capability. The table's own indexes
+(`idx_admin_audit_logs_admin_time (admin_user_id, created_at)`,
+`idx_admin_audit_logs_action_time (action_code, created_at)`,
+`idx_admin_audit_logs_entity (entity_type, entity_identifier, created_at)`,
+`idx_admin_audit_logs_success_time (was_successful, created_at)`,
+`idx_admin_audit_logs_created_at (created_at)`) are direct evidence the schema was already built for
+exactly this kind of searchable viewer — every filter below maps onto one of them.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Audit Log | GET | `/v1/admin/audit-logs` | `audit.view` |
+| Get Audit Log entry | GET | `/v1/admin/audit-logs/{auditLog}` | `audit.view` |
+
+`audit.view` is a new BLUE V1 Phase B12 `admin_permissions` row, granted to `ADMIN` the same way every
+other capability in this document already is (`SUPER_ADMIN` needs no row).
+
+### List Audit Log — `GET /v1/admin/audit-logs`
+
+`App\Actions\Admin\Audit\AdminListAuditLogsAction`. Deterministic ordering (`created_at DESC, id DESC`)
+and the same pagination convention as every other Admin list endpoint (default 20, hard max 100).
+Query filters — all optional: `action_code` (exact), `entity_type` (exact), `entity_identifier`
+(exact), `was_successful` (boolean), `actor_uuid` (exact, malformed values rejected with `422` by the
+FormRequest, consistent with every other Admin list endpoint's UUID filters), `from`/`to` (an inclusive
+`created_at` date/time range).
+
+Each row: `uuid`, `action_code`, `entity_type`, `entity_identifier`, `was_successful`,
+`failure_reason`, `actor { uuid, full_name }` (nullable if the actor account no longer resolves),
+`created_at`.
+
+### Get Audit Log entry — `GET /v1/admin/audit-logs/{auditLog}`
+
+`App\Actions\Admin\Audit\AdminGetAuditLogAction`. A malformed or unknown UUID returns the same generic
+`404`. Returns every List field above, plus two fields only shown on this detail view to keep the list
+compact: `ip_address` (unpacked from the stored `varbinary` via `inet_ntop()`) and `user_agent`. These
+are not secrets — they describe the browser/session that performed the action, exactly the kind of
+context a small trusted Admin team needs when reviewing its own team's activity — and are already
+captured by every existing `AdminAuditLogger` call site today.
+
+### Fields deliberately never returned
+
+- **`old_values`/`new_values`** — no per-`action_code` safe-field whitelist exists anywhere in this
+  codebase (each Action currently decides for itself what small, safe metadata to log), so exposing
+  these blindly could leak whatever a future Action ever stores there. This continues the exact same
+  conservative choice `App\Actions\Admin\Dashboard\AdminGetDashboardAction` (B10) already made.
+- **`action_description`** — confirmed always `null` at the single `AdminAuditLogger::write()` call
+  site; no phase has ever populated it.
+- **`request_trace_id`** — likewise confirmed always `null`; not populated anywhere.
+- Raw binary ids — every identifier is the standard UUID string.
+
+### No Step-Up, no further audit events
+
+Nothing here mutates state, so there is nothing to protect with WebAuthn Step-Up, and reading the audit
+log does not itself generate a new audit row (consistent with every other read-only Admin module never
+auditing its own reads).
+
+### Frontend
+
+Sidebar "Activity" (under Security — previously a placeholder) now points at `/admin/audit-log` (list,
+with `action_code`/`entity_type`/`entity_identifier`/outcome/actor/date-range filters) and
+`/admin/audit-log/{auditLog}` (detail: full entity/actor/IP/user-agent breakdown). Action codes and
+entity types are rendered through the existing `statusLabel()` formatter (shared with every other
+status code in this Admin frontend) rather than a new label map. No cross-links are generated from an
+audit entry's `entity_type`/`entity_identifier` into another module's detail page — `entity_type`
+varies too widely (a plain int for `SERVICE_CATEGORY`, a UUID for everything else) to safely guess a
+target route without risking an incorrect link, so it is shown as plain text only.
+
+### No schema changes; `blue_db` note
+
+No table, column, migration, or index was added. The one new `audit.view` `admin_permissions` row was
+added via the existing `INSERT ... ON DUPLICATE KEY UPDATE` seed convention in
+`database/blue_v1_seed.sql`, with equivalent DML applied only to `blue_test_db` — the pre-existing
+`blue_db` Admin-schema gap, reported in every phase since B5, remains untouched and unrelated to B12.
