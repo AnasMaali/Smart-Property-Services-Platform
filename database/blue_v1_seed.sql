@@ -181,6 +181,18 @@ VALUES
     'Manage Support Requests',
     'Post an Admin reply message on a Support Request. Status-transition and assignment mutations are not yet implemented.',
     TRUE
+),
+(
+    'services.view',
+    'View Service Catalog',
+    'View Service Categories and Services shown in the mobile app, including each Service''s capabilities, required specializations, options, media, and pricing-scheme-version summary. Read-only.',
+    TRUE
+),
+(
+    'services.manage',
+    'Manage Service Catalog',
+    'Edit Service Category/Service display metadata (name, description, display order) and activate/deactivate Categories and Services. Options, capabilities, specializations, media, and pricing rules are not mutable through this capability.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -227,7 +239,9 @@ WHERE r.code = 'ADMIN'
     'billing.view',
     'customers.view',
     'support.view',
-    'support.manage'
+    'support.manage',
+    'services.view',
+    'services.manage'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

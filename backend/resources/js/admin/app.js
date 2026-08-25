@@ -15,3 +15,7 @@ import './customers/show';
 import './properties/show';
 import './support/index';
 import './support/show';
+import './services/categories-index';
+import './services/categories-show';
+import './services/index';
+import './services/show';

@@ -72,4 +72,22 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/support/{supportRequest}', function (string $supportRequest) {
         return view('admin.support.show', ['supportRequestUuid' => $supportRequest]);
     })->name('support.show');
+
+    // BLUE V1 Phase B8 - Service Catalog shell routes. Same convention as
+    // every other module above. The sidebar's "Services" link points at
+    // the Category list (the natural top-level browsing structure for what
+    // shows up in the mobile app); the global cross-category Services list
+    // is reached from there rather than getting its own sidebar entry, per
+    // the "keep navigation simple" guidance.
+    Route::view('/service-categories', 'admin.services.categories-index')->name('service-categories.index');
+
+    Route::get('/service-categories/{category}', function (string $category) {
+        return view('admin.services.categories-show', ['categoryId' => $category]);
+    })->name('service-categories.show');
+
+    Route::view('/services', 'admin.services.index')->name('services.index');
+
+    Route::get('/services/{service}', function (string $service) {
+        return view('admin.services.show', ['serviceUuid' => $service]);
+    })->name('services.show');
 });

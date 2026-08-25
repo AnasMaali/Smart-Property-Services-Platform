@@ -52,6 +52,26 @@ enum AdminCapability: string
     case SUPPORT_MANAGE = 'support.manage';
 
     /**
+     * BLUE V1 Phase B8. Covers both Service Category and Service reads
+     * (list/detail, including their nested capabilities/specializations/
+     * options/media/pricing-scheme-version summary) - mirrors the
+     * `customers.view` precedent of collapsing a closely related pair of
+     * record types into one capability rather than adding
+     * `service-categories.view` separately.
+     */
+    case SERVICES_VIEW = 'services.view';
+
+    /**
+     * Covers every Service Catalog mutation this phase implements: Category
+     * and Service display-metadata edits (name/description/display_order)
+     * and activate/deactivate toggles. Nothing about Service Options,
+     * Capabilities, Specializations, or Media is mutable here - see
+     * App\Actions\Admin\Service\AdminGetServiceAction's docblock for why
+     * each of those remains read-only in this phase.
+     */
+    case SERVICES_MANAGE = 'services.manage';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

@@ -22,6 +22,16 @@ use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCategoriesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Support\GetAdminSupportRequestController;
 use App\Http\Controllers\Api\V1\Admin\Support\ListAdminSupportRequestsController;
 use App\Http\Controllers\Api\V1\Admin\Support\SendAdminSupportMessageController;
@@ -300,6 +310,37 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
     Route::get('/v1/admin/properties/{property}', GetAdminPropertyController::class)
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
+
+    // BLUE V1 Phase B8 - Service Catalog (Categories/Services) management.
+    // `services.view` covers every read below (list/detail, including the
+    // nested capabilities/specializations/options/media/pricing-scheme
+    // summary on a Service); `services.manage` covers every mutation -
+    // display-metadata edits and activate/deactivate for both Categories
+    // and Services. Nothing about Options/Capabilities/Specializations/
+    // Media is mutable here - see App\Actions\Admin\Service\
+    // AdminGetServiceAction's docblock for why, and
+    // docs/api-contracts/admin-operations-v1.md "Service Catalog" for the
+    // full write-up.
+    Route::get('/v1/admin/service-categories', ListAdminServiceCategoriesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::get('/v1/admin/service-categories/{category}', GetAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::patch('/v1/admin/service-categories/{category}', UpdateAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-categories/{category}/activate', ActivateAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-categories/{category}/deactivate', DeactivateAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::get('/v1/admin/services', ListAdminServicesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::get('/v1/admin/services/{service}', GetAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::patch('/v1/admin/services/{service}', UpdateAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/activate', ActivateAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/deactivate', DeactivateAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     // BLUE V1 Phase B7 - Support Requests/Messages. `support.view` covers
     // both list/detail reads; `support.manage` covers the one Support

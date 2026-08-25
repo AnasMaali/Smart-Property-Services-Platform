@@ -724,3 +724,186 @@ papering over this gap with an implicit, unreviewed lifecycle policy. A future p
 explicit `AdminUpdateSupportRequestStatusAction`/`AdminAssignSupportRequestAction` (mirroring the
 explicit-Action-per-transition convention `App\Support\Contract\ContractStatusMachine` already
 establishes for Contracts) once the transition/assignment rules are confirmed.
+
+## Admin Service Catalog (Categories/Services) management (BLUE V1 Phase B8)
+
+Admin management of the exact Service Catalog the mobile app already reads through
+`App\Actions\ServiceCatalog\ListServiceCategoriesAction` / `ListCategoryServicesAction` /
+`GetServiceDetailsAction` (`GET /v1/service-categories`, `GET /v1/service-categories/{category}/
+services`, `GET /v1/services/{slug}`) — never a parallel Service Catalog. `App\Actions\Admin\
+Service\*` and `App\Support\Admin\AdminServiceCategoryPresenter`/`AdminServicePresenter` read and
+mutate the same canonical `service_categories`/`services` rows those public endpoints already read;
+no new schema, table, or column was added — `NO SCHEMA CHANGE` per BLUE V1 standing policy.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Service Categories | GET | `/v1/admin/service-categories` | `services.view` |
+| Get Service Category | GET | `/v1/admin/service-categories/{category}` | `services.view` |
+| Update Service Category metadata | PATCH | `/v1/admin/service-categories/{category}` | `services.manage` |
+| Activate Service Category | POST | `/v1/admin/service-categories/{category}/activate` | `services.manage` |
+| Deactivate Service Category | POST | `/v1/admin/service-categories/{category}/deactivate` | `services.manage` |
+| List Services (global) | GET | `/v1/admin/services` | `services.view` |
+| Get Service | GET | `/v1/admin/services/{service}` | `services.view` |
+| Update Service metadata | PATCH | `/v1/admin/services/{service}` | `services.manage` |
+| Activate Service | POST | `/v1/admin/services/{service}/activate` | `services.manage` |
+| Deactivate Service | POST | `/v1/admin/services/{service}/deactivate` | `services.manage` |
+
+`services.view`/`services.manage` are new BLUE V1 Phase B8 `admin_permissions` rows, granted to
+`ADMIN` the same way every other capability in this document already is (`SUPER_ADMIN` needs no row).
+One capability pair covers both Categories and Services (mirroring the `customers.view` precedent of
+collapsing a closely related pair of record types) rather than adding four separate capabilities.
+
+`service_categories.id` is a plain unsigned int, not a binary(16) UUID (see
+`database/blue_v1_schema.sql`) — the same identifier the existing public `GET /v1/service-categories`
+already returns, so it is presented as-is here too, never re-encoded. `services.id` is a binary(16)
+UUID and is always presented as the standard UUID string, never raw bytes.
+
+### List Service Categories — `GET /v1/admin/service-categories`
+
+`App\Actions\Admin\Service\AdminListServiceCategoriesAction`. Unlike the customer-facing
+`ListServiceCategoriesAction` (active-only, for the mobile Home screen), Admin sees every Category
+regardless of `is_active` by default — an operator needs to see what is currently hidden from the
+app. Optional `is_active` filter narrows to one state. Only 18 categories exist in BLUE V1's seed
+data, so this is deliberately a small, unpaginated list. Each row: `id`, `code`, `name`,
+`description`, `display_order`, `is_active`, `services_count` (batched, never a query per row),
+`created_at`, `updated_at`.
+
+### Get Service Category — `GET /v1/admin/service-categories/{category}`
+
+Same fields as the list row, plus the category's full `services` array (unpaginated — a Category
+realistically has a handful of Services, matching the existing per-category "all services" shape
+`ListCategoryServicesAction` already returns for the customer's own equivalent screen). Each nested
+Service: `uuid`, `code`, `name`, `is_active`, `display_order`.
+
+### List Services (global) — `GET /v1/admin/services`
+
+`App\Actions\Admin\Service\AdminListServicesAction`. Unlike the customer-facing
+`ListCategoryServicesAction` (one active Category's active Services only), this sees every Service
+across every Category regardless of its own or its Category's `is_active` state. Deterministic
+ordering (`updated_at DESC, id DESC`) and a bounded page size (default 20, hard max 100 — the same
+pagination convention as every other Admin list endpoint) make this safe against an unbounded table.
+Query filters — all optional: `category_id` (exact match), `is_active` (boolean), `search` (partial
+match against `name`).
+
+Each row: `uuid`, `code`, `name`, `is_active`, `display_order`, `category { id, name }`,
+`capabilities` (active capability rows, see below), `updated_at`. All related data is batch-loaded
+(`whereIn`) — never a query per row.
+
+### Get Service — `GET /v1/admin/services/{service}`
+
+`App\Actions\Admin\Service\AdminGetServiceAction` / `AdminServicePresenter::detail()`. Unlike the
+customer-facing `GetServiceDetailsAction` (which only ever shows active options/choices to a
+shopper), this shows every row regardless of its own `is_active` flag — an operator needs to see what
+is currently hidden from the app. Returns the full Service (`uuid`, `code`, `slug`, `name`,
+`short_description`, `description`, `is_active`, `display_order`, `created_at`, `updated_at`),
+`category { id, code, name, is_active }`, and four read-only sections:
+
+- **`capabilities`** — every linked `service_capability_types` row (`code`, `name`, `description`).
+- **`specializations`** — every linked `specializations` row (`code`, `name`, `is_primary`,
+  `is_active`).
+- **`options`** — every `service_options` row (including inactive ones), each with its numeric or
+  selection rule and choices, mirroring `GetServiceDetailsAction`'s exact option/rule/choice shape.
+- **`media`** — every `service_media` row (including inactive ones): `storage_key`, `mime_type`,
+  `alt_text`, `caption`, dimensions, `is_primary`, `is_active`.
+- **`pricing`** — `{ currency_code, scheme_versions: [{ id, status, effective_from, effective_to }] }`
+  for BLUE's default currency, via `App\Support\Pricing\PricingSchemeRepository::schemeVersionsFor()`
+  — which `pricing_scheme_versions` exist and their publish status, never a rule evaluation and never
+  editable here. See "Pricing boundary with B9" below.
+
+### What is mutable, and why the rest is deliberately read-only
+
+Only **display metadata** and **is_active** are mutable, on both Categories and Services:
+
+- **Update metadata** (`PATCH`) — Category: `name`, `description`, `display_order`. Service: `name`,
+  `short_description`, `description`, `display_order`. Both are a full replace, not a partial patch,
+  so a caller cannot accidentally leave a stale value in place by omitting a field. `code`/`slug`
+  are never editable: nothing in this codebase reads a Category's `code` programmatically today, but
+  it is the one stable identifier the public catalog contract exposes; `slug` is the customer-facing
+  `GET /v1/services/{slug}` lookup key (renaming it would break any existing deep link).
+  Re-categorizing a Service (`category_id`) is likewise out of scope — a structural change with no
+  established safety story, not a "safe metadata" edit.
+- **Activate/Deactivate** (`POST .../activate`, `.../deactivate`) — toggles `is_active`. Idempotent:
+  activating an already-active row (or deactivating an already-inactive one) is a safe no-op and
+  writes no audit row.
+
+Options, Capabilities, Specializations, Media, and Zones remain **read-only** (or, for Zones, entirely
+absent from the Service detail page) after inspecting how each is actually consumed elsewhere:
+
+- **`service_capabilities`** gates real Cart/Contract eligibility (`App\Support\Pricing\
+  ServiceCapabilities::has()`, checked by `AddCartItemAction` for `CART_ELIGIBLE` and
+  `RequestContractAction` for `SUBSCRIPTION`) — toggling one is a structural product-behavior change,
+  not display metadata.
+- **`service_specializations`** directly determines technician-candidate eligibility for a booking
+  item (`App\Actions\Admin\Technician\AdminListTechnicianCandidatesAction` intersects it with
+  `technician_specializations`) — an uninformed edit could silently make a Service unassignable or
+  eligible for the wrong technicians.
+- **`service_options`/`service_option_choices`** (and their numeric/selection rules) are validated by
+  `App\Support\Cart\CartSelectionValidator` and priced by the flexible pricing engine. Live
+  `cart_item_option_selections` rows carry a hard FK to `service_options`/`service_option_choices`
+  (`ON DELETE RESTRICT`), while completed `booking_item_option_selections` instead snapshot every
+  field at booking time — so a Cart in progress depends on the option continuing to mean what it
+  meant when it was added, and no safe "what happens to an in-progress Cart if this option changes"
+  policy exists yet.
+- **`service_media`** has a real storage schema (`storage_key`/`file_size_bytes`) but nothing in this
+  codebase writes to it yet — there is no existing secure upload pipeline to reuse, and BLUE V1
+  standing policy is to never invent one solely for this Admin page.
+- **`service_zones`/`service_zone_areas`** has **no relationship to `services` at all** in the schema
+  — it maps `areas` to a `service_zones` row, consumed only as a pricing-rule context dimension
+  (`SERVICE_ZONE`) by `App\Support\Checkout\CheckoutContextResolver`. There is no "which zones is this
+  Service available in" data to show or mutate, so no Zones section exists on the Service detail page
+  at all — adding one would misrepresent the data model.
+
+Each of these remains a candidate for an explicit, reviewed mutation Action in a future phase once its
+safety story is confirmed — never a generic PATCH covering all of them at once.
+
+### Active/Inactive semantics
+
+- **Category deactivation** removes it from `GET /v1/service-categories` and makes `GET
+  /v1/service-categories/{category}/services` 404 (both filter on `is_active = 1`). It does **not**
+  cascade to deactivate its individual Services — no cascading deactivation was invented. It also does
+  **not** retroactively affect an individual Service's own by-slug detail page: `GET /v1/services/
+  {slug}` only checks the Service's own `is_active`, never its Category's (`GetServiceDetailsAction`
+  never joins on the Category's `is_active`) — a still-active Service under a newly-deactivated
+  Category therefore remains individually reachable by slug. This is pre-existing behavior, not
+  introduced by B8, and is covered by a regression test.
+- **Service deactivation** removes it from `GET /v1/service-categories/{category}/services` and makes
+  `GET /v1/services/{slug}` 404. It only stops **new** Cart additions (`AddCartItemAction`/
+  `UpdateCartItemAction` both require `is_active = 1` at the moment a selection is made). It does
+  **not** remove the Service from a Cart it is already in (no live re-validation exists at checkout),
+  and does **not** affect any existing Booking or Contract — `booking_item_option_selections`
+  snapshots every field at booking time, and neither Booking nor Contract rows carry a live dependency
+  on `services.is_active`.
+- Both toggles are idempotent no-ops when the row is already in the target state (no audit row is
+  written when nothing actually changes).
+
+### Audit logging
+
+`SERVICE_CATEGORY_UPDATED`, `SERVICE_CATEGORY_ACTIVATED`, `SERVICE_CATEGORY_DEACTIVATED`,
+`SERVICE_UPDATED`, `SERVICE_ACTIVATED`, `SERVICE_DEACTIVATED` — one row per successful, state-changing
+mutation. A metadata update logs only `name` and `display_order` in `new_values`/`old_values`, never
+`description` (never logging large description blobs). Activate/deactivate log no `new_values` at all
+beyond the action itself; an idempotent no-op writes no audit row.
+
+### Pricing boundary with B9
+
+This phase deliberately shows only which `pricing_scheme_versions` exist for a Service and their
+publish status (`DRAFT`/`PUBLISHED`/`RETIRED`, effective dates) — read-only, via the existing
+`PricingSchemeRepository`. It never creates, edits, or publishes a pricing rule, and never evaluates
+one (no `PricingEngine` call exists anywhere in `App\Actions\Admin\Service\*` or `App\Http\
+Controllers\Api\V1\Admin\Service\*` — enforced by `AdminFinancialIsolationTest`). Full pricing-rule
+authoring/publishing (`pricing_rules`, `pricing_rule_conditions`, `pricing_rule_tiers`) is BLUE V1
+Phase B9's exclusive domain.
+
+### Frontend
+
+Sidebar "Services" points at the Category list (`/admin/service-categories`) — the natural top-level
+browsing structure for what shows up in the mobile app — rather than getting a separate "Categories"
+sidebar entry; the global cross-category Services list (`/admin/services`) is reached from there via a
+"View all Services" link, per the "keep navigation simple" guidance. A Category detail page
+(`/admin/service-categories/{category}`) lists its Services; a Service detail page
+(`/admin/services/{service}`) shows Overview/Options/Capabilities/Specializations/Media/Pricing as
+read-only cards alongside the metadata-edit form and the Activate/Deactivate control. Every mutation
+reloads the authoritative server response afterward rather than patching local state; Service/Category
+names/descriptions are rendered exclusively via `textContent`/`createElement`, never `innerHTML`.
