@@ -130,6 +130,126 @@ LOCK TABLES `admin_role_permissions` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `admin_webauthn_challenge_purposes`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_challenge_purposes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_challenge_purposes` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_challenge_purposes_code` (`code`),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_code` CHECK ((char_length(trim(`code`)) between 2 and 50)),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_challenge_purposes`
+--
+
+LOCK TABLES `admin_webauthn_challenge_purposes` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_challenge_purposes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_challenge_purposes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_webauthn_challenges`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_challenges`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_challenges` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `user_id` binary(16) NOT NULL,
+  `purpose_id` tinyint unsigned NOT NULL,
+  `challenge_hash` binary(32) NOT NULL,
+  `expires_at` datetime(6) NOT NULL,
+  `consumed_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_challenges_challenge_hash` (`challenge_hash`),
+  KEY `idx_admin_webauthn_challenges_user_purpose` (`user_id`,`purpose_id`,`created_at`),
+  KEY `idx_admin_webauthn_challenges_purpose` (`purpose_id`),
+  KEY `idx_admin_webauthn_challenges_expires_at` (`expires_at`),
+  KEY `idx_admin_webauthn_challenges_active` (`consumed_at`,`expires_at`),
+  CONSTRAINT `fk_admin_webauthn_challenges_purpose` FOREIGN KEY (`purpose_id`) REFERENCES `admin_webauthn_challenge_purposes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_challenges_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_admin_webauthn_challenges_consumed` CHECK (((`consumed_at` is null) or (`consumed_at` >= `created_at`))),
+  CONSTRAINT `chk_admin_webauthn_challenges_expiration` CHECK ((`expires_at` > `created_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_challenges`
+--
+
+LOCK TABLES `admin_webauthn_challenges` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_challenges` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_challenges` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_webauthn_credentials`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_credentials`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_credentials` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `user_id` binary(16) NOT NULL,
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `credential_id` varbinary(1024) NOT NULL,
+  `public_key` blob NOT NULL,
+  `sign_count` int unsigned NOT NULL DEFAULT '0',
+  `transports` json DEFAULT NULL,
+  `aaguid` binary(16) DEFAULT NULL,
+  `backup_eligible` tinyint(1) DEFAULT NULL,
+  `backup_state` tinyint(1) DEFAULT NULL,
+  `revoked_at` datetime(6) DEFAULT NULL,
+  `revoked_by_user_id` binary(16) DEFAULT NULL,
+  `revoke_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `last_used_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_credentials_credential_id` (`credential_id`),
+  KEY `idx_admin_webauthn_credentials_user` (`user_id`),
+  KEY `idx_admin_webauthn_credentials_user_active` (`user_id`,`revoked_at`),
+  KEY `idx_admin_webauthn_credentials_revoked_by` (`revoked_by_user_id`),
+  CONSTRAINT `fk_admin_webauthn_credentials_revoked_by` FOREIGN KEY (`revoked_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_credentials_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_admin_webauthn_credentials_backup_eligible` CHECK (((`backup_eligible` is null) or (`backup_eligible` in (0,1)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_backup_state` CHECK (((`backup_state` is null) or (`backup_state` in (0,1)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_label` CHECK (((`label` is null) or (char_length(trim(`label`)) between 2 and 120))),
+  CONSTRAINT `chk_admin_webauthn_credentials_last_used` CHECK (((`last_used_at` is null) or (`last_used_at` >= `created_at`))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoke_consistency` CHECK ((((`revoked_at` is null) and (`revoke_reason` is null)) or ((`revoked_at` is not null) and (`revoke_reason` is not null)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoke_reason` CHECK (((`revoke_reason` is null) or (char_length(trim(`revoke_reason`)) between 2 and 500))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoked_at` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_credentials`
+--
+
+LOCK TABLES `admin_webauthn_credentials` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_credentials` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_credentials` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `appointment_time_windows`
 --
 

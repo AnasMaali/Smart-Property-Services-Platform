@@ -199,6 +199,45 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 2C. ADMIN WEBAUTHN CHALLENGE PURPOSES — BLUE V1 Phase A2.1
+--
+-- Reference codes for admin_webauthn_challenges.purpose_id, mirroring the
+-- otp_verification_purposes convention. Schema foundation only - no
+-- registration/login/step-up ceremony logic exists yet (Phase A2.2+).
+-- =============================================================
+
+INSERT INTO admin_webauthn_challenge_purposes (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'REGISTRATION',
+    'Registration',
+    'A challenge issued while an Admin registers a new WebAuthn credential.',
+    TRUE
+),
+(
+    'LOGIN_ASSERTION',
+    'Login Assertion',
+    'A challenge issued during Admin login, to be proven by an existing WebAuthn credential.',
+    TRUE
+),
+(
+    'STEP_UP',
+    'Step-Up',
+    'A challenge issued to re-verify an already-authenticated Admin before a sensitive operation.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 3. PROPERTY RELATIONSHIP TYPES
 -- =============================================================
 
