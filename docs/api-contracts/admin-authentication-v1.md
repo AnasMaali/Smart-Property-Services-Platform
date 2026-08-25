@@ -244,9 +244,15 @@ controllers/Actions built in later phases.
 
 - Any Admin operational endpoint (service management, booking management, technician assignment,
   job start/complete, etc.) — Phase 9B+.
-- A permission framework beyond role codes — no `permissions` table exists in the schema, so none
+- ~~A permission framework beyond role codes — no `permissions` table exists in the schema, so none
   was invented. `SUPER_ADMIN` is treated identically to `ADMIN` for authorization purposes in this
-  phase; any capability difference between the two belongs to a later phase.
+  phase; any capability difference between the two belongs to a later phase.~~ **Superseded by
+  BLUE V1 Phase A1** — see `docs/api-contracts/admin-authorization-v1.md`. A capability-based
+  permission layer (`admin_permissions` / `admin_role_permissions`,
+  `App\Support\Admin\AdminAuthorizationService`, the `admin.capability` route middleware) now sits
+  on top of the `auth.admin` boundary this document describes, without changing anything in this
+  document — `auth.admin` still only answers "is this an authenticated Admin?", never "is this
+  Admin allowed to do X?".
 - MFA/2FA — not required by any current requirement document.
 - Admin password change/reset endpoints — the existing `/v1/auth/change-password`,
   `/v1/auth/forgot-password`, etc. routes remain customer-only (gated by `auth.customer` /

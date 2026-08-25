@@ -1,0 +1,39 @@
+<?php
+
+namespace App\Support\Admin;
+
+/**
+ * Stable Admin capability codes (BLUE V1 Phase A1 — Admin Authorization
+ * Foundation). Each case's backing value is the exact `admin_permissions.code`
+ * row it represents — see `database/blue_v1_seed.sql` ("ADMIN CAPABILITIES")
+ * and `docs/api-contracts/admin-authorization-v1.md` for the full catalog and
+ * the `family.action` naming convention every future capability must follow.
+ *
+ * This enum is deliberately small: it only names capabilities that an
+ * existing, already-shipped `/v1/admin/*` route enforces today. A future
+ * Admin module (Catalog, Pricing, Availability, Payments, Support, ...) adds
+ * its own case(s) here in lockstep with its own `admin_permissions` seed
+ * row(s) and `admin_role_permissions` grant(s) — never speculatively ahead of
+ * the route that needs it.
+ */
+enum AdminCapability: string
+{
+    case BOOKINGS_VIEW = 'bookings.view';
+
+    case TECHNICIANS_VIEW = 'technicians.view';
+    case TECHNICIANS_ASSIGN = 'technicians.assign';
+
+    case CONTRACTS_VIEW = 'contracts.view';
+    case CONTRACTS_MANAGE = 'contracts.manage';
+    case CONTRACTS_CANCEL = 'contracts.cancel';
+
+    /**
+     * The `admin.capability:<code>` route middleware string for this
+     * capability — keeps route registration from re-typing the raw string
+     * code (see routes/api.php).
+     */
+    public function middleware(): string
+    {
+        return 'admin.capability:'.$this->value;
+    }
+}

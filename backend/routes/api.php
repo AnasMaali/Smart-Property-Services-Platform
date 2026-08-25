@@ -4,18 +4,18 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
-use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
-use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
-use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
-use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
-use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
-use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\CancelContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\GetAdminContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ListAdminContractsController;
 use App\Http\Controllers\Api\V1\Admin\Contract\SendContractForAcceptanceController;
 use App\Http\Controllers\Api\V1\Admin\Contract\SuspendContractController;
+use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
+use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\DeleteAccountController;
@@ -25,16 +25,17 @@ use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\RefreshController;
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
-use App\Http\Controllers\Api\V1\Auth\RequestPhoneNumberChangeController;
-use App\Http\Controllers\Api\V1\Auth\ResendOtpController;
 use App\Http\Controllers\Api\V1\Auth\RequestLoginOtpController;
+use App\Http\Controllers\Api\V1\Auth\RequestPhoneNumberChangeController;
 use App\Http\Controllers\Api\V1\Auth\ResendLoginOtpController;
+use App\Http\Controllers\Api\V1\Auth\ResendOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResendPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyLoginOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
+use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 use App\Http\Controllers\Api\V1\Booking\GetBookingController;
 use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
 use App\Http\Controllers\Api\V1\Cart\AddCartItemController;
@@ -68,9 +69,9 @@ use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\GetServiceDetailsController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListCategoryServicesController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
+use App\Support\Admin\AdminCapability;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 
 Route::post('/v1/auth/register', RegisterController::class)->middleware('throttle:auth-register');
 Route::post('/v1/auth/verify-phone', VerifyPhoneController::class)->middleware('throttle:auth-otp-verify');
@@ -175,6 +176,8 @@ Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('th
 Route::post('/v1/admin/auth/refresh', AdminRefreshController::class)->middleware('throttle:auth-refresh');
 
 Route::middleware('auth.admin')->group(function () {
+    // No capability gate: every authenticated Admin/Super Admin may read
+    // their own identity regardless of which capabilities they hold.
     Route::get('/v1/admin/me', AdminMeController::class);
 
     // BLUE V1 Phase 9B - Admin Operations APIs: a thin, auth.admin-only
@@ -187,26 +190,46 @@ Route::middleware('auth.admin')->group(function () {
     // for why BR-16-based completion cannot be safely built without first
     // resolving the still-open ASSIGNED/IN_PROGRESS aggregation decision
     // bookings-v1.md already flags. Only the read APIs are exposed.
-    Route::get('/v1/admin/bookings', ListAdminBookingsController::class);
-    Route::get('/v1/admin/bookings/{booking}', GetAdminBookingController::class);
+    //
+    // BLUE V1 Phase A1 - every route below now also carries an
+    // admin.capability:<code> gate (see docs/api-contracts/admin-authorization-v1.md).
+    // auth.admin (authentication) and admin.capability (authorization) are
+    // deliberately two separate middleware - authentication alone never
+    // grants operational capability.
+    Route::get('/v1/admin/bookings', ListAdminBookingsController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+    Route::get('/v1/admin/bookings/{booking}', GetAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
 
-    Route::get('/v1/admin/technicians', ListAdminTechniciansController::class);
+    Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
+        ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
 
-    Route::get('/v1/admin/booking-items/{bookingItem}/technician-candidates', ListTechnicianCandidatesController::class);
-    Route::post('/v1/admin/booking-items/{bookingItem}/assign-technician', AssignTechnicianController::class);
-    Route::post('/v1/admin/booking-items/{bookingItem}/reassign-technician', ReassignTechnicianController::class);
-    Route::post('/v1/admin/booking-items/{bookingItem}/start-work', StartWorkController::class);
-    Route::post('/v1/admin/booking-items/{bookingItem}/complete-work', CompleteWorkController::class);
+    Route::get('/v1/admin/booking-items/{bookingItem}/technician-candidates', ListTechnicianCandidatesController::class)
+        ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
+    Route::post('/v1/admin/booking-items/{bookingItem}/assign-technician', AssignTechnicianController::class)
+        ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
+    Route::post('/v1/admin/booking-items/{bookingItem}/reassign-technician', ReassignTechnicianController::class)
+        ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
+    Route::post('/v1/admin/booking-items/{bookingItem}/start-work', StartWorkController::class)
+        ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
+    Route::post('/v1/admin/booking-items/{bookingItem}/complete-work', CompleteWorkController::class)
+        ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
 
     // BLUE V1 Phase 10E - Admin Service Contract management. Never
     // exposes customer-private/provider/payment internals - see
     // App\Support\Admin\AdminContractPresenter.
-    Route::get('/v1/admin/contracts', ListAdminContractsController::class);
-    Route::get('/v1/admin/contracts/{contract}', GetAdminContractController::class);
-    Route::post('/v1/admin/contracts/{contract}/approve', ApproveContractController::class);
-    Route::post('/v1/admin/contracts/{contract}/send-for-acceptance', SendContractForAcceptanceController::class);
-    Route::post('/v1/admin/contracts/{contract}/suspend', SuspendContractController::class);
-    Route::post('/v1/admin/contracts/{contract}/cancel', CancelContractController::class);
+    Route::get('/v1/admin/contracts', ListAdminContractsController::class)
+        ->middleware(AdminCapability::CONTRACTS_VIEW->middleware());
+    Route::get('/v1/admin/contracts/{contract}', GetAdminContractController::class)
+        ->middleware(AdminCapability::CONTRACTS_VIEW->middleware());
+    Route::post('/v1/admin/contracts/{contract}/approve', ApproveContractController::class)
+        ->middleware(AdminCapability::CONTRACTS_MANAGE->middleware());
+    Route::post('/v1/admin/contracts/{contract}/send-for-acceptance', SendContractForAcceptanceController::class)
+        ->middleware(AdminCapability::CONTRACTS_MANAGE->middleware());
+    Route::post('/v1/admin/contracts/{contract}/suspend', SuspendContractController::class)
+        ->middleware(AdminCapability::CONTRACTS_MANAGE->middleware());
+    Route::post('/v1/admin/contracts/{contract}/cancel', CancelContractController::class)
+        ->middleware(AdminCapability::CONTRACTS_CANCEL->middleware());
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

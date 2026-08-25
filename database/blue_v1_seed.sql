@@ -100,6 +100,105 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 2A. ADMIN CAPABILITIES (PERMISSIONS) — BLUE V1 Phase A1
+--
+-- Stable capability codes, `family.action` naming convention. Each code
+-- here MUST have a matching case in App\Support\Admin\AdminCapability.
+-- Only capabilities enforced by an already-shipped /v1/admin/* route are
+-- seeded here — a future Admin module adds its own row(s) in lockstep with
+-- the route(s) that need them, never speculatively ahead of that route.
+-- =============================================================
+
+INSERT INTO admin_permissions (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'bookings.view',
+    'View Bookings',
+    'View paid Bookings and Booking Items across every customer, including payment summary, technician assignment history, and cancellation/refund snapshot.',
+    TRUE
+),
+(
+    'technicians.view',
+    'View Technicians',
+    'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
+    TRUE
+),
+(
+    'technicians.assign',
+    'Assign Technicians',
+    'Assign, reassign, start, and complete Technician work on a Booking Item.',
+    TRUE
+),
+(
+    'contracts.view',
+    'View Service Contracts',
+    'View Service Contracts and their items, status history, and acceptance/billing summary.',
+    TRUE
+),
+(
+    'contracts.manage',
+    'Manage Service Contracts',
+    'Approve, send for customer acceptance, and suspend a Service Contract.',
+    TRUE
+),
+(
+    'contracts.cancel',
+    'Cancel Service Contracts',
+    'Cancel a Service Contract, permanently stopping it from authorizing further Contract Bookings.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 2B. ADMIN ROLE -> CAPABILITY GRANTS — BLUE V1 Phase A1
+--
+-- ADMIN receives every capability an existing Admin Operations route
+-- enforces today, preserving BLUE V1 Phase 9B's current behavior exactly
+-- (ADMIN and SUPER_ADMIN had identical operational access before this
+-- phase). SUPER_ADMIN needs no rows here at all: it is authorized for
+-- every capability - present and future - through the centralized,
+-- explicit override in App\Support\Admin\AdminAuthorizationService, never
+-- through a row in this table. Re-running this block is a no-op (the
+-- ON DUPLICATE KEY UPDATE clause only ever refreshes granted_at on an
+-- already-existing grant).
+-- =============================================================
+
+INSERT INTO admin_role_permissions (
+    role_id,
+    permission_id,
+    granted_by_user_id,
+    granted_at
+)
+SELECT
+    r.id,
+    p.id,
+    NULL,
+    CURRENT_TIMESTAMP(6)
+FROM roles r
+CROSS JOIN admin_permissions p
+WHERE r.code = 'ADMIN'
+  AND p.code IN (
+    'bookings.view',
+    'technicians.view',
+    'technicians.assign',
+    'contracts.view',
+    'contracts.manage',
+    'contracts.cancel'
+  )
+ON DUPLICATE KEY UPDATE
+    granted_at = granted_at;
+
+
+-- =============================================================
 -- 3. PROPERTY RELATIONSHIP TYPES
 -- =============================================================
 

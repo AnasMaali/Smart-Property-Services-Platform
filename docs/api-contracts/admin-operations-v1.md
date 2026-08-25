@@ -33,8 +33,12 @@ snapshot column, or the schema.
   a missing/expired one (`401`, `"This session is invalid or has expired."`) — it is never
   distinguishable from any other invalid-session case.
 - `ADMIN` and `SUPER_ADMIN` are treated identically throughout this phase — exactly as Phase 9A
-  already documented ("no permission framework beyond role codes exists"). No endpoint below
-  branches on which of the two roles the caller holds.
+  originally documented. **BLUE V1 Phase A1** (`docs/api-contracts/admin-authorization-v1.md`)
+  later added a capability-based permission layer behind every route below, but seeded `ADMIN` with
+  every capability those routes require, so this remains true in practice: `ADMIN` and
+  `SUPER_ADMIN` still pass every endpoint below identically today. No endpoint below branches on
+  which of the two roles the caller holds — the capability grant (or `SUPER_ADMIN`'s centralized
+  override) does that instead, entirely outside this phase's Controllers/Actions.
 - Every id in a response is a UUID string. Every amount is a decimal string. Every date is
   ISO-8601. Every status is a string code. No raw `binary(16)` value, numeric status/role id, or
   provider secret (`client_secret`, webhook signing secret, password/refresh-token hash) is ever

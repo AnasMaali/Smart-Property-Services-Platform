@@ -66,6 +66,70 @@ LOCK TABLES `admin_audit_logs` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `admin_permissions`
+--
+
+DROP TABLE IF EXISTS `admin_permissions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_permissions` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_permissions_code` (`code`),
+  KEY `idx_admin_permissions_active` (`is_active`),
+  CONSTRAINT `chk_admin_permissions_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_admin_permissions_code` CHECK (((char_length(trim(`code`)) between 3 and 80) and regexp_like(`code`,_utf8mb4'^[a-z][a-z0-9_]*([.][a-z][a-z0-9_]*)+$'))),
+  CONSTRAINT `chk_admin_permissions_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_admin_permissions_name` CHECK ((char_length(trim(`name`)) between 2 and 150))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_permissions`
+--
+
+LOCK TABLES `admin_permissions` WRITE;
+/*!40000 ALTER TABLE `admin_permissions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_permissions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_role_permissions`
+--
+
+DROP TABLE IF EXISTS `admin_role_permissions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_role_permissions` (
+  `role_id` smallint unsigned NOT NULL,
+  `permission_id` smallint unsigned NOT NULL,
+  `granted_by_user_id` binary(16) DEFAULT NULL,
+  `granted_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`role_id`,`permission_id`),
+  KEY `idx_admin_role_permissions_permission_id` (`permission_id`),
+  KEY `idx_admin_role_permissions_granted_by` (`granted_by_user_id`),
+  CONSTRAINT `fk_admin_role_permissions_granted_by` FOREIGN KEY (`granted_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_role_permissions_permission` FOREIGN KEY (`permission_id`) REFERENCES `admin_permissions` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_role_permissions_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_role_permissions`
+--
+
+LOCK TABLES `admin_role_permissions` WRITE;
+/*!40000 ALTER TABLE `admin_role_permissions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_role_permissions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `appointment_time_windows`
 --
 

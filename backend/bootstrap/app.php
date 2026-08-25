@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\AuthenticateAdmin;
 use App\Http\Middleware\AuthenticateCustomer;
+use App\Http\Middleware\EnsureAdminHasCapability;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth.customer' => AuthenticateCustomer::class,
             'auth.admin' => AuthenticateAdmin::class,
+            // BLUE V1 Phase A1 - Admin capability authorization gate. Must
+            // always run AFTER auth.admin on a route (it only reads the
+            // auth_admin_roles attribute auth.admin attaches) - see
+            // EnsureAdminHasCapability's own docblock.
+            'admin.capability' => EnsureAdminHasCapability::class,
         ]);
 
         // Left unset (the safe default), Laravel trusts no proxy at all, so
