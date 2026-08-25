@@ -5,8 +5,8 @@
  * Admin APIs already return (booking_statuses / booking_item_statuses /
  * technician_assignment lifecycle / service_contract_statuses /
  * service_contract_billing_statuses / payment_statuses /
- * payment_webhook_event_statuses) - no new status vocabulary is invented
- * here.
+ * payment_webhook_event_statuses / user_account_statuses) - no new status
+ * vocabulary is invented here.
  */
 
 const STATUS_BADGE_CLASSES = {
@@ -44,6 +44,10 @@ const STATUS_BADGE_CLASSES = {
     RECEIVED: 'bg-amber-50 text-amber-700',
     PROCESSED: 'bg-emerald-50 text-emerald-700',
     IGNORED: 'bg-slate-100 text-slate-600',
+
+    // user_account_statuses (ACTIVE above already covers the shared code)
+    PENDING_VERIFICATION: 'bg-amber-50 text-amber-700',
+    DEACTIVATED: 'bg-slate-100 text-slate-600',
 };
 
 const DEFAULT_STATUS_BADGE_CLASSES = 'bg-slate-100 text-slate-600';

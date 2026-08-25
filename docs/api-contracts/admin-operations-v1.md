@@ -539,3 +539,93 @@ existing status enum, currency-formatting convention, and UUID-safety rule alrea
 `AdminBookingPresenter`/`AdminContractPresenter`. No schema change was required or made — every field
 above already existed on `payment_attempts` / `service_contract_billings` / their webhook-event
 tables.
+
+## Admin Customers / Properties visibility (BLUE V1 Phase B6)
+
+Read-only, global (cross-customer) operational visibility into BLUE's existing Customer/Property
+domain — never a second implementation. `App\Actions\Auth\RegisterCustomerAction`, `App\Actions\
+Profile\*`, `App\Actions\Property\*`, and the account-deletion pipeline (`App\Support\Auth\
+AccountDeletionRequestStore` and friends) remain the only place any of this state is ever written.
+Nothing under `App\Actions\Admin\Customer\*` or `App\Actions\Admin\Property\*` mutates a `users`,
+`customer_profiles`, or `customer_properties` row — **no account/property mutation exists in this
+module** (no edit, no deactivate, no archive, no force-delete/approve-deletion), since no secure,
+already-shipped Admin-domain Action for any such mutation exists. This module is deliberately
+monitoring-only, per BLUE's small-trusted-operator-team product shape — no organizational/company/
+department layer was introduced anywhere in it.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Customers | GET | `/v1/admin/customers` | `customers.view` |
+| Get Customer | GET | `/v1/admin/customers/{customer}` | `customers.view` |
+| Get Property | GET | `/v1/admin/properties/{property}` | `customers.view` |
+
+All three sit behind `auth.admin` + `admin.capability:customers.view` — a single capability covers
+both Customer and Property reads, since a Property is always Customer-owned and inspecting one is
+naturally part of Customer visibility (no separate `properties.view` was added). `customers.view` is
+a new BLUE V1 Phase B6 `admin_permissions` row, granted to `ADMIN` the same way every other
+capability in this document already is (`SUPER_ADMIN` needs no row — the centralized
+`AdminAuthorizationService` override already covers it).
+
+There is no global "list every Property across every customer" route — a Property is always reached
+from its owning Customer's detail response (below), matching how many Properties a single customer
+realistically has (the same unpaginated-per-customer convention `App\Actions\Property\
+ListPropertiesAction` already uses for the customer's own "my properties" screen).
+
+### List Customers — `GET /v1/admin/customers`
+
+`App\Actions\Admin\Customer\AdminListCustomersAction` / `App\Support\Admin\AdminCustomerPresenter`.
+Only a `users` row that also has a `customer_profiles` row is ever listed — a pure-Admin account
+that never registered as a customer is excluded by the inner join, never returned as a "Customer".
+Query filters — all optional: `account_status` (a real `user_account_statuses.code`), `phone_number`
+(exact match), `email` (exact match), `customer_uuid` (exact match), `search` (partial match against
+`user_profiles.full_name`). `page`/`per_page` follow the exact same pagination convention as every
+other Admin list endpoint (default 20, hard max 100).
+
+Each row: `uuid`, `full_name`, `phone_number`, `email`, `account_status`, `phone_verified`,
+`area { name, city_name }`, `active_properties_count` (batched, never a query per row),
+`deletion_pending` (batched), `last_login_at`, `created_at`.
+
+### Get Customer — `GET /v1/admin/customers/{customer}`
+
+Reuses the exact canonical field sources `App\Actions\Profile\GetProfileAction` already established
+(account status, location, property relationship) rather than re-deriving them. Returns: identity
+(`uuid`, `full_name`, `phone_number`, `email`), account state (`account_status`, `phone_verified`/
+`phone_verified_at`, `last_login_at`, `created_at`, `updated_at`, `deleted_at`), `account_deletion
+{ status: "NONE"|"PENDING", requested_at }` (reusing `App\Support\Auth\AccountDeletionRequestStore::
+findPending()` — the exact same source `GET /v1/auth/account-deletion` uses for the customer's own
+status), `location { area_name, city_name, country_name }`, `property_relationship { code, name }`,
+the customer's full `properties` array (each presented via `PropertyPresenter::present()` — see
+below), and a small `activity { bookings_count, payments_count, contracts_count,
+properties_count }` summary (four bounded `COUNT` queries against already-indexed foreign keys, not
+a dashboard aggregation — B10 owns that).
+
+**Never returned**: `password_hash`, `refresh_token_hash`, any OTP/session/refresh-token/WebAuthn
+material, or `customer_profiles.stripe_customer_id` (an internal billing-provider linkage with no
+Admin operational use here — the safe, already-reviewed Stripe identifiers a Contract's *billing*
+carries are exposed separately, on the existing Contract Billing detail page, not duplicated here).
+
+### Get Property — `GET /v1/admin/properties/{property}`
+
+`App\Actions\Admin\Property\AdminGetPropertyAction` — unlike `App\Actions\Property\GetPropertyAction`,
+never ownership-scoped to an authenticated caller (there is no "authenticated owner" concept for an
+Admin request). Reuses `App\Support\Property\PropertyPresenter::present()` **verbatim** — that
+presenter was already pure, ownership-independent presentation (it never reads or requires
+`customer_user_id`), so no separate `AdminPropertyPresenter` was created. Returns `property` (the
+exact `PropertyPresenter::present()` shape: label, relationship/property type, area, address fields,
+`is_active`, timestamps), `customer { uuid, full_name, phone_number, email }`, and `contracts` (the
+same lightweight Contract summary `GetPropertyAction` already returns for the customer's own
+equivalent screen — `uuid`, `contract_number`, `status`, `starts_at`, `ends_at` — never a duplicate
+of the full Contract detail page).
+
+There is deliberately no Property → Bookings link: `bookings`/`booking_locations` store a
+point-in-time location *snapshot*, not a live foreign key to `customer_properties`, so no such
+relationship exists in the schema to query.
+
+### Operational links
+
+The Customer detail page links into the existing B2/B4/B5 list pages using `?customer_uuid=...` —
+every one of `AdminListBookingsAction`, `AdminListContractsAction`, `AdminListPaymentsAction`, and
+`AdminListContractBillingsAction` already accepts that exact filter (see their own sections above),
+so no new query parameter was invented anywhere to make this work.

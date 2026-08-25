@@ -16,9 +16,12 @@ use App\Http\Controllers\Api\V1\Admin\Contract\SendContractForAcceptanceControll
 use App\Http\Controllers\Api\V1\Admin\Contract\SuspendContractController;
 use App\Http\Controllers\Api\V1\Admin\ContractBilling\GetAdminContractBillingController;
 use App\Http\Controllers\Api\V1\Admin\ContractBilling\ListAdminContractBillingsController;
+use App\Http\Controllers\Api\V1\Admin\Customer\GetAdminCustomerController;
+use App\Http\Controllers\Api\V1\Admin\Customer\ListAdminCustomersController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
+use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
@@ -281,6 +284,19 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
     Route::get('/v1/admin/contract-billings/{billing}', GetAdminContractBillingController::class)
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
+
+    // BLUE V1 Phase B6 - read-only global Admin visibility into Customers
+    // and their Properties. A Property is always Customer-owned, so it
+    // shares the same `customers.view` capability rather than a separate
+    // `properties.view` one - see AdminCapability::CUSTOMERS_VIEW. No
+    // mutation endpoint exists here - see App\Support\Admin\
+    // AdminCustomerPresenter's docblock.
+    Route::get('/v1/admin/customers', ListAdminCustomersController::class)
+        ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
+    Route::get('/v1/admin/customers/{customer}', GetAdminCustomerController::class)
+        ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
+    Route::get('/v1/admin/properties/{property}', GetAdminPropertyController::class)
+        ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

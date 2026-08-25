@@ -163,6 +163,12 @@ VALUES
     'View Contract Billing',
     'View recurring Service Contract Billing state across every customer - subscription status, billing period, past-due/cancellation state, and recent webhook processing history. Read-only.',
     TRUE
+),
+(
+    'customers.view',
+    'View Customers',
+    'View Customer profiles and their Properties across the platform - contact info, account status, location/relationship profile, account-deletion state, and small operational activity counts. Read-only: no account/property mutation capability exists.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -206,7 +212,8 @@ WHERE r.code = 'ADMIN'
     'contracts.manage',
     'contracts.cancel',
     'payments.view',
-    'billing.view'
+    'billing.view',
+    'customers.view'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

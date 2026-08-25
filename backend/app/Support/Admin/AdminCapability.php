@@ -31,6 +31,14 @@ enum AdminCapability: string
     case BILLING_VIEW = 'billing.view';
 
     /**
+     * Covers both Customer and Property Admin reads (BLUE V1 Phase B6) - a
+     * Property is always a Customer-owned record, and inspecting one is
+     * naturally part of Customer visibility, so a separate
+     * `properties.view` capability was deliberately not added.
+     */
+    case CUSTOMERS_VIEW = 'customers.view';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

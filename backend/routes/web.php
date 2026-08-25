@@ -49,4 +49,19 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/billing/{billing}', function (string $billing) {
         return view('admin.billing.show', ['billingUuid' => $billing]);
     })->name('billing.show');
+
+    // BLUE V1 Phase B6 - Customers/Properties shell routes. Same convention
+    // as every other module above. There is no global Properties index
+    // route - a Property is always reached from its owning Customer's
+    // detail page (see "Properties" sidebar item, still a placeholder for
+    // a later phase, exactly like Services/Support).
+    Route::view('/customers', 'admin.customers.index')->name('customers.index');
+
+    Route::get('/customers/{customer}', function (string $customer) {
+        return view('admin.customers.show', ['customerUuid' => $customer]);
+    })->name('customers.show');
+
+    Route::get('/properties/{property}', function (string $property) {
+        return view('admin.properties.show', ['propertyUuid' => $property]);
+    })->name('properties.show');
 });
