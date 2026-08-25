@@ -1,15 +1,33 @@
-# BLUE V1 — Admin WebAuthn / MFA Schema Foundation (Phase A2.1)
+# BLUE V1 — Admin WebAuthn / MFA (Phase A2.1 + A2.2)
 
-This document describes **only what exists after Phase A2.1**: three new database tables and
-their reference data. It documents the schema `database/blue_v1_schema.sql` /
-`database/phase16_admin_webauthn_mfa_schema_migration.sql` actually contains — no aspirational or
-planned behavior.
+This document describes **only what actually exists** after Phase A2.2: the schema Phase A2.1 added
+(`database/blue_v1_schema.sql` / `database/phase16_admin_webauthn_mfa_schema_migration.sql`), and
+the WebAuthn library, configuration, challenge service, credential repository, and
+registration/assertion ceremony *services* Phase A2.2 added on top of it. No aspirational or
+planned behavior is included.
 
-## Scope of this phase
+## Scope — IMPLEMENTED NOW vs. NOT IMPLEMENTED YET
 
-**Schema foundation only.** No application code reads or writes any table below. There is no
-WebAuthn registration endpoint, no login MFA step, no step-up endpoint, and Admin login/session
-behavior (Phase 9A/9B, Phase A1) is completely unchanged. That logic is Phase A2.2 onward.
+**Implemented now (Phase A2.1 + A2.2):**
+- Schema: `admin_webauthn_challenge_purposes`, `admin_webauthn_challenges`, `admin_webauthn_credentials`.
+- WebAuthn library integration (`web-auth/webauthn-lib` ^5.3 — see "Library" below).
+- `config/admin_webauthn.php` (RP name/ID, allowed origins, challenge TTL).
+- `App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService` — centralized challenge issuance/consumption.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnCredentialRepository` — the only reader/writer of `admin_webauthn_credentials`.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnRegistrationService` — registration options + verification, with the first-credential/step-up rule enforced.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService` — assertion options + verification, shared by `LOGIN_ASSERTION` and `STEP_UP`.
+- Full test coverage of all of the above via a real-crypto test authenticator (`tests/Support/WebAuthn/WebAuthnTestAuthenticator`), exercising the actual `web-auth/webauthn-lib` validation logic end-to-end.
+
+**NOT implemented yet:**
+- No HTTP route exists for any of this — registration/assertion are pure services, not wired into
+  `routes/api.php`.
+- `POST /v1/admin/auth/login` is completely unchanged; MFA is not mandatory and no session is ever
+  created through WebAuthn.
+- No idle timeout, no step-up HTTP endpoint/middleware, no admin_audit_logs writes for MFA events.
+- No Admin frontend/browser screens.
+- No Tailscale infrastructure inside Laravel (by design — see below).
+
+All of the above belong to Phase A2.3 onward.
 
 ## Where device trust lives (read this first)
 
@@ -53,8 +71,8 @@ duplicated tables — mirroring how `otp_verifications` is already shared across
   until consumed, exactly once.
 - Deliberately **not** linked to a specific `admin_webauthn_credentials` row — a challenge is
   scoped to a user + purpose, not to a single credential. Which credential ultimately answers a
-  `LOGIN_ASSERTION`/`STEP_UP` challenge is resolved at ceremony time by the (not-yet-built)
-  application logic, not persisted state.
+  `LOGIN_ASSERTION`/`STEP_UP` challenge is resolved at ceremony time by
+  `AdminWebAuthnAssertionService` (via `AdminWebAuthnCredentialRepository`), never persisted state.
 
 ### `admin_webauthn_credentials` — the MFA factor itself
 
@@ -87,19 +105,57 @@ Private keys, biometric data, authenticator PINs, or any secret that belongs onl
 authenticator. The server only ever holds public key material, a credential identifier, and a
 hash of a one-time challenge.
 
-## The "first credential" rule — how the schema supports it without a new column
+## The "first credential" rule
 
-The locked product rule is: an Admin may self-register their *first* WebAuthn credential once
+The locked product rule: an Admin may self-register their *first* WebAuthn credential once
 password-authenticated (with production network access already gated by Tailscale); any credential
-added or revoked *after* that must require an authenticated session **and** a fresh WebAuthn
-step-up. This rule needs **no additional schema field**. "Does this Admin currently have zero
-active credentials?" is exactly `SELECT 1 FROM admin_webauthn_credentials WHERE user_id = ? AND
-revoked_at IS NULL` — the existing `revoked_at`-based filtering (and its covering
-`idx_admin_webauthn_credentials_user_active` index) already answers it unambiguously. Enforcing
-*when* step-up is required is application logic for Phase A2.5, not a schema concern.
+added *after* that requires the caller to assert a fresh WebAuthn step-up. This needed no schema
+field — `AdminWebAuthnCredentialRepository::activeCount()` (`WHERE user_id = ? AND revoked_at IS
+NULL`) already answers "does this Admin have zero active credentials?" unambiguously.
 
-## Not built in this phase (deliberately)
+**Enforced now**, at the service layer: `AdminWebAuthnRegistrationService::options()`/`verify()`
+both take an explicit `bool $stepUpVerified` parameter and refuse (`STEP_UP_REQUIRED`) whenever the
+Admin already holds ≥1 active credential and that flag is `false`. No HTTP route exists yet that
+could call this insecurely — no caller in this phase can ever legitimately produce `true` for such
+an Admin, since the real step-up ceremony (Phase A2.5) does not exist yet. The rule is enforced
+regardless, so a future caller cannot forget to check it.
 
-WebAuthn registration/login/step-up ceremony logic, any `/v1/admin/*` route touching these tables,
-any change to Admin login/session behavior, idle timeout, step-up middleware, and audit-log writes
-for MFA events. All belong to Phase A2.2 onward.
+## Library
+
+`web-auth/webauthn-lib` ^5.3 (MIT, PHP ≥8.2, actively maintained, the canonical standards-compliant
+PHP FIDO2/WebAuthn implementation). See the Phase A2.2 review report for the full selection
+rationale. Its Symfony dependencies (`symfony/uid`, `symfony/clock`, ...) were already present in
+this Laravel 13 app at compatible versions.
+
+## Ceremony architecture
+
+- `App\Support\Admin\WebAuthn\AdminWebAuthnConfig` — resolves `config/admin_webauthn.php`, throwing
+  if `rp_id`/`allowed_origins` are unset. Never derives either from a request header.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnCeremonyFactory` — builds the library's serializer and
+  the two ceremony validators, with `NoneAttestationStatementSupport` only (registration requests
+  `attestation: none`) and the library's default counter checker.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService` — the single place challenges are
+  issued/consumed, shared by all three purposes; stores only `SHA-256(raw challenge)`
+  (`admin_webauthn_challenges.challenge_hash`), atomically single-use under a row lock.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnCredentialRepository` — the only reader/writer of
+  `admin_webauthn_credentials`; always excludes revoked rows.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnRegistrationService` /
+  `AdminWebAuthnAssertionService` — the registration and assertion ceremonies themselves. Every
+  rejection reason (wrong role, bad/expired/replayed challenge, wrong origin/RP ID, missing user
+  verification, bad signature, unknown/revoked credential) is deliberately collapsed into one of a
+  small number of generic outcomes — never a granular per-cause message — matching this codebase's
+  existing anti-oracle convention (`AdminLoginAction`, `AuthenticateAdmin`).
+
+**User Verification is always `required`** — hardcoded, not env-configurable, so it can never be
+silently weakened to `preferred` by a misconfigured environment.
+
+**Counter policy**: the library's default (`Webauthn\Counter\ThrowExceptionIfInvalid`). A stored
+counter of `0` with a reported counter of `0` is treated as "this authenticator does not support a
+counter" and is never rejected (many resident-key/passkey authenticators always report `0`). Once a
+real counter has been recorded, any non-increasing value on a later assertion is treated as a clone
+warning and hard-fails verification.
+
+## Not built yet (deliberately)
+
+Any `/v1/admin/*` HTTP route, any change to Admin login/session behavior, idle timeout, step-up
+HTTP endpoint/middleware, and audit-log writes for MFA events. All belong to Phase A2.3 onward.
