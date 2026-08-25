@@ -14,7 +14,11 @@ use App\Http\Controllers\Api\V1\Admin\Contract\GetAdminContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ListAdminContractsController;
 use App\Http\Controllers\Api\V1\Admin\Contract\SendContractForAcceptanceController;
 use App\Http\Controllers\Api\V1\Admin\Contract\SuspendContractController;
+use App\Http\Controllers\Api\V1\Admin\ContractBilling\GetAdminContractBillingController;
+use App\Http\Controllers\Api\V1\Admin\ContractBilling\ListAdminContractBillingsController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
+use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
+use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
 use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
@@ -262,6 +266,21 @@ Route::middleware('auth.admin')->group(function () {
     // running first in this list, admin.stepup second).
     Route::post('/v1/admin/contracts/{contract}/cancel', CancelContractController::class)
         ->middleware([AdminCapability::CONTRACTS_CANCEL->middleware(), 'admin.stepup']);
+
+    // BLUE V1 Phase B5 - read-only global Admin visibility into one-off
+    // Payment Attempts and recurring Service Contract Billing state. Never
+    // exposes provider secrets/raw webhook payloads - see
+    // App\Support\Admin\AdminPaymentPresenter / AdminContractBillingPresenter.
+    // No mutation endpoint exists here (no refund/retry/status-override) -
+    // this module is deliberately monitoring-only.
+    Route::get('/v1/admin/payments', ListAdminPaymentsController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/payments/{payment}', GetAdminPaymentController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/contract-billings', ListAdminContractBillingsController::class)
+        ->middleware(AdminCapability::BILLING_VIEW->middleware());
+    Route::get('/v1/admin/contract-billings/{billing}', GetAdminContractBillingController::class)
+        ->middleware(AdminCapability::BILLING_VIEW->middleware());
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

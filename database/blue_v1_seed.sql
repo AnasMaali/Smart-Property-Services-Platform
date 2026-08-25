@@ -151,6 +151,18 @@ VALUES
     'Cancel Service Contracts',
     'Cancel a Service Contract, permanently stopping it from authorizing further Contract Bookings.',
     TRUE
+),
+(
+    'payments.view',
+    'View Payments',
+    'View one-off Payment Attempts across every customer - status, amount, provider reference, linked Booking, and recent webhook processing history. Read-only: no refund, retry, or status-override capability exists.',
+    TRUE
+),
+(
+    'billing.view',
+    'View Contract Billing',
+    'View recurring Service Contract Billing state across every customer - subscription status, billing period, past-due/cancellation state, and recent webhook processing history. Read-only.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -192,7 +204,9 @@ WHERE r.code = 'ADMIN'
     'technicians.assign',
     'contracts.view',
     'contracts.manage',
-    'contracts.cancel'
+    'contracts.cancel',
+    'payments.view',
+    'billing.view'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

@@ -123,6 +123,7 @@ if (page) {
         }
 
         card.style.display = 'block';
+        page.querySelector('[data-billing-detail-link]').href = `/admin/billing/${encodeURIComponent(billing.uuid)}`;
         renderBadge(field('billing_status'), billing.status);
         setText('billing_provider', billing.provider);
         setText('billing_recurring_amount', formatMoney(billing.recurring_amount, billing.currency));

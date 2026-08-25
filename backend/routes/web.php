@@ -35,4 +35,18 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/contracts/{contract}', function (string $contract) {
         return view('admin.contracts.show', ['contractUuid' => $contract]);
     })->name('contracts.show');
+
+    // BLUE V1 Phase B5 - Payments/Billing shell routes. Same convention as
+    // Bookings/Technicians/Contracts above.
+    Route::view('/payments', 'admin.payments.index')->name('payments.index');
+
+    Route::get('/payments/{payment}', function (string $payment) {
+        return view('admin.payments.show', ['paymentUuid' => $payment]);
+    })->name('payments.show');
+
+    Route::view('/billing', 'admin.billing.index')->name('billing.index');
+
+    Route::get('/billing/{billing}', function (string $billing) {
+        return view('admin.billing.show', ['billingUuid' => $billing]);
+    })->name('billing.show');
 });

@@ -439,3 +439,103 @@ no-op), mirroring `AdminAssignTechnicianAction`'s pattern precisely.
 `bookings`, `payment_attempts`, or `technician_assignments` row directly — Contract lifecycle
 management is fully independent of Booking/Payment/Technician management, the same separation this
 document already keeps between Booking reads and Technician operations.
+
+## Admin Payments / Contract Billing visibility (BLUE V1 Phase B5)
+
+Read-only, global (cross-customer) operational visibility into what already happens financially in
+BLUE — never a second payment/billing implementation. `App\Actions\Payment\*` (one-off Payment
+Attempts) and `App\Actions\Contract\Billing\*` (recurring Contract subscription billing) remain the
+only place any of this state is ever written; nothing under `App\Actions\Admin\Payment\*` or
+`App\Actions\Admin\ContractBilling\*` calls a payment/billing gateway, transitions
+`PaymentAttemptStateMachine`, or writes a `service_contract_billings` column. **No refund, retry,
+status-override, or any other financial mutation exists in this module** — inspection confirmed no
+secure, already-shipped Admin-domain Action for any such mutation exists, so this phase is
+deliberately monitoring-only, per BLUE's small-trusted-operator-team product shape.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Payments | GET | `/v1/admin/payments` | `payments.view` |
+| Get Payment | GET | `/v1/admin/payments/{payment}` | `payments.view` |
+| List Contract Billings | GET | `/v1/admin/contract-billings` | `billing.view` |
+| Get Contract Billing | GET | `/v1/admin/contract-billings/{billing}` | `billing.view` |
+
+All four sit behind `auth.admin` + `admin.capability:<code>`, exactly like every other route in this
+document. `payments.view`/`billing.view` are new BLUE V1 Phase B5 `admin_permissions` rows, granted to
+`ADMIN` the same way every other capability in this document already is (`SUPER_ADMIN` needs no row —
+the centralized `AdminAuthorizationService` override already covers it). No new middleware, no new
+authorization mechanism, no organizational/department layer was introduced.
+
+### List Payments — `GET /v1/admin/payments`
+
+`App\Actions\Admin\Payment\AdminListPaymentsAction` / `App\Support\Admin\AdminPaymentPresenter`.
+Unlike `App\Actions\Payment\GetPaymentAction` (ownership-scoped to the authenticated customer), this
+is never scoped to one customer. Query filters — all optional, all matched against an existing
+column/index on `payment_attempts`: `status` (must be a real `payment_statuses.code`), `checkout_reference`
+(exact match), `customer_uuid` (exact match via `carts.customer_user_id`), `provider_transaction_reference`
+(exact match). `page`/`per_page` follow the exact same convention as every other Admin list endpoint
+(default 20, hard max 100, `data.pagination = { page, per_page, total, last_page }`).
+
+Each row: `uuid`, `checkout_reference`, `status`, `customer { uuid, full_name, phone_number }`,
+`requested_amount`, `confirmed_amount`, `currency { code, symbol, decimal_places }`, `provider`,
+`booking_uuid` (the linked Booking's uuid if one was created from this payment, else `null`),
+`created_at`, `status_changed_at`.
+
+### Get Payment — `GET /v1/admin/payments/{payment}`
+
+Same detail fields as the list, plus: `customer.email`, `booking { uuid, booking_number, status }`,
+`provider_session_reference`, `provider_transaction_reference`, `provider_status_code`,
+`payment_method_type`, `failure_code`, `failure_message`, `requires_reconciliation`,
+`reconciliation_reason_code`, `reconciled_at`, `expires_at`, `successful_at`, `finalized_at`, and
+`recent_webhook_events` (up to the 20 most recent `payment_webhook_events` rows for this payment,
+each `{ provider_event_id, event_type, status, received_at, processed_at, last_error_code,
+last_error_message }`).
+
+**Never returned**: `checkout_snapshot`/`checkout_snapshot_hash` (the frozen cart-price snapshot and
+its integrity hash), `idempotency_key`, `client_secret`/`publishable_key` (Stripe PaymentSheet
+initiation tokens — only ever meaningful once, to the customer, at creation time), or any raw
+`payment_webhook_events.payload_hash` bytes. `provider_session_reference`/
+`provider_transaction_reference` are Stripe object identifiers, not secrets — the same posture this
+document already established for `stripe_subscription_id` etc. below.
+
+### List Contract Billings — `GET /v1/admin/contract-billings`
+
+`App\Actions\Admin\ContractBilling\AdminListContractBillingsAction` / `App\Support\Admin\
+AdminContractBillingPresenter`. Recurring subscription billing state, distinct from one-off Payments
+above. Filters: `status` (a real `service_contract_billing_statuses.code`), `contract_number` (exact
+match via `service_contracts.contract_number`), `customer_uuid` (exact match via
+`service_contracts.customer_user_id`). Same pagination convention as every list endpoint in this
+document.
+
+Each row: `uuid`, `contract { uuid, contract_number }`, `customer { uuid, full_name, phone_number }`,
+`status`, `billing_interval`, `recurring_amount`, `currency`, `current_period_end`, `past_due_since`,
+`cancel_at`, `created_at`.
+
+### Get Contract Billing — `GET /v1/admin/contract-billings/{billing}`
+
+Looked up by the billing row's own uuid (not the Contract's) — reachable independently, and also
+linked from the existing Phase 10E Contract detail response's `billing` key once that Contract has
+been approved. Reuses `App\Support\Contract\Billing\ContractBillingPresenter::presentRow()` — the
+exact same admin-safe field mapping `AdminContractPresenter::detail()`'s embedded `billing` key
+already used before this phase, now additionally including `billing_suspended_at`,
+`provider_cancellation_requested_at`, `provider_cancellation_last_attempt_at`, and
+`provider_cancellation_attempt_count` (all pre-existing `service_contract_billings` columns that
+were simply not yet surfaced) — plus `contract { uuid, contract_number, status }`, `customer`, and
+`recent_webhook_events` (same shape as Payments above, sourced from
+`service_contract_billing_webhook_events`).
+
+**Never returned**: any Stripe secret/webhook-signing key, or a raw webhook payload — this table
+never stores one in the first place (only `payload_hash`, itself never returned).
+
+### Why a new Admin read layer, not the existing customer-facing routes
+
+`GET /v1/payments/{payment}` is deliberately ownership-scoped to the authenticated customer
+(`App\Actions\Payment\GetPaymentAction`) and its presenter is deliberately minimal for a customer
+audience — neither is "Admin-safe" merely because the route already exists. No customer-facing
+Contract Billing list/detail route exists at all. Both gaps are closed here with the smallest
+additive layer: new thin Actions/Controllers/Presenters over the exact same tables, reusing every
+existing status enum, currency-formatting convention, and UUID-safety rule already established by
+`AdminBookingPresenter`/`AdminContractPresenter`. No schema change was required or made — every field
+above already existed on `payment_attempts` / `service_contract_billings` / their webhook-event
+tables.

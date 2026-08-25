@@ -103,6 +103,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
+            'api/v1/admin/contract-billings',
+            'api/v1/admin/contract-billings/{billing}',
             'api/v1/admin/contracts',
             'api/v1/admin/contracts/{contract}',
             'api/v1/admin/contracts/{contract}/approve',
@@ -110,6 +112,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/contracts/{contract}/send-for-acceptance',
             'api/v1/admin/contracts/{contract}/suspend',
             'api/v1/admin/me',
+            'api/v1/admin/payments',
+            'api/v1/admin/payments/{payment}',
             'api/v1/admin/technicians',
         ], $adminUris);
     }

@@ -6,3 +6,7 @@ import './bookings/show';
 import './technicians/index';
 import './contracts/index';
 import './contracts/show';
+import './payments/index';
+import './payments/show';
+import './billing/index';
+import './billing/show';

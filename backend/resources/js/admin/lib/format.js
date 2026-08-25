@@ -4,7 +4,8 @@
  * badge colors are a fixed, generic lookup over the exact status codes the
  * Admin APIs already return (booking_statuses / booking_item_statuses /
  * technician_assignment lifecycle / service_contract_statuses /
- * service_contract_billing_statuses) - no new status vocabulary is invented
+ * service_contract_billing_statuses / payment_statuses /
+ * payment_webhook_event_statuses) - no new status vocabulary is invented
  * here.
  */
 
@@ -31,6 +32,18 @@ const STATUS_BADGE_CLASSES = {
     INCOMPLETE: 'bg-amber-50 text-amber-700',
     PAST_DUE: 'bg-red-50 text-red-700',
     CANCEL_AT_PERIOD_END: 'bg-amber-50 text-amber-700',
+
+    // payment_statuses (CANCELLED above already covers the shared code)
+    PENDING: 'bg-amber-50 text-amber-700',
+    SUCCESSFUL: 'bg-emerald-50 text-emerald-700',
+    FAILED: 'bg-red-50 text-red-700',
+    REFUNDED: 'bg-slate-100 text-slate-600',
+
+    // payment_webhook_event_statuses (FAILED above already covers the
+    // shared code)
+    RECEIVED: 'bg-amber-50 text-amber-700',
+    PROCESSED: 'bg-emerald-50 text-emerald-700',
+    IGNORED: 'bg-slate-100 text-slate-600',
 };
 
 const DEFAULT_STATUS_BADGE_CLASSES = 'bg-slate-100 text-slate-600';

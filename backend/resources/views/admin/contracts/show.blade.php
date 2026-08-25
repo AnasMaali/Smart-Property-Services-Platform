@@ -103,8 +103,13 @@
         <div data-billing-card style="display: none;" class="rounded-2xl border border-slate-200 bg-white p-6">
             <div class="flex items-center justify-between">
                 <h3 class="text-sm font-semibold text-slate-900">Billing</h3>
-                <span data-field="billing_status" data-status-badge
-                      class="rounded-full px-2.5 py-1 text-xs font-semibold"></span>
+                <div class="flex items-center gap-3">
+                    <span data-field="billing_status" data-status-badge
+                          class="rounded-full px-2.5 py-1 text-xs font-semibold"></span>
+                    <a data-billing-detail-link class="text-xs font-medium text-blue-600 hover:text-blue-800">
+                        View billing detail &rarr;
+                    </a>
+                </div>
             </div>
 
             <dl class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">

@@ -27,6 +27,9 @@ enum AdminCapability: string
     case CONTRACTS_MANAGE = 'contracts.manage';
     case CONTRACTS_CANCEL = 'contracts.cancel';
 
+    case PAYMENTS_VIEW = 'payments.view';
+    case BILLING_VIEW = 'billing.view';
+
     /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
