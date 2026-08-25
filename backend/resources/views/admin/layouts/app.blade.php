@@ -61,9 +61,9 @@
 
             <a
                 href="/admin"
-                class="block rounded-lg px-3 py-2.5 text-sm
-                       font-medium text-slate-300
-                       hover:bg-slate-900 hover:text-white">
+                class="block rounded-lg px-3 py-2.5 text-sm font-medium
+                       hover:bg-slate-900 hover:text-white
+                       {{ request()->is('admin') ? 'bg-slate-900 text-white' : 'text-slate-300' }}">
                 Dashboard
             </a>
 
@@ -75,9 +75,11 @@
                     Operations
                 </p>
 
-                <a href="#"
-                   class="block rounded-lg px-3 py-2.5 text-sm text-slate-400
-                          hover:bg-slate-900 hover:text-white">
+                <a
+                    href="/admin/bookings"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/bookings*') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
                     Bookings
                 </a>
 
