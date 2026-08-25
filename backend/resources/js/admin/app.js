@@ -13,3 +13,5 @@ import './billing/show';
 import './customers/index';
 import './customers/show';
 import './properties/show';
+import './support/index';
+import './support/show';

@@ -629,3 +629,98 @@ The Customer detail page links into the existing B2/B4/B5 list pages using `?cus
 every one of `AdminListBookingsAction`, `AdminListContractsAction`, `AdminListPaymentsAction`, and
 `AdminListContractBillingsAction` already accepts that exact filter (see their own sections above),
 so no new query parameter was invented anywhere to make this work.
+
+## Admin Support Requests / Support Messages (BLUE V1 Phase B7)
+
+There is no customer-facing Support implementation anywhere in this codebase — only the
+`support_requests` / `support_messages` / `support_request_statuses` schema is provisioned. This
+phase is therefore the *first* application code over that schema, not an Admin layer added on top of
+an existing customer feature, and there is no existing customer-facing behavior to regress.
+
+`App\Actions\Admin\Support\*` and `App\Support\Admin\AdminSupportRequestPresenter` are the sole
+Support write/read path. No new schema, table, or column was added — `NO SCHEMA CHANGE` per BLUE V1
+standing policy.
+
+### Endpoints
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| List Support Requests | GET | `/v1/admin/support-requests` | `support.view` |
+| Get Support Request | GET | `/v1/admin/support-requests/{supportRequest}` | `support.view` |
+| Send Support Message | POST | `/v1/admin/support-requests/{supportRequest}/messages` | `support.manage` |
+
+`support.view`/`support.manage` are new BLUE V1 Phase B7 `admin_permissions` rows, granted to `ADMIN`
+the same way every other capability in this document already is (`SUPER_ADMIN` needs no row). The
+split mirrors the existing `technicians.view`/`technicians.assign` convention exactly: `support.view`
+covers both reads; `support.manage` covers the one Support mutation this phase implements.
+
+### List Support Requests — `GET /v1/admin/support-requests`
+
+`App\Actions\Admin\Support\AdminListSupportRequestsAction` / `AdminSupportRequestPresenter::
+presentList()`. Deterministic ordering (`created_at DESC, id DESC`), bounded page size (default 20,
+hard max 100) — the same pagination convention as every other Admin list endpoint. Query filters —
+all optional: `status` (a real `support_request_statuses.code`), `customer_uuid`, `booking_uuid`,
+`assigned_admin_uuid` (each an exact-match UUID; malformed input yields an empty result rather than a
+500), `unassigned` (boolean — `assigned_admin_user_id IS NULL`), `search` (partial match against
+`subject`).
+
+Each row: `uuid`, `request_number`, `subject`, `status`, `customer { uuid, full_name, phone_number }`,
+`booking { uuid, booking_number }` (nullable), `assigned_admin { uuid, full_name }` (nullable),
+`created_at`, `status_changed_at`. All related data is batch-loaded (`whereIn` + `keyBy`) — never a
+query per row.
+
+### Get Support Request — `GET /v1/admin/support-requests/{supportRequest}`
+
+`App\Actions\Admin\Support\AdminGetSupportRequestAction` / `AdminSupportRequestPresenter::detail()`.
+Malformed or unknown UUIDs return a generic 404, never leaking which case applied. Returns the full
+Support Request (`uuid`, `request_number`, `subject`, `status`, `status_changed_at`, `resolved_at`,
+`closed_at`, `created_at`, `updated_at`), `customer { uuid, full_name, phone_number, email }`,
+`booking { uuid, booking_number, status }` (nullable — no booking was ever linked), `assigned_admin
+{ uuid, full_name }` (nullable, read-only — see "Assignment" below), and the full `messages` array
+(oldest first — a Support conversation is realistically a handful of messages, so this is
+unpaginated, matching the existing unpaginated-child-collection convention used for a Contract's
+`status_history`/`covered_services`).
+
+Each message: `uuid`, `message_body`, `created_at`, `sender { uuid, full_name, type }`, where `type`
+is one of `CUSTOMER` / `ADMIN` / `UNKNOWN`, derived **server-side** from `roles`/`user_roles` — never
+guessed client-side and never falsely labeled: `CUSTOMER` only if the sender is literally the request's
+own `customer_user_id`; `ADMIN` only if the sender currently holds an active `ADMIN`/`SUPER_ADMIN`
+role; otherwise `UNKNOWN` (e.g. a sender whose role was since revoked).
+
+**CRITICAL — stored XSS**: `message_body` is untrusted, user-authored text (from both Customers and
+Admins). The frontend (`resources/js/admin/support/show.js`) renders every message exclusively via
+`textContent`, never `innerHTML`.
+
+### Send Support Message — `POST /v1/admin/support-requests/{supportRequest}/messages`
+
+`App\Actions\Admin\Support\AdminSendSupportMessageAction`. Body: `{ message_body: string }`
+(`min:1`, `max:5000`, trimmed). The authenticated Admin is **always** the sender — taken from the
+authorization context, never from client-supplied input, so a request cannot spoof a different
+sender. On success (`201`), inserts one `support_messages` row, writes one `SUPPORT_MESSAGE_SENT`
+`admin_audit_logs` row (identifiers only — `{ message_uuid }` — the message text itself is never
+logged), and returns the full updated Support Request detail (same shape as the GET above) so the
+frontend always re-renders authoritative server state rather than patching local state. This
+endpoint **never** writes `status_id`, `status_changed_at`, `resolved_at`, or `closed_at` — a reply
+does not change the request's lifecycle status.
+
+### Status transitions and assignment — not implemented, and why
+
+BLUE's Support requirements (`docs/03-features-and-requirements/09-human-support.md`) confirm the
+`OPEN` → `IN_PROGRESS` → `RESOLVED` → `CLOSED` status vocabulary and that Admins are expected to
+eventually update status and close requests, but neither that document nor the schema defines the
+exact transition graph (which statuses may move to which others, what triggers each move, whether a
+`CLOSED` request can reopen) or any assignment rule (who may assign, whether reassignment is allowed,
+whether assignment requires a particular role). Per BLUE V1 standing policy, ambiguous lifecycle
+policy is never invented — it is reported and deferred instead of shipped as a guess.
+
+Consequently, Phase B7 deliberately implements **read-only** status and assignment display only:
+- `status` is shown as a badge; there is no status-change endpoint, and neither the frontend nor any
+  Action ever writes `support_requests.status_id`/`status_changed_at`/`resolved_at`/`closed_at`.
+- `assigned_admin` is shown as read-only text ("Unassigned" or the assigned Admin's name); there is no
+  assignment/reassignment endpoint.
+
+No generic `PATCH /v1/admin/support-requests/{supportRequest}` was added specifically to avoid
+papering over this gap with an implicit, unreviewed lifecycle policy. A future phase can introduce an
+explicit `AdminUpdateSupportRequestStatusAction`/`AdminAssignSupportRequestAction` (mirroring the
+explicit-Action-per-transition convention `App\Support\Contract\ContractStatusMachine` already
+establishes for Contracts) once the transition/assignment rules are confirmed.

@@ -169,6 +169,18 @@ VALUES
     'View Customers',
     'View Customer profiles and their Properties across the platform - contact info, account status, location/relationship profile, account-deletion state, and small operational activity counts. Read-only: no account/property mutation capability exists.',
     TRUE
+),
+(
+    'support.view',
+    'View Support Requests',
+    'View Support Requests across every customer, including linked Booking, assignment, and the full message conversation.',
+    TRUE
+),
+(
+    'support.manage',
+    'Manage Support Requests',
+    'Post an Admin reply message on a Support Request. Status-transition and assignment mutations are not yet implemented.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -213,7 +225,9 @@ WHERE r.code = 'ADMIN'
     'contracts.cancel',
     'payments.view',
     'billing.view',
-    'customers.view'
+    'customers.view',
+    'support.view',
+    'support.manage'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

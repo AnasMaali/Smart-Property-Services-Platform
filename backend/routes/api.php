@@ -22,6 +22,9 @@ use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
+use App\Http\Controllers\Api\V1\Admin\Support\GetAdminSupportRequestController;
+use App\Http\Controllers\Api\V1\Admin\Support\ListAdminSupportRequestsController;
+use App\Http\Controllers\Api\V1\Admin\Support\SendAdminSupportMessageController;
 use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
@@ -297,6 +300,19 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
     Route::get('/v1/admin/properties/{property}', GetAdminPropertyController::class)
         ->middleware(AdminCapability::CUSTOMERS_VIEW->middleware());
+
+    // BLUE V1 Phase B7 - Support Requests/Messages. `support.view` covers
+    // both list/detail reads; `support.manage` covers the one Support
+    // mutation this phase implements (an Admin reply message) - mirrors
+    // the technicians.view/technicians.assign split exactly. Status-
+    // transition and assignment mutations are deliberately NOT implemented
+    // yet - see docs/api-contracts/admin-operations-v1.md "Support".
+    Route::get('/v1/admin/support-requests', ListAdminSupportRequestsController::class)
+        ->middleware(AdminCapability::SUPPORT_VIEW->middleware());
+    Route::get('/v1/admin/support-requests/{supportRequest}', GetAdminSupportRequestController::class)
+        ->middleware(AdminCapability::SUPPORT_VIEW->middleware());
+    Route::post('/v1/admin/support-requests/{supportRequest}/messages', SendAdminSupportMessageController::class)
+        ->middleware(AdminCapability::SUPPORT_MANAGE->middleware());
 });
 
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);

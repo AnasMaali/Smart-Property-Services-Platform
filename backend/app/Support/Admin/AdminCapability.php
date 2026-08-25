@@ -39,6 +39,19 @@ enum AdminCapability: string
     case CUSTOMERS_VIEW = 'customers.view';
 
     /**
+     * BLUE V1 Phase B7. Mirrors the `technicians.view`/`technicians.assign`
+     * split exactly: `support.view` covers listing/reading Support Requests
+     * and their conversation; `support.manage` covers the one Support
+     * mutation this phase implements (posting an Admin reply message).
+     * Status-transition/assignment mutations were deliberately deferred
+     * (no existing lifecycle policy to reuse) - see
+     * App\Actions\Admin\Support\AdminSendSupportMessageAction's docblock.
+     */
+    case SUPPORT_VIEW = 'support.view';
+
+    case SUPPORT_MANAGE = 'support.manage';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

@@ -117,6 +117,9 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/payments',
             'api/v1/admin/payments/{payment}',
             'api/v1/admin/properties/{property}',
+            'api/v1/admin/support-requests',
+            'api/v1/admin/support-requests/{supportRequest}',
+            'api/v1/admin/support-requests/{supportRequest}/messages',
             'api/v1/admin/technicians',
         ], $adminUris);
     }

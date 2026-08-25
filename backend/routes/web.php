@@ -64,4 +64,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/properties/{property}', function (string $property) {
         return view('admin.properties.show', ['propertyUuid' => $property]);
     })->name('properties.show');
+
+    // BLUE V1 Phase B7 - Support Requests/Messages shell routes. Same
+    // convention as every other module above.
+    Route::view('/support', 'admin.support.index')->name('support.index');
+
+    Route::get('/support/{supportRequest}', function (string $supportRequest) {
+        return view('admin.support.show', ['supportRequestUuid' => $supportRequest]);
+    })->name('support.show');
 });

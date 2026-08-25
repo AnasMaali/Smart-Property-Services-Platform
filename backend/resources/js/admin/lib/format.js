@@ -48,6 +48,12 @@ const STATUS_BADGE_CLASSES = {
     // user_account_statuses (ACTIVE above already covers the shared code)
     PENDING_VERIFICATION: 'bg-amber-50 text-amber-700',
     DEACTIVATED: 'bg-slate-100 text-slate-600',
+
+    // support_request_statuses (IN_PROGRESS above already covers the
+    // shared code)
+    OPEN: 'bg-amber-50 text-amber-700',
+    RESOLVED: 'bg-emerald-50 text-emerald-700',
+    CLOSED: 'bg-slate-100 text-slate-600',
 };
 
 const DEFAULT_STATUS_BADGE_CLASSES = 'bg-slate-100 text-slate-600';

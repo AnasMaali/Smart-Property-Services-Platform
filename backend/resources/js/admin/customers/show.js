@@ -63,6 +63,7 @@ if (page) {
             ['Payments', `/admin/payments?customer_uuid=${encodeURIComponent(customerUuid)}`],
             ['Contracts', `/admin/contracts?customer_uuid=${encodeURIComponent(customerUuid)}`],
             ['Contract Billing', `/admin/billing?customer_uuid=${encodeURIComponent(customerUuid)}`],
+            ['Support Requests', `/admin/support?customer_uuid=${encodeURIComponent(customerUuid)}`],
         ];
 
         links.forEach(([label, href]) => {
