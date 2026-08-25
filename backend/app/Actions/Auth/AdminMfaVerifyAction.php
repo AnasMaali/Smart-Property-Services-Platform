@@ -5,6 +5,7 @@ namespace App\Actions\Auth;
 use App\Actions\Auth\Concerns\ChecksActiveAdminEligibility;
 use App\Actions\Auth\Concerns\IssuesAdminAuthSession;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionOutcome;
 use App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService;
 use App\Support\Admin\WebAuthn\AdminWebAuthnChallengePurpose;
@@ -46,6 +47,7 @@ class AdminMfaVerifyAction
         private readonly AdminWebAuthnChallengeService $challengeService,
         private readonly AdminWebAuthnAssertionService $assertionService,
         private readonly JwtTokenService $jwtTokenService,
+        private readonly AdminSessionPolicy $sessionPolicy,
     ) {}
 
     /**

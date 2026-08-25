@@ -1,4 +1,4 @@
-# BLUE V1 — Admin Authentication & Authorization API Contract (Phase 9A, superseded by Phase A2.3)
+# BLUE V1 — Admin Authentication & Authorization API Contract (Phase 9A, superseded by Phase A2.3/A2.4)
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
@@ -12,8 +12,12 @@ or planned behavior is included.
 > exists**. Admin login is now a mandatory two-stage flow — password, then WebAuthn — and a correct
 > password alone can never create a session or issue a token. See "§1. Admin Login (Stage 1)",
 > "§1a. First-Credential Bootstrap", and "§1b. MFA Verify (Stage 2)" below for the current contract.
-> §2 (Refresh) and §3 (Me) are unchanged by this phase — a refresh token only ever belongs to a
-> session that already passed MFA.
+>
+> **BLUE V1 Phase A2.4 — Admin Session Security — ADDS to §1b/§2/`auth.admin` below.** ADMIN_WEB
+> sessions (only) now carry a 12-hour absolute lifetime (instead of the Customer 30-day default), a
+> 20-minute idle timeout enforced on both Bearer requests and refresh, and a throttled (~5-minute)
+> server-side activity timestamp. A silent token refresh is explicitly never treated as activity.
+> See "Admin Session Security (Phase A2.4)" below for the full behavior.
 
 ## Scope of this phase
 
@@ -313,7 +317,9 @@ verified WebAuthn assertion.
   account/role that stopped being eligible between Stage 1 and this call. None are distinguished.
 - **Security notes**: raw refresh token returned exactly once; IP/user-agent captured at this
   request (not Stage 1, since this is where the session is actually created); no password, no
-  public key, and no raw binary/internal id ever appears in the response.
+  public key, and no raw binary/internal id ever appears in the response. The session created here
+  uses the Admin-specific 12-hour absolute lifetime, not the Customer 30-day default — see "Admin
+  Session Security (Phase A2.4)" below.
 
 ---
 
@@ -342,13 +348,18 @@ verified WebAuthn assertion.
 ```
   Same message/status for: unknown token, revoked/expired session, non-`ACTIVE` user, a
   missing/inactive `ADMIN`/`SUPER_ADMIN` role **re-checked fresh at refresh time** (not from the
-  original login), or a session whose client type is not the active `ADMIN_WEB` type. This means
-  an Admin whose role was revoked or account deactivated after login loses the ability to refresh
-  on the very next call, even though the raw refresh token itself is still otherwise valid.
+  original login), a session whose client type is not the active `ADMIN_WEB` type, or (BLUE V1
+  Phase A2.4, Admin sessions only) a session that has exceeded the Admin idle timeout — see "Admin
+  Session Security (Phase A2.4)" below. This means an Admin whose role was revoked or account
+  deactivated after login loses the ability to refresh on the very next call, even though the raw
+  refresh token itself is still otherwise valid.
 - **Business behavior**: Same token-rotation strategy as customer refresh (locate by
   `SHA-256(raw token)` under `FOR UPDATE`, rotate the hash, issue a new access token) — no
   separate rotation algorithm exists. The new access token's `role` claim is recomputed from the
-  user's current role membership, not cached from the previous token.
+  user's current role membership, not cached from the previous token. **For Admin sessions only**
+  (BLUE V1 Phase A2.4): a successful refresh never updates `last_used_at` — a silent refresh is
+  never treated as activity — and never extends `expires_at`. The Customer refresh endpoint's
+  behavior (which does update `last_used_at` on every successful refresh) is unchanged.
 
 ---
 
@@ -419,20 +430,80 @@ MFA. There is exactly one canonical production Admin login flow: password (§1) 
 
 `App\Http\Middleware\AuthenticateAdmin`, aliased as `auth.admin`. Mirrors `auth.customer`
 (`AuthenticateCustomer`) exactly in structure — see `authentication-v1.md` and that class's own
-docblock for the shared design — with two differences:
+docblock for the shared design — with three differences:
 
 1. It authorizes against `ADMIN`/`SUPER_ADMIN` (at least one currently active) instead of
    `CUSTOMER`.
 2. It does not require `phone_verified_at` to be set, since Admin accounts are not provisioned
    through the OTP-verified customer flow.
+3. (BLUE V1 Phase A2.4) It enforces the Admin idle timeout and performs the throttled activity
+   touch — see "Admin Session Security (Phase A2.4)" below. `AuthenticateCustomer` has neither.
 
 On every request it: verifies the JWT signature and `exp`/`nbf`; loads the `auth_sessions` row by
-the token's `sid` claim and confirms it is not revoked and not expired; loads the `users` row by
+the token's `sid` claim and confirms it is not revoked and not expired; **(Phase A2.4) confirms the
+session has not exceeded the Admin idle timeout, revoking it if it has**; loads the `users` row by
 `sub` and confirms `account_status = ACTIVE`; and re-queries `user_roles` joined to `roles` for at
 least one currently active `ADMIN`/`SUPER_ADMIN` row. Any failure returns the same generic `401`.
-On success it attaches `auth_user`, `auth_session`, and `auth_admin_roles` (the caller's active
-Admin role codes, e.g. `['ADMIN']` or `['ADMIN', 'SUPER_ADMIN']`) to the request for Admin
-controllers/Actions built in later phases.
+On success it **(Phase A2.4) touches the session's activity timestamp if due**, then attaches
+`auth_user`, `auth_session`, and `auth_admin_roles` (the caller's active Admin role codes, e.g.
+`['ADMIN']` or `['ADMIN', 'SUPER_ADMIN']`) to the request for Admin controllers/Actions.
+
+---
+
+## Admin Session Security (Phase A2.4)
+
+`App\Support\Admin\AdminSessionPolicy` — the single, centralized implementation used identically by
+`auth.admin` (every Bearer request) and Admin refresh (§2), so the two enforcement points can never
+drift. **ADMIN_WEB only** — Customer/mobile sessions never consult this class at all and keep their
+existing 30-day (`AUTH_SESSION_TTL_DAYS`) behavior unchanged, including Customer refresh's existing
+`last_used_at` update.
+
+### Absolute session lifetime
+
+`config/admin_session.php` → `AUTH_ADMIN_SESSION_TTL_HOURS` (default **12 hours**). Set once, on
+`auth_sessions.expires_at`, at MFA-issued session creation (§1b) — **never extended by refresh**.
+Example: login at 08:00 → `expires_at` = 20:00. A refresh at 14:00 still leaves `expires_at` = 20:00.
+
+### Idle timeout
+
+`AUTH_ADMIN_IDLE_TIMEOUT_MINUTES` (default **20 minutes**). A session is idle-expired once
+`now >= last_used_at + idle_timeout` — the exact boundary instant is already expired (the same
+"boundary is the first invalid instant" convention this codebase's absolute-expiry check already
+uses). Example: `last_used_at` = 10:00 → a request at 10:19:59 is allowed; a request at 10:20:00 or
+any instant after is rejected.
+
+An idle-expired session is **revoked (`revoked_at` set) at the moment it is first detected**,
+whether that detection happens on a Bearer request or a refresh call — so it can never become usable
+again through either path afterward, even under a later idle-timeout config change or clock
+adjustment. The rejection response is the same generic, pre-existing message
+(`"This session is invalid or has expired."` for Bearer requests via `auth.admin`,
+`"This refresh token is invalid or has expired."` for refresh) — the specific reason ("idle timeout"
+vs. any other rejection cause) is never revealed to the caller.
+
+### Activity touch (throttled, not on every request)
+
+`AUTH_ADMIN_ACTIVITY_TOUCH_MINUTES` (default **5 minutes**). A successful, authenticated Admin
+Bearer request updates `last_used_at` to the current time only if the stored value is already at
+least this old (or was never set) — an atomic, conditional `UPDATE ... WHERE last_used_at <= ?`, so
+concurrent/rapid requests can only ever move the value forward, never backward, and a healthy Admin
+session does not write to `auth_sessions` on every single request.
+
+**A token refresh is never activity.** `POST /v1/admin/auth/refresh` enforces the idle timeout (a
+refresh against an already idle-expired session is rejected, exactly like a Bearer request) but
+never calls the activity-touch step — a frontend that silently refreshes tokens in the background
+could otherwise keep an abandoned session alive indefinitely.
+
+### Frontend implications (for a future Admin UI — not built in this phase)
+
+- Detect `401`/invalid-session responses, clear local Admin auth state, and return to the Admin
+  login screen — never silently retry indefinitely.
+- Never poll the API in the background merely to keep a session alive — server-side "activity" means
+  genuine authenticated Admin API usage; deliberate keep-alive polling would defeat the idle-timeout
+  policy's purpose while technically satisfying it.
+- An optional local warning shortly before the idle timeout may be shown for UX purposes, based on
+  the frontend's own local interaction tracking (e.g. mouse/keyboard activity) — never treat that
+  local signal as the server's security source of truth, which is always `last_used_at` on the
+  server.
 
 ---
 

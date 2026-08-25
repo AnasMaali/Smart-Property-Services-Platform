@@ -273,6 +273,16 @@ class AdminBookingReadTest extends TestCase
 
         $this->cancelBooking($fixture['customer']['access_token'], $booking)->assertStatus(200);
 
+        // The refund_due snapshot was already computed and persisted at
+        // cancellation time above; the Admin read below never recomputes
+        // it (see test 14), so resetting the clock here is safe and
+        // avoids an unrelated collision with the BLUE V1 Phase A2.4 Admin
+        // idle/absolute session timeout - $admin's session/token were
+        // minted at the real wall-clock instant above, before this test
+        // jumped Carbon::setTestNow() weeks into the future for the
+        // cancellation-policy scenario itself.
+        Carbon::setTestNow();
+
         $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
             ->assertStatus(200);
 
@@ -301,6 +311,11 @@ class AdminBookingReadTest extends TestCase
 
         Carbon::setTestNow('2026-09-14 20:00:00');
         $this->cancelBooking($fixture['customer']['access_token'], $booking)->assertStatus(200);
+
+        // See the identical reset in the previous test above - the refund
+        // snapshot is already persisted; this avoids an unrelated
+        // collision with the Admin idle/absolute session timeout.
+        Carbon::setTestNow();
 
         $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
             ->assertStatus(200);
@@ -333,6 +348,11 @@ class AdminBookingReadTest extends TestCase
             'cancellation.before_appointment_day_percentage' => 90,
             'cancellation.appointment_day_percentage' => 50,
         ]);
+
+        // See the identical reset above - the refund snapshot is already
+        // persisted; this avoids an unrelated collision with the Admin
+        // idle/absolute session timeout.
+        Carbon::setTestNow();
 
         $response = $this->getJson('/api/v1/admin/bookings/'.UuidBinary::toString($booking->id), $this->bearer($admin['access_token']))
             ->assertStatus(200);

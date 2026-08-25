@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Models\AuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Uuid\UuidBinary;
 use Closure;
 use Illuminate\Http\Request;
@@ -44,6 +45,14 @@ use Symfony\Component\HttpFoundation\Response;
  * request as `auth_user` / `auth_session`, and the caller's currently active
  * Admin role codes as `auth_admin_roles` (e.g. ['ADMIN'] or ['ADMIN',
  * 'SUPER_ADMIN']) for downstream Admin controllers/Actions to consult.
+ *
+ * BLUE V1 Phase A2.4: also enforces the Admin idle timeout via the shared
+ * App\Support\Admin\AdminSessionPolicy - an idle-expired session is revoked
+ * and rejected here exactly as App\Actions\Auth\AdminRefreshTokenAction does
+ * for refresh, so the policy cannot drift between the two enforcement
+ * points. On a request that passes every check, the session's activity
+ * timestamp is touched (throttled - see AdminSessionPolicy::touchIfDue()),
+ * never on every single request.
  */
 class AuthenticateAdmin
 {
@@ -53,7 +62,10 @@ class AuthenticateAdmin
 
     private const CLIENT_TYPE_CODE = 'ADMIN_WEB';
 
-    public function __construct(private readonly JwtTokenService $jwtTokenService) {}
+    public function __construct(
+        private readonly JwtTokenService $jwtTokenService,
+        private readonly AdminSessionPolicy $sessionPolicy,
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -88,6 +100,10 @@ class AuthenticateAdmin
             return $this->reject();
         }
 
+        if ($this->sessionPolicy->enforceIdleTimeout($session, $now)) {
+            return $this->reject();
+        }
+
         $user = User::where('id', $userId)->first();
 
         if ($user === null || $user->account_status_id !== $this->lookupId('user_account_statuses', 'ACTIVE')) {
@@ -113,6 +129,8 @@ class AuthenticateAdmin
         if ($clientType === null || ! $clientType->is_active || $clientType->code !== self::CLIENT_TYPE_CODE) {
             return $this->reject();
         }
+
+        $this->sessionPolicy->touchIfDue($session, $now);
 
         $request->attributes->set('auth_user', $user);
         $request->attributes->set('auth_session', $session);

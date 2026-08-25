@@ -4,6 +4,7 @@ namespace App\Actions\Auth\Concerns;
 
 use App\Models\AuthSession;
 use App\Models\User;
+use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -13,11 +14,13 @@ use RuntimeException;
  * The single place an authenticated ADMIN/SUPER_ADMIN session (auth_sessions
  * row + access/refresh token pair) is created (BLUE V1 Phase A2.3) -
  * mirrors App\Actions\Auth\Concerns\IssuesAuthSession's customer-session
- * pattern exactly, with two Admin-specific differences: the client type is
- * always ADMIN_WEB (there is only one Admin client type in V1), and the
- * `role` JWT claim is resolved from the caller's currently active Admin
- * role codes (SUPER_ADMIN takes priority over ADMIN) rather than a fixed
- * constant.
+ * pattern exactly, with three Admin-specific differences: the client type is
+ * always ADMIN_WEB (there is only one Admin client type in V1), the `role`
+ * JWT claim is resolved from the caller's currently active Admin role codes
+ * (SUPER_ADMIN takes priority over ADMIN) rather than a fixed constant, and
+ * (BLUE V1 Phase A2.4) the absolute session lifetime comes from
+ * AdminSessionPolicy (12 hours by default) rather than the Customer
+ * AUTH_SESSION_TTL_DAYS (30 days) config.
  *
  * Per the Phase A2.3 non-negotiable rule, this trait is used from exactly
  * one place: App\Actions\Auth\AdminMfaVerifyAction, called only after a
@@ -25,12 +28,13 @@ use RuntimeException;
  * first-credential bootstrap ceremony calls this - see AdminLoginAction /
  * AdminMfaEnrollAction, neither of which ever create a session.
  *
- * The consuming class must define a `JwtTokenService $jwtTokenService`
- * constructor property, per the same convention IssuesAuthSession already
- * establishes. Callers must have already fully re-validated login
- * eligibility (ACTIVE account, active ADMIN/SUPER_ADMIN role, ADMIN_WEB
- * client type) immediately before calling this - this method performs no
- * eligibility checks of its own.
+ * The consuming class must define `JwtTokenService $jwtTokenService` and
+ * `AdminSessionPolicy $sessionPolicy` constructor properties, per the same
+ * convention IssuesAuthSession already establishes for $jwtTokenService.
+ * Callers must have already fully re-validated login eligibility (ACTIVE
+ * account, active ADMIN/SUPER_ADMIN role, ADMIN_WEB client type)
+ * immediately before calling this - this method performs no eligibility
+ * checks of its own.
  */
 trait IssuesAdminAuthSession
 {
@@ -75,7 +79,7 @@ trait IssuesAdminAuthSession
 
         $sessionUuid = UuidBinary::generate();
         $rawRefreshToken = random_bytes(32);
-        $sessionExpiresAt = $now->copy()->addDays((int) config('jwt.session_ttl_days'));
+        $sessionExpiresAt = $this->sessionPolicy->newSessionAbsoluteExpiry($now);
 
         // See the customer IssuesAuthSession trait for why created_at/
         // updated_at are set explicitly to the same $now instant with

@@ -29,6 +29,9 @@
         <env name="ADMIN_WEBAUTHN_RP_ID" value="admin.blue.test"/>
         <env name="ADMIN_WEBAUTHN_ORIGINS" value="https://admin.blue.test"/>
         <env name="ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS" value="300"/>
+        <env name="AUTH_ADMIN_SESSION_TTL_HOURS" value="12"/>
+        <env name="AUTH_ADMIN_IDLE_TIMEOUT_MINUTES" value="20"/>
+        <env name="AUTH_ADMIN_ACTIVITY_TOUCH_MINUTES" value="5"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>

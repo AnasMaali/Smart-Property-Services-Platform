@@ -5,7 +5,9 @@ namespace Tests\Support;
 use App\Actions\Auth\Concerns\IssuesAdminAuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Uuid\UuidBinary;
+use Illuminate\Support\Carbon;
 
 /**
  * Mints a real authenticated ADMIN/SUPER_ADMIN session for test setup - via
@@ -32,10 +34,13 @@ trait AuthenticatesAdminsForTests
 {
     use IssuesAdminAuthSession;
 
-    // Named exactly `jwtTokenService` for the same reason
+    // Named exactly `jwtTokenService`/`sessionPolicy` for the same reason
     // AuthenticatesCustomersForTests documents - IssuesAdminAuthSession
-    // reads `$this->jwtTokenService` directly.
+    // reads `$this->jwtTokenService` and (BLUE V1 Phase A2.4)
+    // `$this->sessionPolicy` directly.
     private ?JwtTokenService $jwtTokenService = null;
+
+    private ?AdminSessionPolicy $sessionPolicy = null;
 
     /**
      * @param  array<int, string>  $activeAdminRoleCodes
@@ -53,12 +58,13 @@ trait AuthenticatesAdminsForTests
      *     session_expires_at: string,
      * }
      */
-    private function issueAdminSession(string $userUuid, array $activeAdminRoleCodes = ['ADMIN']): array
+    private function issueAdminSession(string $userUuid, array $activeAdminRoleCodes = ['ADMIN'], ?Carbon $now = null): array
     {
         $this->jwtTokenService ??= app(JwtTokenService::class);
+        $this->sessionPolicy ??= app(AdminSessionPolicy::class);
 
         $user = User::where('id', UuidBinary::toBinary($userUuid))->firstOrFail();
 
-        return $this->issueAdminAuthSession($user, $activeAdminRoleCodes, null, null, null, null, now());
+        return $this->issueAdminAuthSession($user, $activeAdminRoleCodes, null, null, null, null, $now ?? now());
     }
 }
