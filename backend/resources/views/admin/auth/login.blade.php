@@ -112,6 +112,13 @@
                 </div>
 
 
+                <div
+                    data-login-status
+                    class="mb-5 hidden rounded-xl border border-blue-200
+                           bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                </div>
+
+
                 <form data-admin-login-form class="space-y-5">
 
                     <div>

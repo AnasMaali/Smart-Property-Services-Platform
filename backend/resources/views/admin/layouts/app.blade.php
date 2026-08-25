@@ -17,7 +17,22 @@
 
 <body class="bg-slate-50 text-slate-900">
 
-<div class="flex min-h-screen">
+<div
+    data-admin-loading
+    class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-slate-50">
+
+    <div class="h-8 w-8 animate-spin rounded-full border-2
+                border-slate-300 border-t-blue-600">
+    </div>
+
+    <p class="text-sm text-slate-500">
+        Restoring your secure session...
+    </p>
+
+</div>
+
+
+<div data-admin-shell class="flex min-h-screen" style="display: none;">
 
     <aside class="fixed inset-y-0 left-0 hidden w-64 border-r
                   border-slate-800 bg-slate-950 lg:flex lg:flex-col">
@@ -165,17 +180,28 @@
             <div class="flex items-center gap-4">
 
                 <div class="text-right">
-                    <p class="text-sm font-medium text-slate-800">
+                    <p data-admin-name class="text-sm font-medium text-slate-800">
                         Administrator
                     </p>
 
-                    <p class="text-xs text-slate-500">
+                    <p data-admin-role class="text-xs text-slate-500">
                         Secure session
                     </p>
                 </div>
 
                 <button
                     type="button"
+                    data-logout-all
+                    title="Sign out of every Admin session"
+                    class="rounded-lg border border-transparent px-3 py-2
+                           text-sm font-medium text-slate-500
+                           hover:bg-slate-50 hover:text-slate-700">
+                    Logout all
+                </button>
+
+                <button
+                    type="button"
+                    data-logout
                     class="rounded-lg border border-slate-200 px-3 py-2
                            text-sm font-medium text-slate-700
                            hover:bg-slate-50">
@@ -190,6 +216,59 @@
         <main class="flex-1 p-6 lg:p-8">
             @yield('content')
         </main>
+
+    </div>
+
+</div>
+
+
+<div
+    data-step-up-modal
+    style="display: none;"
+    class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+
+        <p class="text-sm font-medium text-blue-600">
+            Additional verification required
+        </p>
+
+        <h2 class="mt-1 text-lg font-semibold text-slate-950">
+            Verify it's you
+        </h2>
+
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+            This action is sensitive and requires a fresh security key
+            verification, even though you are already signed in.
+        </p>
+
+        <div
+            data-step-up-error
+            class="mt-4 hidden rounded-xl border border-red-200
+                   bg-red-50 px-4 py-3 text-sm text-red-700">
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+
+            <button
+                type="button"
+                data-step-up-cancel
+                class="rounded-xl px-4 py-2.5 text-sm font-medium
+                       text-slate-600 hover:bg-slate-50">
+                Cancel
+            </button>
+
+            <button
+                type="button"
+                data-step-up-verify
+                class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm
+                       font-semibold text-white transition
+                       hover:bg-slate-800 disabled:cursor-not-allowed
+                       disabled:opacity-60">
+                Verify with security key
+            </button>
+
+        </div>
 
     </div>
 
