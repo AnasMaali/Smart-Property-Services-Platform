@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\Admin\ContractBilling\GetAdminContractBillingCon
 use App\Http\Controllers\Api\V1\Admin\ContractBilling\ListAdminContractBillingsController;
 use App\Http\Controllers\Api\V1\Admin\Customer\GetAdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\Customer\ListAdminCustomersController;
+use App\Http\Controllers\Api\V1\Admin\Dashboard\GetAdminDashboardController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
@@ -231,6 +232,14 @@ Route::middleware('auth.admin')->group(function () {
     // No capability gate: every authenticated Admin/Super Admin may read
     // their own identity regardless of which capabilities they hold.
     Route::get('/v1/admin/me', AdminMeController::class);
+
+    // BLUE V1 Phase B10 - Admin Dashboard. Read-only, cross-domain
+    // aggregate summary/attention/recent-activity - gated by a single
+    // `dashboard.view` capability rather than requiring every individual
+    // domain `.view` capability at once (this codebase's
+    // `admin.capability:<code>` middleware has no AND-combination support).
+    Route::get('/v1/admin/dashboard', GetAdminDashboardController::class)
+        ->middleware(AdminCapability::DASHBOARD_VIEW->middleware());
 
     // BLUE V1 Phase 9B - Admin Operations APIs: a thin, auth.admin-only
     // transport layer over the already-tested Phase 7B/8A/8B domain Actions.

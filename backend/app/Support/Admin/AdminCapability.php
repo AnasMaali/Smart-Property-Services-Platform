@@ -96,6 +96,21 @@ enum AdminCapability: string
     case PRICING_PUBLISH = 'pricing.publish';
 
     /**
+     * BLUE V1 Phase B10. The Admin Dashboard aggregates read-only counts
+     * and small bounded lists across every existing domain (Bookings,
+     * Contracts, Payments, Contract Billing, Support, Technicians,
+     * Customers) - unlike every other `.view` capability, it is not scoped
+     * to one domain. A single `dashboard.view` capability (rather than
+     * requiring every individual domain `.view` capability at once, which
+     * this codebase's `admin.capability:<code>` middleware has no AND
+     * -combination support for) keeps this consistent with the existing
+     * "exactly one capability per route" convention while still gating
+     * this cross-domain read behind a real capability, not just
+     * `auth.admin` alone (unlike the identity-only `/v1/admin/me`).
+     */
+    case DASHBOARD_VIEW = 'dashboard.view';
+
+    /**
      * The `admin.capability:<code>` route middleware string for this
      * capability — keeps route registration from re-typing the raw string
      * code (see routes/api.php).

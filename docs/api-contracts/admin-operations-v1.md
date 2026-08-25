@@ -1101,3 +1101,137 @@ to the corresponding B9 detail page (`/admin/pricing/{scheme}`), replacing the e
 summary — Pricing editing stays entirely in the Pricing domain; Service Catalog never gained pricing
 -mutation UI of its own. Every mutation reloads the authoritative server response afterward; all
 dynamic text is rendered via `textContent`/`createElement`, never `innerHTML`.
+
+## Admin Operational Dashboard (BLUE V1 Phase B10)
+
+The real Admin landing page at `GET /admin` — replacing the earlier frontend-foundation placeholder.
+Connects every existing Admin domain (Bookings, Contracts, Payments, Contract Billing, Support,
+Technicians, Customers) into one read-only operational overview: summary counts, actionable
+"needs attention" lists, and a recent-activity feed. It reads canonical data only — no business logic
+(status machines, pricing, eligibility) is reimplemented, and no schema change was made.
+
+### Endpoint and authorization
+
+`GET /v1/admin/dashboard` — `auth.admin` + a single new `dashboard.view` capability. One capability
+was introduced, deliberately, rather than requiring every individual domain `.view` capability at
+once: this codebase's `admin.capability:<code>` route middleware has no AND-combination support (every
+existing route already checks exactly one capability), and the Dashboard is inherently cross-domain by
+design. `dashboard.view` is a new BLUE V1 Phase B10 `admin_permissions` row, granted to `ADMIN` the
+same way every other capability in this document already is (`SUPER_ADMIN` needs no row). This is a
+real capability, not the no-gate precedent `GET /v1/admin/me` uses — the Dashboard exposes real
+cross-domain operational data, unlike `/me`'s pure self-identity.
+
+The endpoint is read-only: no writes, no side effects, fully deterministic, always bounded.
+
+### Summary metrics (exact meaning of each)
+
+| Group | Metric | Meaning |
+|---|---|---|
+| `bookings` | `active` | `bookings` whose `booking_statuses.is_terminal = 0` (PAID/ASSIGNED/IN_PROGRESS). |
+| | `created_last_24h` | `bookings.created_at >= now()->subDay()`. |
+| | `pending_assignment` | `booking_items` whose status is `PENDING_ASSIGNMENT`. |
+| | `in_progress` | `booking_items` whose status is `IN_PROGRESS`. |
+| `contracts` | `active` / `awaiting_approval` / `pending_customer_acceptance` / `pending_payment` / `suspended` | `service_contracts` grouped by `service_contract_statuses.code` (`ACTIVE`/`REQUESTED`/`PENDING_CUSTOMER_ACCEPTANCE`/`PENDING_PAYMENT`/`SUSPENDED`). `awaiting_approval` is the `REQUESTED` count — the status `App\Actions\Admin\Contract\AdminApproveContractAction` acts on. |
+| `financial` | `payments_successful_last_24h` | `payment_attempts.successful_at >= now()->subDay()`. |
+| | `payments_pending` | `payment_attempts` whose status is `PENDING`. |
+| | `payments_requiring_reconciliation` | `payment_attempts.requires_reconciliation = 1 AND reconciled_at IS NULL` — the exact canonical flag `App\Actions\Payment\ProcessPaymentWebhookAction` already sets/clears; never a new concept. |
+| | `billings_past_due` | `service_contract_billings` whose status is `PAST_DUE`. |
+| `customers` | `active` | `users` (joined to `customer_profiles`, i.e. an actual Customer) whose account status is `ACTIVE`. |
+| | `registered_last_24h` | same join, `users.created_at >= now()->subDay()`. |
+| `support` | `open_or_in_progress` | `support_requests` whose status is non-terminal (`OPEN`/`IN_PROGRESS`). |
+| | `unassigned_open` | same, plus `assigned_admin_user_id IS NULL`. |
+| `technicians` | `assignable` | `technicians` whose `technician_statuses.is_assignable = 1` — the exact flag `App\Actions\Admin\Technician\AdminListTechnicianCandidatesAction` already uses for real assignment eligibility. |
+| | `busy` | `technicians` whose status is `BUSY`. |
+
+A metric is always an integer, including `0` — a zero-state database returns real zeros, never `null`
+or an omitted key.
+
+### "Needs attention" — exact conditions and links
+
+Each list is bounded to the 10 oldest-first matching rows (a small, deterministic, actionable backlog
+— not a paginated browse). Every item carries the exact identifier its own domain's existing Admin
+detail page already accepts, and the Dashboard itself performs no mutation — clicking through is always
+the only next step:
+
+| List | Condition | Links to |
+|---|---|---|
+| `booking_items_pending_assignment` | `booking_items.status = PENDING_ASSIGNMENT` | `/admin/bookings/{booking_uuid}` |
+| `contracts_awaiting_approval` | `service_contracts.status = REQUESTED` | `/admin/contracts/{contract_uuid}` |
+| `payments_requiring_reconciliation` | `requires_reconciliation = 1 AND reconciled_at IS NULL` | `/admin/payments/{payment_uuid}` |
+| `billings_past_due` | `service_contract_billings.status = PAST_DUE` | `/admin/billing/{billing_uuid}` |
+| `support_unassigned_open` | non-terminal status AND `assigned_admin_user_id IS NULL` | `/admin/support/{support_request_uuid}` |
+
+`PENDING_CUSTOMER_ACCEPTANCE`/`PENDING_PAYMENT` contracts are deliberately **not** an attention item:
+those states wait on the customer or a webhook, not an Admin click — only `REQUESTED` (awaiting
+`AdminApproveContractAction`) is a genuine Admin-actionable state today.
+
+### Recent activity
+
+Source: `admin_audit_logs` — the existing centralized Admin mutation ledger every other phase already
+writes through `AdminAuditLogger`, ordered `created_at DESC, id DESC` (deterministic tie-break) and
+bounded to the 10 most recent rows. Each entry exposes only `action_code`, `entity_type`,
+`entity_identifier` (already a safe string per every existing `AdminAuditLogger::record()` call site —
+never a raw binary id), `was_successful`, `failure_reason`, the actor's `full_name` (joined from
+`users`/`user_profiles`, `null` if the actor account no longer resolves), and `created_at`.
+**`old_values`/`new_values` are never returned** — the simplest, safest choice available (no
+per-action-code whitelist to maintain), and every existing audit-writing Action already keeps those
+columns small and safe (identifiers/short metadata only, per its own established convention), so
+nothing operationally useful is lost by omitting them here.
+
+### Timezone semantics ("last 24 hours", not "today")
+
+BLUE V1's application timezone (`config('app.timezone')`) is UTC. During this phase's own testing, a
+direct comparison of PHP's `now()` against the test database's `SELECT NOW()` showed the MySQL server's
+own clock is not UTC-aligned with the application's configured timezone in this environment. A
+calendar-day ("today", `startOfDay()`) boundary is exactly the kind of comparison a clock/timezone
+mismatch like this can silently corrupt near either midnight. Every "recent" metric therefore uses a
+rolling `now()->subDay()` ("last 24 hours") window instead — a fixed multi-hour offset only shifts a
+24-hour rolling window slightly, whereas it can flip a calendar-day boundary entirely. This is exactly
+the "prefer last 24 hours over ambiguous today" fallback called for when exact timezone alignment
+cannot be assumed; it is not itself a fix for the underlying app/DB timezone configuration, which is
+out of scope for a dashboard phase.
+
+### Financial safety
+
+The Dashboard's `financial` group and `payments_requiring_reconciliation`/`billings_past_due`
+attention lists are pure `SELECT`s over `payment_attempts`/`service_contract_billings`. Nothing in
+`App\Actions\Admin\Dashboard\*` or `App\Http\Controllers\Api\V1\Admin\Dashboard\*` references Stripe or
+writes to a Payment Attempt, Contract Billing subscription, or webhook event — covered by the same
+existing `AdminFinancialIsolationTest` source scan every other Admin module is. Never returned:
+`checkout_snapshot`, `client_secret`, Stripe identifiers, webhook payloads, or any other
+provider/security material.
+
+### Fields intentionally not returned
+
+Raw binary UUIDs (every identifier is the standard UUID string, matching every other Admin API);
+`admin_audit_logs.old_values`/`new_values`; any `payment_attempts`/`service_contract_billings` column
+with no Admin operational purpose (snapshots, provider secrets); Customer fields beyond what a count
+needs (no customer list is exposed here — Customer detail remains `/admin/customers`).
+
+### No schema changes; `blue_db` note
+
+No table, column, migration, or index was added — every metric is a plain `COUNT`/grouped-aggregate
+query over already-indexed columns (`booking_statuses`/`booking_item_statuses` joins,
+`idx_bookings_status_created`, `idx_service_contracts_status`, `idx_service_contract_billings_past_due`,
+`idx_support_requests_assigned_admin_status`, etc. — see `database/blue_v1_schema.sql`). The one new
+`dashboard.view` `admin_permissions` row was added via the existing `INSERT ... ON DUPLICATE KEY
+UPDATE` seed convention in `database/blue_v1_seed.sql`, with equivalent DML applied only to
+`blue_test_db` (the pre-existing `blue_db` Admin-schema gap, reported in every phase since B5, remains
+untouched and unrelated to B10).
+
+### Why no charts/analytics infrastructure
+
+No time-series data, chart library, or analytics pipeline was added. The existing schema does not
+already expose meaningful time-series aggregates, and BLUE V1 standing policy is to never invent
+dashboard infrastructure speculatively. Numbers and actionable, clickable lists answer "what needs
+attention right now" far more directly than a decorative graph would for a small trusted Admin team.
+
+### Frontend
+
+Replaces the placeholder at `resources/views/admin/dashboard/index.blade.php` (still the same
+`GET /admin` route). Sections: top summary card grid (one card per domain group above), a "Needs
+attention" panel (one sub-list per condition above, each item linking straight into the existing
+domain detail page — the Dashboard never adds a duplicate action button of its own), a bounded
+"Recent activity" feed, and a static "Quick access" link row to every existing `/admin/*` module. Every
+value — including `0` — is rendered via `textContent`; no `innerHTML` is used anywhere in
+`resources/js/admin/dashboard/index.js`.

@@ -211,6 +211,12 @@ VALUES
     'Publish Pricing',
     'Publish a DRAFT Pricing Scheme Version, making it live for real customer price calculations. Requires WebAuthn Step-Up, like contracts.cancel.',
     TRUE
+),
+(
+    'dashboard.view',
+    'View Admin Dashboard',
+    'View the Admin operational dashboard: read-only summary counts, attention lists, and recent activity aggregated across Bookings, Contracts, Payments, Contract Billing, Support, Technicians, and Customers.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -262,7 +268,8 @@ WHERE r.code = 'ADMIN'
     'services.manage',
     'pricing.view',
     'pricing.manage',
-    'pricing.publish'
+    'pricing.publish',
+    'dashboard.view'
   )
 ON DUPLICATE KEY UPDATE
     granted_at = granted_at;

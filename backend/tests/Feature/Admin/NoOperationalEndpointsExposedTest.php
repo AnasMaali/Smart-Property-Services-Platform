@@ -113,6 +113,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/contracts/{contract}/suspend',
             'api/v1/admin/customers',
             'api/v1/admin/customers/{customer}',
+            'api/v1/admin/dashboard',
             'api/v1/admin/me',
             'api/v1/admin/payments',
             'api/v1/admin/payments/{payment}',
