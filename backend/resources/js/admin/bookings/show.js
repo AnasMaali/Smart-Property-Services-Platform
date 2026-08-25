@@ -5,14 +5,16 @@
  * AdminBookingPresenter) - every field rendered below comes directly from
  * that response; nothing is invented or recomputed client-side.
  *
- * Booking Item technician-assignment state is displayed read-only here -
- * assign/reassign/start/complete actions are wired up in the Technicians
- * module (BLUE V1 Phase B3), reusing the same existing technician APIs;
- * this page never fakes those actions.
+ * Booking Item technician assign/reassign/start/complete actions (BLUE V1
+ * Phase B3) are delegated to technicians/booking-item-actions.js, which
+ * reuses the same existing technician APIs - this page only decides when to
+ * reload authoritative state after a mutation succeeds (loadBooking()
+ * again), it never patches local state to fake an outcome.
  */
 
 import { request, ApiError } from '../lib/api-client.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
+import { attachTechnicianActions } from '../technicians/booking-item-actions.js';
 
 const page = document.querySelector('[data-booking-detail-page]');
 
@@ -84,6 +86,12 @@ if (page) {
         const statusBadge = root.querySelector('[data-field="item_status"]');
         statusBadge.textContent = statusLabel(item.status);
         statusBadge.className = `rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClasses(item.status)}`;
+
+        const actionsContainer = root.querySelector('[data-technician-actions]');
+
+        if (actionsContainer) {
+            attachTechnicianActions(actionsContainer, item, loadBooking);
+        }
 
         return fragment;
     }

@@ -149,12 +149,139 @@
 
             <p data-field="assignment_summary" class="mt-1.5 text-sm text-slate-700"></p>
 
-            <div data-technician-actions class="mt-3 text-xs text-slate-400">
-                Assign / reassign / start / complete work actions are wired up in the
-                Technicians module.
-            </div>
+            <div data-technician-actions class="mt-3 flex flex-wrap gap-2"></div>
         </div>
     </div>
 </template>
+
+
+<div
+    data-technician-modal
+    style="display: none;"
+    class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+
+    <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+
+        <p data-technician-modal-service class="text-sm font-medium text-blue-600"></p>
+        <h2 data-technician-modal-title class="mt-1 text-lg font-semibold text-slate-950"></h2>
+
+        <div data-technician-modal-error class="mt-4 hidden rounded-xl border border-red-200
+                    bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+
+        <div data-technician-modal-loading class="mt-4 text-sm text-slate-500">
+            Loading eligible technicians...
+        </div>
+
+        <div data-technician-modal-empty style="display: none;" class="mt-4 rounded-xl
+                    border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500"></div>
+
+        <form data-technician-modal-form style="display: none;" class="mt-4 space-y-4">
+
+            <div>
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                    Technician
+                </label>
+                <div data-technician-modal-candidates class="max-h-56 space-y-1.5 overflow-y-auto"></div>
+            </div>
+
+            <div data-technician-modal-release-reason-field style="display: none;">
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                    Reason for reassignment
+                </label>
+                <textarea
+                    name="release_reason"
+                    rows="2"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                           text-sm text-slate-900 outline-none focus:border-blue-500
+                           focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
+
+            <div>
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                    Internal note (optional)
+                </label>
+                <textarea
+                    name="internal_note"
+                    rows="2"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                           text-sm text-slate-900 outline-none focus:border-blue-500
+                           focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-1">
+                <button
+                    type="button"
+                    data-technician-modal-cancel
+                    class="rounded-xl px-4 py-2.5 text-sm font-medium
+                           text-slate-600 hover:bg-slate-50">
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    data-technician-modal-submit
+                    class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm
+                           font-semibold text-white transition
+                           hover:bg-slate-800 disabled:cursor-not-allowed
+                           disabled:opacity-60">
+                    Confirm
+                </button>
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<div
+    data-confirm-action-modal
+    style="display: none;"
+    class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+
+        <h2 data-confirm-action-title class="text-lg font-semibold text-slate-950"></h2>
+        <p data-confirm-action-message class="mt-2 text-sm leading-6 text-slate-500"></p>
+
+        <div data-confirm-action-error class="mt-4 hidden rounded-xl border border-red-200
+                    bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+
+        <div class="mt-3">
+            <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                Reason (optional)
+            </label>
+            <textarea
+                data-confirm-action-reason
+                rows="2"
+                class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                       text-sm text-slate-900 outline-none focus:border-blue-500
+                       focus:ring-4 focus:ring-blue-100"></textarea>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+            <button
+                type="button"
+                data-confirm-action-cancel
+                class="rounded-xl px-4 py-2.5 text-sm font-medium
+                       text-slate-600 hover:bg-slate-50">
+                Cancel
+            </button>
+
+            <button
+                type="button"
+                data-confirm-action-confirm
+                class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm
+                       font-semibold text-white transition
+                       hover:bg-slate-800 disabled:cursor-not-allowed
+                       disabled:opacity-60">
+                Confirm
+            </button>
+        </div>
+
+    </div>
+
+</div>
 
 @endsection
