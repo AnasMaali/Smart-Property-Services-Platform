@@ -1,4 +1,4 @@
-# BLUE V1 — Admin Authentication & Authorization API Contract (Phase 9A)
+# BLUE V1 — Admin Authentication & Authorization API Contract (Phase 9A, superseded by Phase A2.3)
 
 Base URL: `{{base_url}}` (local default: `http://127.0.0.1:8000/api/v1`)
 
@@ -6,6 +6,14 @@ This document describes the Admin authentication/authorization endpoints actuall
 `backend/routes/api.php`, their Form Requests, Actions, Controllers, and middleware, verified
 against `backend/tests/Feature/Admin/*`. It documents only what exists in code — no aspirational
 or planned behavior is included.
+
+> **BLUE V1 Phase A2.3 — Mandatory Admin MFA Login — SUPERSEDES §1 below.** The single-request,
+> password-only `POST /v1/admin/auth/login` that returned a session/token directly **no longer
+> exists**. Admin login is now a mandatory two-stage flow — password, then WebAuthn — and a correct
+> password alone can never create a session or issue a token. See "§1. Admin Login (Stage 1)",
+> "§1a. First-Credential Bootstrap", and "§1b. MFA Verify (Stage 2)" below for the current contract.
+> §2 (Refresh) and §3 (Me) are unchanged by this phase — a refresh token only ever belongs to a
+> session that already passed MFA.
 
 ## Scope of this phase
 
@@ -62,7 +70,9 @@ behind `auth.admin` once this document is extended.
 
 | # | Feature | Method | Route | Auth required |
 |---|---|---|---|---|
-| 1 | Admin Login | POST | `/v1/admin/auth/login` | No (rate limited: 5/min per identity + 20/min per IP) |
+| 1 | Admin Login (Stage 1 — password) | POST | `/v1/admin/auth/login` | No (rate limited: 5/min per identity + 20/min per IP) — **never returns a session** |
+| 1a | First-Credential Bootstrap | POST | `/v1/admin/auth/mfa/enroll` | No — gated by a short-lived `login_ticket` (rate limited: 10/min per ticket + 30/min per IP) — **never returns a session** |
+| 1b | MFA Verify (Stage 2 — WebAuthn) | POST | `/v1/admin/auth/mfa/verify` | No — gated by a short-lived `login_ticket` (rate limited: 10/min per ticket + 30/min per IP) — **the only endpoint that creates a session** |
 | 2 | Admin Refresh Access Token | POST | `/v1/admin/auth/refresh` | No (refresh token in body) |
 | 3 | Admin "Me" (identity bootstrap) | GET | `/v1/admin/me` | Yes — `auth.admin` (Bearer) |
 | — | Admin Logout | POST | `/v1/auth/logout` | Yes (Bearer) — **reused from customer auth**, see below |
@@ -78,37 +88,198 @@ session-revocation logic under a separate Admin path.
 
 ---
 
-## 1. Admin Login
+## 1. Admin Login (Stage 1 — password)
+
+BLUE V1 Phase A2.3. `App\Actions\Auth\AdminLoginAction` / `App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController`.
+
+> **Non-negotiable rule**: a correct password here NEVER creates an `auth_sessions` row, an access
+> token, or a refresh token. This endpoint's only job is to validate the password and identity,
+> then hand back a short-lived WebAuthn challenge for whichever of the two flows below applies.
 
 - **HTTP method / route**: `POST /v1/admin/auth/login`
 - **Auth required**: No
-- **Rate limiting**: `throttle:admin-auth-login` (`App\Providers\AppServiceProvider`) — two
-  independent buckets, both must clear: 5 requests per minute per hashed `phone_number` identity
-  (follows one targeted account regardless of source IP) and 20 requests per minute per hashed
-  client IP (limits credential spraying/phone-number enumeration from one source, independent of
-  which account is being tried). Either bucket being exceeded returns `429 Too Many Requests`
-  regardless of whether the credentials are correct. Successful requests are not exempted from the
-  counter, but normal login usage (well under 5/min) is unaffected.
-- **Headers**: `Content-Type: application/json`
+- **Rate limiting**: `throttle:admin-auth-login` — unchanged from before this phase: 5/min per
+  hashed `phone_number` identity + 20/min per hashed client IP, both independent buckets.
 - **Request JSON**:
 ```json
 {
   "phone_number": "{{admin_phone_number}}",
-  "password": "{{admin_password}}",
-  "device_name": "Ops MacBook",
-  "app_version": "1.0.0"
+  "password": "{{admin_password}}"
 }
 ```
+  `device_name`/`app_version` are no longer accepted here — this request never creates a session,
+  so session/device metadata is captured where the session is actually created (§1b, MFA Verify).
 - **Fields**:
   | Field | Required | Rules |
   |---|---|---|
   | `phone_number` | Yes | string, `^\+?[0-9]{8,20}$` |
   | `password` | Yes | string |
-  | `device_name` | No | string, max:120 |
-  | `app_version` | No | string, max:30 |
 
-- **Success status**: `200 OK`
-- **Success response**:
+- **Success status**: `200 OK` — exactly one of two states, decided by
+  `App\Support\Admin\WebAuthn\AdminWebAuthnCredentialRepository::activeCount()` for this Admin:
+
+### A. `MFA_REQUIRED` — the Admin already has ≥1 active WebAuthn credential
+```json
+{
+  "success": true,
+  "message": "WebAuthn verification required.",
+  "data": {
+    "state": "MFA_REQUIRED",
+    "login_ticket": "9c1e2b3a-....-....-....-............",
+    "webauthn": {
+      "rp_id": "admin.example.com",
+      "challenge": "<base64url>",
+      "allow_credentials": [
+        { "id": "<base64url>", "type": "public-key", "transports": ["internal"] }
+      ],
+      "user_verification": "required",
+      "timeout": null
+    }
+  }
+}
+```
+Feed `data.webauthn` directly into `navigator.credentials.get({ publicKey: ... })` (after base64url
+-decoding `challenge`/`allow_credentials[].id` per the WebAuthn browser API's binary fields), then
+call §1b (MFA Verify) with the resulting assertion and the same `login_ticket`.
+
+### B. `MFA_ENROLLMENT_REQUIRED` — the Admin has zero active WebAuthn credentials
+```json
+{
+  "success": true,
+  "message": "WebAuthn credential enrollment required.",
+  "data": {
+    "state": "MFA_ENROLLMENT_REQUIRED",
+    "login_ticket": "1a2b3c4d-....-....-....-............",
+    "webauthn": {
+      "rp": { "id": "admin.example.com", "name": "BLUE Admin" },
+      "user": { "id": "<base64url>", "name": "+971500001234", "display_name": "Omar Al Admin" },
+      "challenge": "<base64url>",
+      "pub_key_cred_params": [{ "type": "public-key", "alg": -7 }, { "type": "public-key", "alg": -257 }],
+      "authenticator_selection": { "user_verification": "required" },
+      "attestation": "none",
+      "exclude_credentials": [],
+      "timeout": null
+    }
+  }
+}
+```
+Feed `data.webauthn` into `navigator.credentials.create({ publicKey: ... })`, then call §1a
+(First-Credential Bootstrap) with the resulting attestation and the same `login_ticket`.
+
+Both states are reachable **only after a genuine password proof** — it is deliberately acceptable
+for the two to be distinguishable from each other (see "Anti-enumeration" below); what an
+unauthenticated caller can never learn is whether a given phone number/password pair is even valid.
+
+`login_ticket` is the uuid of the `admin_webauthn_challenges` row Stage 1 created (see
+`App\Support\Admin\WebAuthn\AdminWebAuthnChallengeIssued`) — an opaque, short-lived (~5 minutes,
+`ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS`), single-use bearer identifier for this one pending login
+attempt, exposed the same way `session_uuid` already is elsewhere in this API. It carries no secret
+itself; the actual WebAuthn challenge match is independently re-verified by hash inside
+`AdminWebAuthnChallengeService::consume()` regardless of what ticket accompanies a response.
+
+- **Error status**: `422 Unprocessable Entity` for business failure; `429 Too Many Requests` once
+  the rate limit is exceeded.
+- **Example error JSON**:
+```json
+{
+  "success": false,
+  "message": "The phone number or password you entered is incorrect.",
+  "data": null
+}
+```
+  This exact same message/status is returned for: unknown phone number, wrong password,
+  non-`ACTIVE` account status, a missing/inactive `ADMIN`/`SUPER_ADMIN` role (including a normal
+  `CUSTOMER`-only account attempting to log in here), and an inactive/missing `ADMIN_WEB` client
+  type. The response never reveals which of these occurred.
+- **Never returned**: `access_token`, `refresh_token`, `session_uuid`, a password hash, or any raw
+  binary/internal database id.
+
+---
+
+## 1a. First-Credential Bootstrap
+
+BLUE V1 Phase A2.3. `App\Actions\Auth\AdminMfaEnrollAction` / `App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaEnrollController`.
+
+The **only** password-authenticated WebAuthn credential registration path — reachable exclusively
+via the `login_ticket` Stage 1 issued for `MFA_ENROLLMENT_REQUIRED`. It is deliberately **not** a
+general "register a new credential" endpoint: if the caller already holds ≥1 active credential by
+the time this runs, it is rejected with the same generic failure below (server-enforced, not merely
+UI-hidden — see `AdminWebAuthnRegistrationService`'s `STEP_UP_REQUIRED` outcome, reused unchanged
+from Phase A2.2). Adding further credentials to an Admin who already has one is step-up protected
+and belongs to a later phase (A2.5+), with no route here.
+
+- **HTTP method / route**: `POST /v1/admin/auth/mfa/enroll`
+- **Auth required**: No — gated entirely by `login_ticket`
+- **Rate limiting**: `throttle:admin-auth-mfa-enroll` — 10/min per ticket + 30/min per IP.
+- **Request JSON**:
+```json
+{
+  "login_ticket": "1a2b3c4d-....-....-....-............",
+  "credential": { "id": "...", "rawId": "...", "type": "public-key", "response": { "clientDataJSON": "...", "attestationObject": "..." } }
+}
+```
+  `credential` is the raw `PublicKeyCredential` JSON object `navigator.credentials.create()`
+  produced in the browser — validated in shape only at this layer; the full WebAuthn ceremony
+  (challenge match, origin, RP ID, attestation format, user verification) is
+  `AdminWebAuthnRegistrationService::verify()`'s job.
+- **Success status**: `200 OK`. **Registration alone never issues a session** — the stricter
+  `registration → assertion → session` model is used deliberately (BLUE V1 Phase A2 architecture).
+  On success the response is identical in shape to Stage 1's `MFA_REQUIRED` (§1.A above): a fresh
+  `login_ticket` and `LOGIN_ASSERTION` WebAuthn options for the credential just registered, to be
+  completed immediately via §1b.
+- **Error status**: `422 Unprocessable Entity` (generic message below) for: unknown Admin,
+  unknown/expired/already-consumed `login_ticket`, an Admin who already has an active credential,
+  or any WebAuthn ceremony failure (challenge/origin/RP ID/attestation/user-verification).
+```json
+{
+  "success": false,
+  "message": "This WebAuthn verification could not be completed.",
+  "data": null
+}
+```
+
+---
+
+## 1b. MFA Verify (Stage 2 — WebAuthn assertion)
+
+BLUE V1 Phase A2.3. `App\Actions\Auth\AdminMfaVerifyAction` / `App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaVerifyController`.
+
+**The only endpoint in the entire Admin API that creates an `auth_sessions` row or issues a
+token.** Uses `App\Actions\Auth\Concerns\IssuesAdminAuthSession` — the exact same production
+session-issuance mechanism this endpoint's password-only predecessor used, now reached only after a
+verified WebAuthn assertion.
+
+- **HTTP method / route**: `POST /v1/admin/auth/mfa/verify`
+- **Auth required**: No — gated entirely by `login_ticket` (never a bearer token; a forged
+  `Authorization` header has no effect on the outcome)
+- **Rate limiting**: `throttle:admin-auth-mfa-verify` — 10/min per ticket + 30/min per IP.
+- **Request JSON**:
+```json
+{
+  "login_ticket": "9c1e2b3a-....-....-....-............",
+  "credential": { "id": "...", "rawId": "...", "type": "public-key", "response": { "clientDataJSON": "...", "authenticatorData": "...", "signature": "...", "userHandle": "..." } },
+  "device_name": "Ops MacBook",
+  "app_version": "1.0.0"
+}
+```
+  `credential` is the raw `PublicKeyCredential` JSON `navigator.credentials.get()` produced.
+  `device_name`/`app_version` are optional and now belong here (moved from Stage 1 — see §1),
+  since this is the request that actually creates the session.
+- **Server-side checks, in order** (all re-read fresh from the database — nothing from Stage 1 is
+  trusted):
+  1. Resolve the pending `login_ticket` (unknown/expired/consumed → generic failure).
+  2. Re-check `ACTIVE` account status + active `ADMIN`/`SUPER_ADMIN` role.
+  3. Re-check the `ADMIN_WEB` client type is active.
+  4. Verify the WebAuthn assertion: credential belongs to this Admin and is not revoked; origin;
+     RP ID; challenge match + single-use; user verification required; signature; sign-counter
+     policy (see `AdminWebAuthnCeremonyFactory`'s docblock — a clone-warning counter regression
+     hard-fails; a `0`/`0` counter, common for passkeys, is never treated as suspicious).
+  5. **Immediately before issuing the session**, re-check account/role eligibility one more time —
+     the WebAuthn ceremony itself takes real wall-clock time (network round trip + user
+     interaction), during which a revocation could otherwise land in the gap.
+  6. Only if every check above passed: create `auth_sessions`, issue the access/refresh token pair.
+- **Success status**: `200 OK` — the exact same session response shape the old password-only
+  endpoint returned:
 ```json
 {
   "success": true,
@@ -128,31 +299,21 @@ session-revocation logic under a separate Admin path.
   }
 }
 ```
-  `role` is the single highest-priority active role used for the JWT's `role` claim
-  (`SUPER_ADMIN` takes priority over `ADMIN` when a user holds both). `roles` lists every active
-  Admin role code the user currently holds, for the Admin UI to consult if it ever needs to
-  distinguish `SUPER_ADMIN`-only capabilities in a later phase.
-- **Error status**: `422 Unprocessable Entity` for business failure; `429 Too Many Requests` once
-  the rate limit is exceeded.
-- **Example error JSON**:
+- **Error status**: `422 Unprocessable Entity`:
 ```json
 {
   "success": false,
-  "message": "The phone number or password you entered is incorrect.",
+  "message": "This WebAuthn verification could not be completed.",
   "data": null
 }
 ```
-  This exact same message/status is returned for: unknown phone number, wrong password,
-  non-`ACTIVE` account status, and — critically — an account that exists, is `ACTIVE`, and has the
-  correct password, but holds no currently active `ADMIN`/`SUPER_ADMIN` role (including a normal
-  `CUSTOMER`-only account attempting to log in here). The response never reveals which of these
-  occurred.
-- **Business behavior**: Creates a new `auth_sessions` row (`client_type_id` = `ADMIN_WEB`,
-  30-day expiry from now), stores only `SHA-256(raw refresh token)`, updates
-  `users.last_login_at`, and issues an access token embedding `sub`, `sid`,
-  `role` (highest-priority active Admin role), `client=ADMIN_WEB`.
-- **Security notes**: identical to customer login (raw refresh token returned exactly once; IP
-  stored packed; no password/hash ever in the response).
+  Returned identically for every rejection reason listed under "Server-side checks" above — a
+  wrong/unregistered/revoked credential, a bad/expired/replayed challenge, a wrong origin/RP ID, a
+  missing user-verification flag, an invalid signature, a sign-counter clone signal, or an
+  account/role that stopped being eligible between Stage 1 and this call. None are distinguished.
+- **Security notes**: raw refresh token returned exactly once; IP/user-agent captured at this
+  request (not Stage 1, since this is where the session is actually created); no password, no
+  public key, and no raw binary/internal id ever appears in the response.
 
 ---
 
@@ -219,6 +380,41 @@ session-revocation logic under a separate Admin path.
 
 ---
 
+## Anti-enumeration and timing (Phase A2.3)
+
+Stage 1 preserves the exact pre-existing anti-enumeration contract for anything an attacker could
+learn *without* a valid password: unknown phone number, wrong password, inactive account, and
+missing/inactive Admin role all return the identical generic `422`. Once the password has genuinely
+been proven correct, it is deliberately acceptable — and unavoidable — for the caller to learn
+whether `MFA_REQUIRED` or `MFA_ENROLLMENT_REQUIRED` applies, since reaching either state already
+required a real password proof; this reveals nothing to anyone who has not already authenticated
+that far. A response-latency difference between a fast password failure and a slower successful
+Stage 1 call (which additionally issues a WebAuthn challenge) is an inherent, already-precedented
+characteristic of this flow — the same kind of difference a successful vs. failed login already had
+before this phase (session creation vs. an immediate rejection) — and is not treated as a new attack
+surface; rate limiting, not constant-time responses, is this codebase's established defense against
+enumeration throughout.
+
+## Local development
+
+WebAuthn MFA is mandatory in every environment, including local development — there is no
+`APP_ENV`-based bypass anywhere in this flow. The only environment-specific difference is outside
+Laravel entirely: production restricts network reachability of the Admin origin to approved
+Tailscale devices, while local development simply runs against `localhost` with
+`ADMIN_WEBAUTHN_RP_ID`/`ADMIN_WEBAUTHN_ORIGINS` set to the developer's local browser origin (see
+`docs/api-contracts/admin-webauthn-mfa-v1.md`).
+
+## Removed: the old password-only session flow
+
+Before this phase, `POST /v1/admin/auth/login` validated the password and returned a full session
+(`access_token`, `refresh_token`, `session_uuid`) in one request — see the (now historical) example
+in §1 above this notice was added next to. That single-request flow **no longer exists in any
+form** — there is no hidden password-only route, query parameter, or internal flag that bypasses
+MFA. There is exactly one canonical production Admin login flow: password (§1) → WebAuthn (§1a or
+§1b) → session, always.
+
+---
+
 ## `auth.admin` middleware
 
 `App\Http\Middleware\AuthenticateAdmin`, aliased as `auth.admin`. Mirrors `auth.customer`
@@ -253,7 +449,10 @@ controllers/Actions built in later phases.
   on top of the `auth.admin` boundary this document describes, without changing anything in this
   document — `auth.admin` still only answers "is this an authenticated Admin?", never "is this
   Admin allowed to do X?".
-- MFA/2FA — not required by any current requirement document.
+- ~~MFA/2FA — not required by any current requirement document.~~ **Superseded by BLUE V1 Phase
+  A2.3** — WebAuthn MFA is now mandatory for every Admin login; see §1/§1a/§1b above and
+  `docs/api-contracts/admin-webauthn-mfa-v1.md` for the underlying credential/challenge
+  infrastructure (Phase A2.1/A2.2).
 - Admin password change/reset endpoints — the existing `/v1/auth/change-password`,
   `/v1/auth/forgot-password`, etc. routes remain customer-only (gated by `auth.customer` /
   unauthenticated OTP flows respectively) and were not extended to Admin accounts in this phase.

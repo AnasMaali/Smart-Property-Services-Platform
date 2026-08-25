@@ -9,13 +9,15 @@ use Firebase\JWT\Key;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesAdminsForTests;
 use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class RefreshTest extends TestCase
 {
-    use DatabaseTransactions;
+    use AuthenticatesAdminsForTests;
     use AuthenticatesCustomersForTests;
+    use DatabaseTransactions;
 
     private const GENERIC_MESSAGE = 'This refresh token is invalid or has expired.';
 
@@ -345,9 +347,12 @@ class RefreshTest extends TestCase
         // End-to-end complement of test_non_mobile_client_type_is_rejected_
         // with_generic_response above: that test hand-sets client_type_id
         // to prove the rejection rule exists, this one drives a refresh
-        // token genuinely issued by the real Admin login endpoint through
-        // the Customer /refresh endpoint, proving the two client boundaries
-        // cannot be crossed end-to-end.
+        // token genuinely issued by the real Admin session-issuance code
+        // (BLUE V1 Phase A2.3 made the HTTP Admin login endpoint MFA-gated,
+        // so it no longer returns a token to drive this end-to-end via
+        // HTTP - Tests\Support\AuthenticatesAdminsForTests mints the same
+        // production session directly) through the Customer /refresh
+        // endpoint, proving the two client boundaries cannot be crossed.
         $now = now();
         $userUuid = UuidBinary::generate();
         $phoneNumber = '+971523009999';
@@ -375,12 +380,9 @@ class RefreshTest extends TestCase
             'assigned_at' => $now,
         ]);
 
-        $login = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-        ])->assertStatus(200);
+        $session = $this->issueAdminSession($userUuid, ['ADMIN']);
 
-        $response = $this->refresh($login->json('data.refresh_token'));
+        $response = $this->refresh($session['refresh_token']);
 
         $response->assertStatus(422)->assertExactJson([
             'success' => false,

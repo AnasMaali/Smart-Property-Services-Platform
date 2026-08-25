@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
@@ -37,15 +38,18 @@ final class AdminWebAuthnChallengeService
     /**
      * Generates a cryptographically secure challenge, persists only its
      * hash, and returns the raw challenge bytes (used exactly once, to
-     * build the WebAuthn options shown to the browser).
+     * build the WebAuthn options shown to the browser) plus the challenge
+     * row's own uuid (usable as an opaque, single-use login/enrollment
+     * ticket - see AdminWebAuthnChallengeIssued).
      */
-    public function issue(User $user, AdminWebAuthnChallengePurpose $purpose): string
+    public function issue(User $user, AdminWebAuthnChallengePurpose $purpose): AdminWebAuthnChallengeIssued
     {
         $rawChallenge = random_bytes(32);
+        $ticket = UuidBinary::generate();
         $now = now();
 
         DB::table('admin_webauthn_challenges')->insert([
-            'id' => UuidBinary::toBinary(UuidBinary::generate()),
+            'id' => UuidBinary::toBinary($ticket),
             'user_id' => UuidBinary::toBinary($user->id),
             'purpose_id' => $this->purposeId($purpose),
             'challenge_hash' => hash('sha256', $rawChallenge, true),
@@ -55,7 +59,37 @@ final class AdminWebAuthnChallengeService
             'updated_at' => $now,
         ]);
 
-        return $rawChallenge;
+        return new AdminWebAuthnChallengeIssued($ticket, $rawChallenge);
+    }
+
+    /**
+     * Read-only lookup used by Stage 2 (MFA verify) / first-credential
+     * enrollment to resolve which Admin a client-presented $ticket belongs
+     * to, without consuming it - actual consumption still happens exactly
+     * once, atomically, inside consume() (called by
+     * AdminWebAuthnRegistrationService/AdminWebAuthnAssertionService's own
+     * verify() methods against the hash of the client's actual WebAuthn
+     * response). A ticket that is unknown, already consumed, or expired
+     * all return null - never distinguished for the caller.
+     */
+    public function resolvePendingTicket(string $ticket, AdminWebAuthnChallengePurpose $purpose): ?User
+    {
+        if (! Str::isUuid($ticket)) {
+            return null;
+        }
+
+        $row = DB::table('admin_webauthn_challenges')
+            ->where('id', UuidBinary::toBinary($ticket))
+            ->where('purpose_id', $this->purposeId($purpose))
+            ->whereNull('consumed_at')
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if ($row === null) {
+            return null;
+        }
+
+        return User::where('id', $row->user_id)->first();
     }
 
     /**

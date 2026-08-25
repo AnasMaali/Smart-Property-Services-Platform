@@ -5,17 +5,20 @@ namespace Tests\Feature\Admin;
 use App\Support\Uuid\UuidBinary;
 use Firebase\JWT\JWT;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
+use Tests\Support\AuthenticatesAdminsForTests;
 use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class AdminAuthorizationTest extends TestCase
 {
-    use DatabaseTransactions;
+    use AuthenticatesAdminsForTests;
     use AuthenticatesCustomersForTests;
+    use DatabaseTransactions;
 
     private const GENERIC_SESSION_MESSAGE = 'This session is invalid or has expired.';
 
@@ -32,10 +35,17 @@ class AdminAuthorizationTest extends TestCase
     }
 
     /**
-     * Creates a user with the given roles and logs it in through the real
-     * Admin HTTP login endpoint (or the customer login endpoint, when the
-     * only role is CUSTOMER), returning the raw values needed for the
-     * caller's assertions.
+     * Creates a user with the given roles and mints a real session for it -
+     * an Admin (ADMIN_WEB) session via the exact production session-issuance
+     * code AdminMfaVerifyAction uses (Tests\Support\AuthenticatesAdminsForTests),
+     * or a Customer (mobile) session when the only role is CUSTOMER
+     * (Tests\Support\AuthenticatesCustomersForTests) - returning the raw
+     * values needed for the caller's assertions. BLUE V1 Phase A2.3 made
+     * Admin login MFA-gated, so this no longer drives the real HTTP login
+     * endpoint (see AdminMfaLoginTest for tests that actually exercise
+     * that flow with real WebAuthn cryptography) - this class tests the
+     * auth.admin/auth.customer middleware boundary, not the login ceremony
+     * itself.
      *
      * @param  array<int, string>  $roleCodes
      * @return array{user_uuid: string, access_token: string, session_uuid: string}
@@ -87,15 +97,13 @@ class AdminAuthorizationTest extends TestCase
             ];
         }
 
-        $login = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-        ])->assertStatus(200);
+        $adminRoleCodes = array_values(array_intersect($roleCodes, ['ADMIN', 'SUPER_ADMIN']));
+        $session = $this->issueAdminSession($userUuid, $adminRoleCodes);
 
         return [
             'user_uuid' => $userUuid,
-            'access_token' => $login->json('data.access_token'),
-            'session_uuid' => $login->json('data.session_uuid'),
+            'access_token' => $session['access_token'],
+            'session_uuid' => $session['session_uuid'],
         ];
     }
 
@@ -307,12 +315,12 @@ class AdminAuthorizationTest extends TestCase
             ->where('id', UuidBinary::toBinary($admin['session_uuid']))
             ->update(['expires_at' => $boundary]);
 
-        \Illuminate\Support\Carbon::setTestNow($boundary);
+        Carbon::setTestNow($boundary);
 
         try {
             $response = $this->getMe($admin['access_token']);
         } finally {
-            \Illuminate\Support\Carbon::setTestNow(null);
+            Carbon::setTestNow(null);
         }
 
         $response->assertStatus(401)->assertExactJson([
@@ -439,22 +447,15 @@ class AdminAuthorizationTest extends TestCase
             'assigned_at' => $now,
         ]);
 
-        $firstLogin = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-        ])->assertStatus(200);
-
-        $secondLogin = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-        ])->assertStatus(200);
+        $firstSession = $this->issueAdminSession($userUuid, ['ADMIN']);
+        $secondSession = $this->issueAdminSession($userUuid, ['ADMIN']);
 
         $this->postJson('/api/v1/auth/logout-all', [], [
-            'Authorization' => 'Bearer '.$firstLogin->json('data.access_token'),
+            'Authorization' => 'Bearer '.$firstSession['access_token'],
         ])->assertStatus(200);
 
-        $this->getMe($firstLogin->json('data.access_token'))->assertStatus(401);
-        $this->getMe($secondLogin->json('data.access_token'))->assertStatus(401);
+        $this->getMe($firstSession['access_token'])->assertStatus(401);
+        $this->getMe($secondSession['access_token'])->assertStatus(401);
 
         $activeSessions = DB::table('auth_sessions')
             ->where('user_id', UuidBinary::toBinary($userUuid))

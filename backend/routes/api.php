@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaEnrollController;
+use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
@@ -172,7 +174,17 @@ Route::post('/v1/contracts/billing/webhooks/stripe', ContractBillingWebhookContr
 // /v1/auth/logout and /v1/auth/logout-all routes above - LogoutAction and
 // LogoutAllAction only require a valid session belonging to an ACTIVE user
 // and never check role, so they already work unchanged for Admin sessions.
+// BLUE V1 Phase A2.3 - Mandatory Admin MFA login. Stage 1 (password) never
+// creates a session - see App\Actions\Auth\AdminLoginAction. Stage 2
+// (WebAuthn assertion) is the ONLY place a session is created - see
+// App\Actions\Auth\AdminMfaVerifyAction. The first-credential bootstrap
+// (mfa/enroll) never issues a session either - see
+// App\Actions\Auth\AdminMfaEnrollAction. There is exactly one canonical
+// production Admin login flow; no password-only session-issuing route
+// exists anywhere.
 Route::post('/v1/admin/auth/login', AdminLoginController::class)->middleware('throttle:admin-auth-login');
+Route::post('/v1/admin/auth/mfa/enroll', AdminMfaEnrollController::class)->middleware('throttle:admin-auth-mfa-enroll');
+Route::post('/v1/admin/auth/mfa/verify', AdminMfaVerifyController::class)->middleware('throttle:admin-auth-mfa-verify');
 Route::post('/v1/admin/auth/refresh', AdminRefreshController::class)->middleware('throttle:auth-refresh');
 
 Route::middleware('auth.admin')->group(function () {

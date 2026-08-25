@@ -2,14 +2,14 @@
 
 namespace App\Http\Controllers\Api\V1\Admin\Auth;
 
-use App\Actions\Auth\AdminLoginAction;
+use App\Actions\Auth\AdminMfaEnrollAction;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Auth\AdminLoginRequest;
+use App\Http\Requests\Auth\AdminMfaEnrollRequest;
 use Illuminate\Http\JsonResponse;
 
-class AdminLoginController extends Controller
+class AdminMfaEnrollController extends Controller
 {
-    public function __invoke(AdminLoginRequest $request, AdminLoginAction $action): JsonResponse
+    public function __invoke(AdminMfaEnrollRequest $request, AdminMfaEnrollAction $action): JsonResponse
     {
         $result = $action->handle($request->validated());
 

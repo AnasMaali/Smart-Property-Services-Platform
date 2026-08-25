@@ -8,13 +8,15 @@ use Firebase\JWT\Key;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Tests\Support\AuthenticatesAdminsForTests;
 use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
 class AdminRefreshTest extends TestCase
 {
-    use DatabaseTransactions;
+    use AuthenticatesAdminsForTests;
     use AuthenticatesCustomersForTests;
+    use DatabaseTransactions;
 
     private const GENERIC_MESSAGE = 'This refresh token is invalid or has expired.';
 
@@ -31,8 +33,12 @@ class AdminRefreshTest extends TestCase
     }
 
     /**
-     * Creates an ADMIN user and logs it in through the real HTTP endpoint,
-     * returning the raw refresh token issued for that session.
+     * Creates an ADMIN user and mints a real session for it directly - the
+     * exact production session-issuance code AdminMfaVerifyAction uses
+     * (Tests\Support\AuthenticatesAdminsForTests) - since BLUE V1 Phase A2.3
+     * made the real HTTP login endpoint MFA-gated (it no longer returns a
+     * token at all). This class tests refresh behavior, not login/MFA
+     * itself.
      *
      * @return array{user_uuid: string, refresh_token: string, session_uuid: string}
      */
@@ -69,15 +75,12 @@ class AdminRefreshTest extends TestCase
             'assigned_at' => $now,
         ]);
 
-        $login = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => 'Passw0rd123',
-        ])->assertStatus(200);
+        $session = $this->issueAdminSession($userUuid, ['ADMIN']);
 
         return [
             'user_uuid' => $userUuid,
-            'refresh_token' => $login->json('data.refresh_token'),
-            'session_uuid' => $login->json('data.session_uuid'),
+            'refresh_token' => $session['refresh_token'],
+            'session_uuid' => $session['session_uuid'],
         ];
     }
 

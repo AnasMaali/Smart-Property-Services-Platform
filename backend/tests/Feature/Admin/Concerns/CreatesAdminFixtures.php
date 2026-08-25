@@ -7,18 +7,27 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\Feature\Technician\Concerns\CreatesTechnicianFixtures;
+use Tests\Support\AuthenticatesAdminsForTests;
 
 /**
  * Admin-Operations-specific fixture builders (BLUE V1 Phase 9B), layered on
  * top of Tests\Feature\Technician\Concerns\CreatesTechnicianFixtures. Every
- * Admin Operations test needs a real, HTTP-logged-in Admin/Super Admin
+ * Admin Operations test needs a real, authenticated Admin/Super Admin
  * session (not just a bare actor uuid, since these tests exercise the real
- * routes end-to-end) - createAdminUser() from the Technician fixtures trait
- * does not expose the phone number needed to log in, so this trait builds
- * and logs in its own.
+ * routes end-to-end).
+ *
+ * BLUE V1 Phase A2.3 made Admin login MFA-gated - createAndLoginAdmin() no
+ * longer drives the real HTTP login endpoint (which now only ever returns
+ * an MFA challenge, never a token); it mints the session directly via
+ * Tests\Support\AuthenticatesAdminsForTests, the exact same production
+ * session-issuance code the real post-MFA login path uses. Tests that
+ * specifically exercise the Admin login/MFA flow itself live in
+ * AdminMfaLoginTest and drive the real HTTP endpoints with real WebAuthn
+ * cryptography instead.
  */
 trait CreatesAdminFixtures
 {
+    use AuthenticatesAdminsForTests;
     use CreatesTechnicianFixtures;
 
     private static int $adminOpsFixtureSequence = 0;
@@ -64,14 +73,11 @@ trait CreatesAdminFixtures
             ]);
         }
 
-        $login = $this->postJson('/api/v1/admin/auth/login', [
-            'phone_number' => $phoneNumber,
-            'password' => self::ADMIN_FIXTURE_PASSWORD,
-        ])->assertStatus(200);
+        $session = $this->issueAdminSession($userUuid, $roleCodes);
 
         return [
             'user_uuid' => $userUuid,
-            'access_token' => $login->json('data.access_token'),
+            'access_token' => $session['access_token'],
         ];
     }
 

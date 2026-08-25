@@ -43,11 +43,11 @@ final class AdminWebAuthnAssertionService
         private readonly AdminWebAuthnCredentialRepository $credentialRepository,
     ) {}
 
-    public function options(User $expectedActor, AdminWebAuthnChallengePurpose $purpose): PublicKeyCredentialRequestOptions
+    public function options(User $expectedActor, AdminWebAuthnChallengePurpose $purpose): AdminWebAuthnAssertionOptionsResult
     {
         $this->assertAllowedPurpose($purpose);
 
-        $rawChallenge = $this->challengeService->issue($expectedActor, $purpose);
+        $issued = $this->challengeService->issue($expectedActor, $purpose);
 
         $allowCredentials = array_map(
             fn ($record): PublicKeyCredentialDescriptor => PublicKeyCredentialDescriptor::create(
@@ -58,12 +58,14 @@ final class AdminWebAuthnAssertionService
             $this->credentialRepository->listActive(UuidBinary::toBinary($expectedActor->id)),
         );
 
-        return PublicKeyCredentialRequestOptions::create(
-            challenge: $rawChallenge,
+        $options = PublicKeyCredentialRequestOptions::create(
+            challenge: $issued->rawChallenge,
             rpId: $this->config->rpId(),
             allowCredentials: $allowCredentials,
             userVerification: PublicKeyCredentialRequestOptions::USER_VERIFICATION_REQUIREMENT_REQUIRED,
         );
+
+        return new AdminWebAuthnAssertionOptionsResult($issued->ticket, $options);
     }
 
     public function verify(User $expectedActor, AdminWebAuthnChallengePurpose $purpose, string $rawResponseJson, string $host): AdminWebAuthnAssertionResult

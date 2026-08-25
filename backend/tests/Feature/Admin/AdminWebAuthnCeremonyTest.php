@@ -125,8 +125,9 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $first = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::REGISTRATION);
         $second = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::REGISTRATION);
 
-        $this->assertSame(32, strlen($first));
-        $this->assertNotSame($first, $second);
+        $this->assertSame(32, strlen($first->rawChallenge));
+        $this->assertNotSame($first->rawChallenge, $second->rawChallenge);
+        $this->assertNotSame($first->ticket, $second->ticket);
     }
 
     public function test_challenge_purpose_binding_is_enforced(): void
@@ -134,8 +135,8 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $admin = $this->createUser(['ADMIN']);
         $raw = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::REGISTRATION);
 
-        $wrongPurpose = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw);
-        $rightPurpose = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw);
+        $wrongPurpose = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw->rawChallenge);
+        $rightPurpose = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw->rawChallenge);
 
         $this->assertSame(AdminWebAuthnChallengeOutcome::NOT_FOUND, $wrongPurpose);
         $this->assertSame(AdminWebAuthnChallengeOutcome::VALID, $rightPurpose);
@@ -146,7 +147,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $admin = $this->createUser(['ADMIN']);
         $raw = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::REGISTRATION);
 
-        $outcome = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::STEP_UP, $raw);
+        $outcome = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::STEP_UP, $raw->rawChallenge);
 
         $this->assertSame(AdminWebAuthnChallengeOutcome::NOT_FOUND, $outcome);
     }
@@ -157,8 +158,8 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $otherAdmin = $this->createUser(['ADMIN']);
         $raw = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
 
-        $wrongUser = $this->challengeService()->consume(UuidBinary::toBinary($otherAdmin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw);
-        $rightUser = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw);
+        $wrongUser = $this->challengeService()->consume(UuidBinary::toBinary($otherAdmin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw->rawChallenge);
+        $rightUser = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $raw->rawChallenge);
 
         $this->assertSame(AdminWebAuthnChallengeOutcome::NOT_FOUND, $wrongUser);
         $this->assertSame(AdminWebAuthnChallengeOutcome::VALID, $rightUser);
@@ -175,7 +176,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         Carbon::setTestNow(now()->addSeconds(301));
 
         try {
-            $outcome = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw);
+            $outcome = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw->rawChallenge);
         } finally {
             Carbon::setTestNow(null);
         }
@@ -188,8 +189,8 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $admin = $this->createUser(['ADMIN']);
         $raw = $this->challengeService()->issue($admin, AdminWebAuthnChallengePurpose::REGISTRATION);
 
-        $first = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw);
-        $second = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw);
+        $first = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw->rawChallenge);
+        $second = $this->challengeService()->consume(UuidBinary::toBinary($admin->id), AdminWebAuthnChallengePurpose::REGISTRATION, $raw->rawChallenge);
 
         $this->assertSame(AdminWebAuthnChallengeOutcome::VALID, $first);
         $this->assertSame(AdminWebAuthnChallengeOutcome::ALREADY_CONSUMED, $second);
@@ -280,7 +281,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         );
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $result->outcome);
@@ -301,7 +302,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
 
         foreach (range(1, 3) as $_) {
             $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-            $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 0);
+            $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 0);
             $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
             $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $result->outcome);
@@ -316,13 +317,13 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $optionsA = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $jsonA = $authenticator->assertionResponseJson(self::RP_ID, $optionsA->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 10);
+        $jsonA = $authenticator->assertionResponseJson(self::RP_ID, $optionsA->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 10);
         $resultA = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $jsonA, self::RP_ID);
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $resultA->outcome);
         $this->assertSame(10, (int) DB::table('admin_webauthn_credentials')->where('user_id', UuidBinary::toBinary($admin->id))->value('sign_count'));
 
         $optionsB = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $jsonB = $authenticator->assertionResponseJson(self::RP_ID, $optionsB->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 5);
+        $jsonB = $authenticator->assertionResponseJson(self::RP_ID, $optionsB->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), overrideSignCount: 5);
         $resultB = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $jsonB, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFICATION_FAILED, $resultB->outcome);
@@ -439,7 +440,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $result->outcome);
@@ -452,7 +453,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $unregistered = new WebAuthnTestAuthenticator;
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $unregistered->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $unregistered->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::CREDENTIAL_NOT_FOUND, $result->outcome);
@@ -468,7 +469,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
             ->update(['revoked_at' => now(), 'revoke_reason' => 'Test revocation.']);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::CREDENTIAL_NOT_FOUND, $result->outcome);
@@ -494,7 +495,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
 
         $first = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
         $second = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
@@ -509,7 +510,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, 'https://evil.test', UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, 'https://evil.test', UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFICATION_FAILED, $result->outcome);
@@ -521,7 +522,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson('evil.test', $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson('evil.test', $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFICATION_FAILED, $result->outcome);
@@ -533,7 +534,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), userVerified: false);
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), userVerified: false);
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFICATION_FAILED, $result->outcome);
@@ -545,7 +546,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), tamperSignature: true);
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id), tamperSignature: true);
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::LOGIN_ASSERTION, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFICATION_FAILED, $result->outcome);
@@ -557,7 +558,7 @@ class AdminWebAuthnCeremonyTest extends TestCase
         $authenticator = $this->registerCredential($admin);
 
         $options = $this->assertionService()->options($admin, AdminWebAuthnChallengePurpose::STEP_UP);
-        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
+        $json = $authenticator->assertionResponseJson(self::RP_ID, $options->options->challenge, self::ORIGIN, UuidBinary::toBinary($admin->id));
         $result = $this->assertionService()->verify($admin, AdminWebAuthnChallengePurpose::STEP_UP, $json, self::RP_ID);
 
         $this->assertSame(AdminWebAuthnAssertionOutcome::VERIFIED, $result->outcome);

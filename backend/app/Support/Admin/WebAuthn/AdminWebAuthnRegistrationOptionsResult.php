@@ -9,5 +9,6 @@ final readonly class AdminWebAuthnRegistrationOptionsResult
     public function __construct(
         public AdminWebAuthnRegistrationOutcome $outcome,
         public ?PublicKeyCredentialCreationOptions $options = null,
+        public ?string $ticket = null,
     ) {}
 }

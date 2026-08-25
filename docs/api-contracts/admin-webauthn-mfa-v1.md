@@ -1,33 +1,35 @@
-# BLUE V1 — Admin WebAuthn / MFA (Phase A2.1 + A2.2)
+# BLUE V1 — Admin WebAuthn / MFA (Phase A2.1 + A2.2 + A2.3)
 
-This document describes **only what actually exists** after Phase A2.2: the schema Phase A2.1 added
-(`database/blue_v1_schema.sql` / `database/phase16_admin_webauthn_mfa_schema_migration.sql`), and
-the WebAuthn library, configuration, challenge service, credential repository, and
-registration/assertion ceremony *services* Phase A2.2 added on top of it. No aspirational or
-planned behavior is included.
+This document describes the schema (A2.1), the WebAuthn library/challenge/credential/ceremony
+*service* layer (A2.2), and — as of Phase A2.3 — the HTTP login flow those services now power:
+`docs/api-contracts/admin-authentication-v1.md` §1/§1a/§1b is the authoritative contract for the
+actual endpoints (`POST /v1/admin/auth/login`, `/mfa/enroll`, `/mfa/verify`); this document stays
+focused on the underlying schema/service architecture those endpoints are built from.
 
 ## Scope — IMPLEMENTED NOW vs. NOT IMPLEMENTED YET
 
-**Implemented now (Phase A2.1 + A2.2):**
+**Implemented now (Phase A2.1 + A2.2 + A2.3):**
 - Schema: `admin_webauthn_challenge_purposes`, `admin_webauthn_challenges`, `admin_webauthn_credentials`.
 - WebAuthn library integration (`web-auth/webauthn-lib` ^5.3 — see "Library" below).
 - `config/admin_webauthn.php` (RP name/ID, allowed origins, challenge TTL).
-- `App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService` — centralized challenge issuance/consumption.
+- `App\Support\Admin\WebAuthn\AdminWebAuthnChallengeService` — centralized challenge issuance/consumption, plus `resolvePendingTicket()` (Phase A2.3) for resolving a `login_ticket` to its owning Admin without consuming it.
 - `App\Support\Admin\WebAuthn\AdminWebAuthnCredentialRepository` — the only reader/writer of `admin_webauthn_credentials`.
 - `App\Support\Admin\WebAuthn\AdminWebAuthnRegistrationService` — registration options + verification, with the first-credential/step-up rule enforced.
 - `App\Support\Admin\WebAuthn\AdminWebAuthnAssertionService` — assertion options + verification, shared by `LOGIN_ASSERTION` and `STEP_UP`.
-- Full test coverage of all of the above via a real-crypto test authenticator (`tests/Support/WebAuthn/WebAuthnTestAuthenticator`), exercising the actual `web-auth/webauthn-lib` validation logic end-to-end.
+- **`POST /v1/admin/auth/login` (Stage 1), `/mfa/enroll` (first-credential bootstrap), and
+  `/mfa/verify` (Stage 2 — the only endpoint that creates a session)** — mandatory Admin MFA login,
+  end to end. See `admin-authentication-v1.md` for the full contract.
+- Full test coverage via a real-crypto test authenticator (`tests/Support/WebAuthn/WebAuthnTestAuthenticator`), exercising the actual `web-auth/webauthn-lib` validation logic end-to-end, including the complete HTTP flow (`tests/Feature/Admin/AdminMfaLoginTest.php`).
 
 **NOT implemented yet:**
-- No HTTP route exists for any of this — registration/assertion are pure services, not wired into
-  `routes/api.php`.
-- `POST /v1/admin/auth/login` is completely unchanged; MFA is not mandatory and no session is ever
-  created through WebAuthn.
-- No idle timeout, no step-up HTTP endpoint/middleware, no admin_audit_logs writes for MFA events.
+- No idle timeout, no shorter Admin absolute session TTL (Phase A2.4).
+- No generic step-up HTTP endpoint/middleware for already-authenticated sensitive operations
+  (Phase A2.5) — `AdminWebAuthnAssertionService` already supports the `STEP_UP` purpose end to end
+  at the service layer, but nothing calls it yet.
+- No `admin_audit_logs` writes for login/MFA/enrollment events (Phase A2.6).
+- No credential-management UI or general "add another credential" endpoint.
 - No Admin frontend/browser screens.
 - No Tailscale infrastructure inside Laravel (by design — see below).
-
-All of the above belong to Phase A2.3 onward.
 
 ## Where device trust lives (read this first)
 
@@ -115,10 +117,13 @@ NULL`) already answers "does this Admin have zero active credentials?" unambiguo
 
 **Enforced now**, at the service layer: `AdminWebAuthnRegistrationService::options()`/`verify()`
 both take an explicit `bool $stepUpVerified` parameter and refuse (`STEP_UP_REQUIRED`) whenever the
-Admin already holds ≥1 active credential and that flag is `false`. No HTTP route exists yet that
-could call this insecurely — no caller in this phase can ever legitimately produce `true` for such
-an Admin, since the real step-up ceremony (Phase A2.5) does not exist yet. The rule is enforced
-regardless, so a future caller cannot forget to check it.
+Admin already holds ≥1 active credential and that flag is `false`. As of Phase A2.3,
+`App\Actions\Auth\AdminMfaEnrollAction` (the only HTTP caller of this path,
+`POST /v1/admin/auth/mfa/enroll`) always passes `stepUpVerified: false` — since the real step-up
+ceremony (Phase A2.5) does not exist yet, no caller can ever legitimately pass `true` for an Admin
+who already has a credential, so the bootstrap endpoint can never be used to add a second one. The
+rule is enforced at the service layer regardless of caller, so a future step-up-aware caller cannot
+forget to check it.
 
 ## Library
 
@@ -157,5 +162,7 @@ warning and hard-fails verification.
 
 ## Not built yet (deliberately)
 
-Any `/v1/admin/*` HTTP route, any change to Admin login/session behavior, idle timeout, step-up
-HTTP endpoint/middleware, and audit-log writes for MFA events. All belong to Phase A2.3 onward.
+Idle timeout / shorter Admin absolute session TTL (Phase A2.4), a generic step-up HTTP
+endpoint/middleware for already-authenticated sensitive operations (Phase A2.5), and audit-log
+writes for login/MFA/enrollment events (Phase A2.6). Login itself (`/v1/admin/auth/login`,
+`/mfa/enroll`, `/mfa/verify`) is built — see `admin-authentication-v1.md`.

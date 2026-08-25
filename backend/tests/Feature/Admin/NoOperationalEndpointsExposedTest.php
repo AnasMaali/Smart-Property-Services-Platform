@@ -91,6 +91,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
 
         $this->assertSame([
             'api/v1/admin/auth/login',
+            'api/v1/admin/auth/mfa/enroll',
+            'api/v1/admin/auth/mfa/verify',
             'api/v1/admin/auth/refresh',
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',
             'api/v1/admin/booking-items/{bookingItem}/complete-work',

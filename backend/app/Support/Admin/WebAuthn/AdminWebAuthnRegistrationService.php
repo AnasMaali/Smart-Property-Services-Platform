@@ -62,11 +62,12 @@ final class AdminWebAuthnRegistrationService
                 return new AdminWebAuthnRegistrationOptionsResult($blocked);
             }
 
-            $rawChallenge = $this->challengeService->issue($actor, AdminWebAuthnChallengePurpose::REGISTRATION);
+            $issued = $this->challengeService->issue($actor, AdminWebAuthnChallengePurpose::REGISTRATION);
 
             return new AdminWebAuthnRegistrationOptionsResult(
                 AdminWebAuthnRegistrationOutcome::ELIGIBLE,
-                $this->buildCreationOptions($actor, $rawChallenge),
+                $this->buildCreationOptions($actor, $issued->rawChallenge),
+                $issued->ticket,
             );
         });
     }

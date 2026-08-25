@@ -4,6 +4,12 @@ namespace App\Http\Requests\Auth;
 
 use App\Http\Requests\ApiFormRequest;
 
+/**
+ * BLUE V1 Phase A2.3: this is Stage 1 (password) of the two-stage Admin
+ * login only - it never creates a session, so it no longer accepts
+ * device_name/app_version (session/device metadata belongs to whichever
+ * request actually creates the session - see AdminMfaVerifyRequest).
+ */
 class AdminLoginRequest extends ApiFormRequest
 {
     public function authorize(): bool
@@ -15,8 +21,6 @@ class AdminLoginRequest extends ApiFormRequest
     {
         $this->merge([
             'phone_number' => is_string($this->phone_number) ? trim($this->phone_number) : $this->phone_number,
-            'device_name' => is_string($this->device_name) ? trim($this->device_name) : $this->device_name,
-            'app_version' => is_string($this->app_version) ? trim($this->app_version) : $this->app_version,
         ]);
     }
 
@@ -26,10 +30,6 @@ class AdminLoginRequest extends ApiFormRequest
             'phone_number' => ['required', 'string', 'regex:/^\+?[0-9]{8,20}$/'],
 
             'password' => ['required', 'string'],
-
-            'device_name' => ['nullable', 'string', 'max:120'],
-
-            'app_version' => ['nullable', 'string', 'max:30'],
         ];
     }
 }

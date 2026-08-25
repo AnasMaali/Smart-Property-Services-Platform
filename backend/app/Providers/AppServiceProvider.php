@@ -112,6 +112,39 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // BLUE V1 Phase A2.3 - Stage 2 (WebAuthn assertion) flooding
+        // protection. Keyed on login_ticket rather than phone_number - this
+        // request never carries a phone number - so concurrent forged
+        // assertion attempts against one pending login attempt are bounded
+        // independently of the broader per-IP bucket below. The ticket is
+        // already short-lived and single-use; this is an additional HTTP
+        // abuse boundary on top of that domain guarantee, not a replacement
+        // for it.
+        RateLimiter::for('admin-auth-mfa-verify', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-mfa-verify-identity:'.$identityKey($request, ['login_ticket'])),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-mfa-verify-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // BLUE V1 Phase A2.3 - first-credential bootstrap flooding
+        // protection. Same shape as admin-auth-mfa-verify above, kept as a
+        // separate bucket since this is a materially more sensitive
+        // operation (it can persist a new credential) than a normal login
+        // assertion.
+        RateLimiter::for('admin-auth-mfa-enroll', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-mfa-enroll-identity:'.$identityKey($request, ['login_ticket'])),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-mfa-enroll-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Account-creation flooding protection.
         RateLimiter::for('auth-register', function (Request $request) use ($identityKey, $ipKey): array {
             return [
