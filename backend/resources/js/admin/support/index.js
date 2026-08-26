@@ -8,6 +8,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-support-page]');
@@ -184,5 +185,10 @@ if (page) {
 
     const initialParams = currentParams();
     applyParamsToForm(initialParams);
-    loadSupportRequests(initialParams);
+
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadSupportRequests(initialParams);
+        }
+    });
 }

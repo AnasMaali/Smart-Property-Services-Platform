@@ -13,6 +13,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
 import { attachTechnicianActions } from '../technicians/booking-item-actions.js';
 
@@ -162,5 +163,9 @@ if (page) {
         itemsContainer.replaceChildren(...booking.items.map((item) => renderItem(item, booking.currency)));
     }
 
-    loadBooking();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadBooking();
+        }
+    });
 }

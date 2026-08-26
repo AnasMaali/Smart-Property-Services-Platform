@@ -11,6 +11,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { openToggleActiveModal } from './toggle-active.js';
 
 const page = document.querySelector('[data-category-detail-page]');
@@ -149,5 +150,9 @@ if (page) {
         }
     });
 
-    loadCategory();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadCategory();
+        }
+    });
 }

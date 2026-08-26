@@ -8,6 +8,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 
 const page = document.querySelector('[data-categories-page]');
 
@@ -104,5 +105,9 @@ if (page) {
 
     statusFilter.addEventListener('change', loadCategories);
 
-    loadCategories();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadCategories();
+        }
+    });
 }

@@ -9,6 +9,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusLabel, formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-audit-log-page]');
@@ -179,5 +180,10 @@ if (page) {
 
     const initialParams = currentParams();
     applyParamsToForm(initialParams);
-    loadAuditLog(initialParams);
+
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadAuditLog(initialParams);
+        }
+    });
 }

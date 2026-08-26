@@ -14,6 +14,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { formatDateTime } from '../lib/format.js';
 import { openToggleActiveModal } from './toggle-active.js';
 
@@ -309,5 +310,9 @@ if (page) {
         }
     });
 
-    loadService();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadService();
+        }
+    });
 }

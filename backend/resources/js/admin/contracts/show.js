@@ -15,6 +15,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
 import { openApproveModal, openConfirmAction } from './actions.js';
 
@@ -274,5 +275,9 @@ if (page) {
         renderActions(contract);
     }
 
-    loadContract();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadContract();
+        }
+    });
 }

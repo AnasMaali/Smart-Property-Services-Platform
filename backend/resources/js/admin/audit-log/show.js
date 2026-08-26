@@ -8,6 +8,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusLabel, formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-audit-log-detail-page]');
@@ -74,5 +75,9 @@ if (page) {
         setText('user_agent', entry.user_agent);
     }
 
-    loadAuditLog();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadAuditLog();
+        }
+    });
 }

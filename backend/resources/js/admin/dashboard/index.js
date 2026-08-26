@@ -13,6 +13,7 @@
 
 import { request, ApiError } from '../lib/api-client.js';
 import { statusLabel, formatDateTime } from '../lib/format.js';
+import { adminAuthReady } from '../auth/restore.js';
 
 const page = document.querySelector('[data-dashboard-page]');
 
@@ -247,5 +248,9 @@ if (page) {
         }
     }
 
-    loadDashboard();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadDashboard();
+        }
+    });
 }

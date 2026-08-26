@@ -7,6 +7,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
 
 const page = document.querySelector('[data-payment-detail-page]');
@@ -144,5 +145,9 @@ if (page) {
         }
     }
 
-    loadPayment();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadPayment();
+        }
+    });
 }

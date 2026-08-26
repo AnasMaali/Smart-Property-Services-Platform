@@ -9,6 +9,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-technicians-page]');
@@ -186,5 +187,10 @@ if (page) {
 
     const initialParams = currentParams();
     applyParamsToForm(initialParams);
-    loadTechnicians(initialParams);
+
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadTechnicians(initialParams);
+        }
+    });
 }

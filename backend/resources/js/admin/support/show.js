@@ -20,6 +20,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-support-detail-page]');
@@ -184,5 +185,9 @@ if (page) {
         }
     });
 
-    loadSupportRequest();
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadSupportRequest();
+        }
+    });
 }

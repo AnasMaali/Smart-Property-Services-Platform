@@ -8,6 +8,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
+import { adminAuthReady } from '../auth/restore.js';
 import { formatDateTime } from '../lib/format.js';
 
 const page = document.querySelector('[data-services-page]');
@@ -212,6 +213,11 @@ if (page) {
 
     const initialParams = currentParams();
     applyParamsToForm(initialParams);
-    loadCategoryOptions(initialParams.get('category_id'));
-    loadServices(initialParams);
+
+    adminAuthReady().then((ready) => {
+        if (ready) {
+            loadCategoryOptions(initialParams.get('category_id'));
+            loadServices(initialParams);
+        }
+    });
 }
