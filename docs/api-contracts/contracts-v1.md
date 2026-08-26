@@ -279,8 +279,9 @@ See `database/blue_v1_schema.sql` for full DDL: `service_contract_statuses`, `se
 (Phase 11) `service_contract_billing_statuses`, `service_contract_billings`,
 `service_contract_billing_webhook_events`, plus `customer_profiles.stripe_customer_id`. Contract →
 Booking linkage lives on `bookings` itself — see `docs/api-contracts/bookings-v1.md`. The Phase 11
-additive migration lives at `database/phase11_contract_billing_migration.sql` and has not yet been
-applied to any environment.
+additive migration lives at `database/phase11_contract_billing_migration.sql`; both `blue_db` and
+`blue_test_db` have it applied (verified BLUE V1 Phase B13 — see
+`docs/api-contracts/admin-environment-readiness-v1.md`).
 
 ## Regression
 

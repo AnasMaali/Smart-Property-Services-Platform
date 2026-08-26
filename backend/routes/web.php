@@ -53,8 +53,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
     // BLUE V1 Phase B6 - Customers/Properties shell routes. Same convention
     // as every other module above. There is no global Properties index
     // route - a Property is always reached from its owning Customer's
-    // detail page (see "Properties" sidebar item, still a placeholder for
-    // a later phase, exactly like Services/Support).
+    // detail page, so the sidebar has no separate "Properties" entry; its
+    // "Customers" item's active-state check already covers /admin/properties*.
     Route::view('/customers', 'admin.customers.index')->name('customers.index');
 
     Route::get('/customers/{customer}', function (string $customer) {
