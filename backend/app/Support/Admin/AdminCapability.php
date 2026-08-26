@@ -19,7 +19,14 @@ namespace App\Support\Admin;
 enum AdminCapability: string
 {
     case BOOKINGS_VIEW = 'bookings.view';
-
+/**
+ * Allows an authorized Admin to update operational Booking information
+ * that remains legitimately editable after checkout, such as visit
+ * contact/address details. Financial snapshots, service identity,
+ * Customer ownership, and appointment capacity are intentionally outside
+ * this capability.
+ */
+    case BOOKINGS_MANAGE = 'bookings.manage';
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 

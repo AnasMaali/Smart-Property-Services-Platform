@@ -107,6 +107,28 @@ use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
 use App\Support\Admin\AdminCapability;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
+
+Route::get(
+    '/v1/admin/bookings',
+    ListAdminBookingsController::class
+)->middleware(
+    AdminCapability::BOOKINGS_VIEW->middleware()
+);
+
+Route::get(
+    '/v1/admin/bookings/{booking}',
+    GetAdminBookingController::class
+)->middleware(
+    AdminCapability::BOOKINGS_VIEW->middleware()
+);
+
+Route::patch(
+    '/v1/admin/bookings/{booking}',
+    UpdateAdminBookingController::class
+)->middleware(
+    AdminCapability::BOOKINGS_MANAGE->middleware()
+);
 
 Route::post('/v1/auth/register', RegisterController::class)->middleware('throttle:auth-register');
 Route::post('/v1/auth/verify-phone', VerifyPhoneController::class)->middleware('throttle:auth-otp-verify');
