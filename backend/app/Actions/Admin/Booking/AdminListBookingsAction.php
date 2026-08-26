@@ -26,7 +26,7 @@ final class AdminListBookingsAction
     public const MAX_PER_PAGE = 100;
 
     /**
-     * @param  array{status?: string, booking_number?: string, customer_uuid?: string, from?: string, to?: string, appointment_date?: string}  $filters
+     * @param  array{status?: string, booking_number?: string, customer_uuid?: string, technician_uuid?: string, service_uuid?: string, assignment_state?: string, from?: string, to?: string, appointment_date?: string}  $filters
      * @return array<string, mixed>
      */
     public function handle(array $filters, int $page, int $perPage): array
@@ -34,9 +34,13 @@ final class AdminListBookingsAction
         $page = max($page, 1);
         $perPage = min(max($perPage, 1), self::MAX_PER_PAGE);
 
-        if (isset($filters['customer_uuid'])) {
+        foreach (['customer_uuid', 'technician_uuid', 'service_uuid'] as $uuidFilter) {
+            if (! isset($filters[$uuidFilter])) {
+                continue;
+            }
+
             try {
-                $filters['customer_uuid'] = UuidBinary::toBinary($filters['customer_uuid']);
+                $filters[$uuidFilter] = UuidBinary::toBinary($filters[$uuidFilter]);
             } catch (InvalidArgumentException) {
                 return $this->ok(200, 'Bookings retrieved successfully.', [
                     'bookings' => [],
@@ -72,6 +76,45 @@ final class AdminListBookingsAction
         if (isset($filters['appointment_date'])) {
             $query->join('appointment_slots', 'appointment_slots.id', '=', 'bookings.appointment_slot_id')
                 ->whereDate('appointment_slots.starts_at', $filters['appointment_date']);
+        }
+
+        if (isset($filters['service_uuid'])) {
+            $query->whereExists(function ($sub) use ($filters) {
+                $sub->select(DB::raw(1))
+                    ->from('booking_items')
+                    ->whereColumn('booking_items.booking_id', 'bookings.id')
+                    ->where('booking_items.service_id', $filters['service_uuid']);
+            });
+        }
+
+        if (isset($filters['technician_uuid'])) {
+            $query->whereExists(function ($sub) use ($filters) {
+                $sub->select(DB::raw(1))
+                    ->from('booking_items')
+                    ->join('technician_assignments', 'technician_assignments.booking_item_id', '=', 'booking_items.id')
+                    ->whereColumn('booking_items.booking_id', 'bookings.id')
+                    ->where('technician_assignments.technician_id', $filters['technician_uuid']);
+            });
+        }
+
+        if (isset($filters['assignment_state'])) {
+            $assignmentSummary = DB::table('booking_items')
+                ->selectRaw('booking_id, COUNT(*) as items_count, SUM(CASE WHEN EXISTS (
+                        SELECT 1 FROM technician_assignments
+                        WHERE technician_assignments.booking_item_id = booking_items.id
+                        AND technician_assignments.released_at IS NULL
+                    ) THEN 1 ELSE 0 END) as assigned_count')
+                ->groupBy('booking_id');
+
+            $query->joinSub($assignmentSummary, 'assignment_summary', 'assignment_summary.booking_id', '=', 'bookings.id');
+
+            match ($filters['assignment_state']) {
+                'PENDING' => $query->where('assignment_summary.assigned_count', 0),
+                'FULL' => $query->where('assignment_summary.items_count', '>', 0)
+                    ->whereColumn('assignment_summary.assigned_count', '=', 'assignment_summary.items_count'),
+                'PARTIAL' => $query->where('assignment_summary.assigned_count', '>', 0)
+                    ->whereColumn('assignment_summary.assigned_count', '<', 'assignment_summary.items_count'),
+            };
         }
 
         $total = (clone $query)->count('bookings.id');

@@ -2,6 +2,7 @@
 
 namespace App\Support\Admin;
 
+use App\Support\Contract\ContractEntitlementCalculator;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -43,6 +44,8 @@ final class AdminBookingPresenter
         $bookingIds = $rows->pluck('id')->all();
         $customerIds = $rows->pluck('customer_user_id')->unique()->values()->all();
         $currencyIds = $rows->pluck('cart_currency_id')->unique()->values()->all();
+        $appointmentSlotIds = $rows->pluck('appointment_slot_id')->unique()->values()->all();
+        $paymentAttemptIds = $rows->pluck('payment_attempt_id')->filter()->unique()->values()->all();
 
         $aggregates = DB::table('booking_items')
             ->whereIn('booking_id', $bookingIds)
@@ -50,6 +53,25 @@ final class AdminBookingPresenter
             ->groupBy('booking_id')
             ->get()
             ->keyBy(fn ($row) => $row->booking_id);
+
+        $assignedCounts = DB::table('booking_items')
+            ->whereIn('booking_items.booking_id', $bookingIds)
+            ->whereExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('technician_assignments')
+                    ->whereColumn('technician_assignments.booking_item_id', 'booking_items.id')
+                    ->whereNull('technician_assignments.released_at');
+            })
+            ->selectRaw('booking_id, COUNT(*) as assigned_count')
+            ->groupBy('booking_id')
+            ->get()
+            ->keyBy(fn ($row) => $row->booking_id);
+
+        $serviceNames = DB::table('booking_items')
+            ->whereIn('booking_id', $bookingIds)
+            ->orderBy('display_order')
+            ->get(['booking_id', 'service_name_snapshot'])
+            ->groupBy('booking_id');
 
         $customers = DB::table('users')
             ->join('user_profiles', 'user_profiles.user_id', '=', 'users.id')
@@ -62,13 +84,29 @@ final class AdminBookingPresenter
             ->get(['id', 'code', 'symbol', 'minor_unit'])
             ->keyBy(fn ($row) => $row->id);
 
+        $slots = DB::table('appointment_slots')
+            ->join('appointment_time_windows', 'appointment_time_windows.id', '=', 'appointment_slots.time_window_id')
+            ->whereIn('appointment_slots.id', $appointmentSlotIds)
+            ->get(['appointment_slots.id', 'appointment_slots.starts_at', 'appointment_slots.ends_at', 'appointment_time_windows.code as window_code', 'appointment_time_windows.name as window_name'])
+            ->keyBy('id');
+
+        $payments = $paymentAttemptIds === [] ? collect() : DB::table('payment_attempts')
+            ->join('payment_statuses', 'payment_statuses.id', '=', 'payment_attempts.status_id')
+            ->whereIn('payment_attempts.id', $paymentAttemptIds)
+            ->get(['payment_attempts.id', 'payment_statuses.code as status_code'])
+            ->keyBy('id');
+
         $statuses = DB::table('booking_statuses')->get(['id', 'code'])->keyBy('id');
         $sources = DB::table('booking_sources')->get(['id', 'code'])->keyBy('id');
 
-        return $rows->map(function (object $row) use ($aggregates, $customers, $currencies, $statuses, $sources): array {
+        return $rows->map(function (object $row) use ($aggregates, $assignedCounts, $serviceNames, $customers, $currencies, $slots, $payments, $statuses, $sources): array {
             $customer = $customers->get($row->customer_user_id);
             $currency = $currencies->get($row->cart_currency_id);
             $aggregate = $aggregates->get($row->id);
+            $itemsCount = $aggregate === null ? 0 : (int) $aggregate->items_count;
+            $assignedCount = $assignedCounts->get($row->id)?->assigned_count ?? 0;
+            $slot = $slots->get($row->appointment_slot_id);
+            $payment = $row->payment_attempt_id === null ? null : $payments->get($row->payment_attempt_id);
 
             return [
                 'uuid' => UuidBinary::toString($row->id),
@@ -85,12 +123,38 @@ final class AdminBookingPresenter
                     'symbol' => $currency->symbol,
                     'decimal_places' => (int) $currency->minor_unit,
                 ],
-                'items_count' => $aggregate === null ? 0 : (int) $aggregate->items_count,
+                'services' => ($serviceNames->get($row->id) ?? collect())->pluck('service_name_snapshot')->values()->all(),
+                'items_count' => $itemsCount,
                 'total' => $aggregate === null ? '0.000000' : (string) $aggregate->total,
+                'appointment' => $slot === null ? null : self::appointmentPayload($slot),
+                'payment' => $payment === null ? null : ['status' => $payment->status_code],
+                'assignment_state' => self::assignmentState($itemsCount, (int) $assignedCount),
                 'created_at' => Carbon::parse($row->created_at)->toIso8601String(),
                 'status_changed_at' => Carbon::parse($row->status_changed_at)->toIso8601String(),
             ];
         })->all();
+    }
+
+    /**
+     * Factually derived from Booking Item counts only - never a persisted
+     * column, and never invents a state beyond what the existing
+     * `technician_assignments`/`booking_items` rows already say: `null` for
+     * a Booking with no items (should not occur for a real Booking, but
+     * guarded rather than divide-by-zero), `PENDING` when zero items have
+     * an active assignment, `FULL` when every item does, `PARTIAL`
+     * otherwise.
+     */
+    private static function assignmentState(int $itemsCount, int $assignedCount): ?string
+    {
+        if ($itemsCount === 0) {
+            return null;
+        }
+
+        if ($assignedCount === 0) {
+            return 'PENDING';
+        }
+
+        return $assignedCount === $itemsCount ? 'FULL' : 'PARTIAL';
     }
 
     /**
@@ -111,8 +175,36 @@ final class AdminBookingPresenter
         $sourceCode = DB::table('booking_sources')->where('id', $row->booking_source_id)->value('code');
 
         $contract = $row->service_contract_id === null ? null : DB::table('service_contracts')
-            ->where('id', $row->service_contract_id)
-            ->first(['id', 'contract_number']);
+            ->join('service_contract_statuses', 'service_contract_statuses.id', '=', 'service_contracts.status_id')
+            ->where('service_contracts.id', $row->service_contract_id)
+            ->first(['service_contracts.id', 'service_contracts.contract_number', 'service_contract_statuses.code as status_code']);
+
+        $contractEntitlement = null;
+
+        if ($contract !== null) {
+            $contractItem = DB::table('service_contract_items')->where('id', $row->service_contract_item_id)->first();
+
+            if ($contractItem !== null) {
+                $contractEntitlement = (new ContractEntitlementCalculator)
+                    ->summarizeMany(collect([$contractItem]))
+                    ->get(bin2hex($contractItem->id));
+            }
+        }
+
+        $rating = DB::table('ratings')->where('booking_id', $row->id)->first(['rating_value', 'comment', 'created_at']);
+
+        $statusHistory = DB::table('booking_status_history')
+            ->leftJoin('booking_statuses as from_status', 'from_status.id', '=', 'booking_status_history.from_status_id')
+            ->join('booking_statuses as to_status', 'to_status.id', '=', 'booking_status_history.to_status_id')
+            ->where('booking_status_history.booking_id', $row->id)
+            ->orderByDesc('booking_status_history.changed_at')
+            ->get([
+                'from_status.code as from_code',
+                'to_status.code as to_code',
+                'booking_status_history.changed_by_user_id',
+                'booking_status_history.reason',
+                'booking_status_history.changed_at',
+            ]);
 
         $customer = DB::table('users')
             ->join('user_profiles', 'user_profiles.user_id', '=', 'users.id')
@@ -153,6 +245,31 @@ final class AdminBookingPresenter
 
         $itemIds = $items->pluck('id')->all();
 
+        $optionSelections = DB::table('booking_item_option_selections')
+            ->whereIn('booking_item_id', $itemIds)
+            ->get()
+            ->groupBy('booking_item_id');
+
+        $choiceSelections = DB::table('booking_item_option_choice_selections')
+            ->whereIn('booking_item_id', $itemIds)
+            ->get()
+            ->groupBy('booking_item_id');
+
+        $itemStatusHistories = DB::table('booking_item_status_history')
+            ->leftJoin('booking_item_statuses as from_status', 'from_status.id', '=', 'booking_item_status_history.from_status_id')
+            ->join('booking_item_statuses as to_status', 'to_status.id', '=', 'booking_item_status_history.to_status_id')
+            ->whereIn('booking_item_status_history.booking_item_id', $itemIds)
+            ->orderByDesc('booking_item_status_history.changed_at')
+            ->get([
+                'booking_item_status_history.booking_item_id',
+                'from_status.code as from_code',
+                'to_status.code as to_code',
+                'booking_item_status_history.changed_by_user_id',
+                'booking_item_status_history.reason',
+                'booking_item_status_history.changed_at',
+            ])
+            ->groupBy('booking_item_id');
+
         $assignments = DB::table('technician_assignments')
             ->join('technicians', 'technicians.id', '=', 'technician_assignments.technician_id')
             ->join('specializations', 'specializations.id', '=', 'technician_assignments.specialization_id')
@@ -187,6 +304,18 @@ final class AdminBookingPresenter
                 'contract_uuid' => UuidBinary::toString($contract->id),
                 'contract_number' => $contract->contract_number,
                 'contract_item_uuid' => UuidBinary::toString($row->service_contract_item_id),
+                'status' => $contract->status_code,
+                'entitlement' => $contractEntitlement === null ? null : [
+                    'entitlement_mode' => $contractEntitlement['entitlement_mode'],
+                    'included_visits' => $contractEntitlement['included_visits'],
+                    'used_visits' => $contractEntitlement['used_visits'],
+                    'remaining_visits' => $contractEntitlement['remaining_visits'],
+                ],
+            ],
+            'rating' => $rating === null ? null : [
+                'rating_value' => (int) $rating->rating_value,
+                'comment' => $rating->comment,
+                'created_at' => Carbon::parse($rating->created_at)->toIso8601String(),
             ],
             'customer' => $customer === null ? null : [
                 'uuid' => UuidBinary::toString($customer->id),
@@ -201,6 +330,7 @@ final class AdminBookingPresenter
             ],
             'total' => $total,
             'payment' => $payment === null ? null : [
+                'uuid' => UuidBinary::toString($row->payment_attempt_id),
                 'status' => $payment->status_code,
                 'amount' => (string) ($payment->confirmed_amount ?? $payment->requested_amount),
                 'provider' => $payment->provider_code,
@@ -209,13 +339,40 @@ final class AdminBookingPresenter
             ],
             'location' => $location === null ? null : self::locationPayload($location),
             'appointment' => $slot === null ? null : self::appointmentPayload($slot),
-            'items' => $items->map(fn ($item) => self::itemPayload($item, $assignments->get($item->id, collect())))->all(),
+            'items' => $items->map(fn ($item) => self::itemPayload(
+                $item,
+                $assignments->get($item->id, collect()),
+                $optionSelections->get($item->id, collect()),
+                $choiceSelections->get($item->id, collect()),
+                $itemStatusHistories->get($item->id, collect()),
+            ))->all(),
+            'status_history' => self::statusHistoryPayload($statusHistory),
             'created_at' => Carbon::parse($row->created_at)->toIso8601String(),
             'status_changed_at' => Carbon::parse($row->status_changed_at)->toIso8601String(),
             'completed_at' => $row->completed_at === null ? null : Carbon::parse($row->completed_at)->toIso8601String(),
             'cancelled_at' => $row->cancelled_at === null ? null : Carbon::parse($row->cancelled_at)->toIso8601String(),
             'refund_due' => $statusCode === 'CANCELLED' ? self::refundDuePayload($row) : null,
         ];
+    }
+
+    /**
+     * Shared shape for both Booking-level and Booking-Item-level status
+     * history (`booking_status_history` / `booking_item_status_history`) -
+     * mirrors App\Support\Admin\AdminContractPresenter's status_history
+     * exactly: the actor is exposed only as a UUID, never a resolved name,
+     * consistent with that existing precedent.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function statusHistoryPayload(Collection $history): array
+    {
+        return $history->map(fn (object $entry): array => [
+            'from_status' => $entry->from_code,
+            'to_status' => $entry->to_code,
+            'changed_by_user_uuid' => $entry->changed_by_user_id === null ? null : UuidBinary::toString($entry->changed_by_user_id),
+            'reason' => $entry->reason,
+            'changed_at' => Carbon::parse($entry->changed_at)->toIso8601String(),
+        ])->values()->all();
     }
 
     /**
@@ -287,8 +444,13 @@ final class AdminBookingPresenter
     /**
      * @return array<string, mixed>
      */
-    private static function itemPayload(object $item, Collection $assignments): array
-    {
+    private static function itemPayload(
+        object $item,
+        Collection $assignments,
+        Collection $optionSelections,
+        Collection $choiceSelections,
+        Collection $statusHistory,
+    ): array {
         $active = $assignments->first(fn ($assignment) => $assignment->released_at === null);
 
         return [
@@ -309,8 +471,23 @@ final class AdminBookingPresenter
                 'unit_total' => $item->unit_total_amount,
                 'line_total' => $item->line_total_amount,
             ],
+            'selected_options' => $optionSelections->map(fn (object $selection): array => [
+                'option_name' => $selection->option_name_snapshot,
+                'option_type' => $selection->option_type_code_snapshot,
+                'numeric_value' => $selection->numeric_value,
+                'boolean_value' => $selection->boolean_value === null ? null : (bool) $selection->boolean_value,
+                'measurement_unit_symbol' => $selection->measurement_unit_symbol_snapshot,
+                'additional_amount' => $selection->additional_unit_amount_snapshot,
+            ])->values()->all(),
+            'selected_choices' => $choiceSelections->map(fn (object $choice): array => [
+                'option_name' => $choice->option_name_snapshot,
+                'choice_name' => $choice->choice_name_snapshot,
+                'choice_description' => $choice->choice_description_snapshot,
+                'additional_amount' => $choice->additional_unit_amount_snapshot,
+            ])->values()->all(),
             'active_assignment' => $active === null ? null : self::assignmentPayload($active),
             'assignment_history' => $assignments->values()->map(self::assignmentPayload(...))->all(),
+            'status_history' => self::statusHistoryPayload($statusHistory),
         ];
     }
 
