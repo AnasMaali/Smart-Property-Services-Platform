@@ -91,8 +91,8 @@ final class BookingPresenter
     }
 
     /**
-     * Refund eligibility for an already-CANCELLED Booking only - read
-     * verbatim from the historical snapshot
+     * Refund eligibility for an already-CANCELLED Booking only - the
+     * percentage/amount are read verbatim from the historical snapshot
      * App\Actions\Booking\CancelBookingAction persisted at the moment of
      * the Booking's first real cancellation
      * (`bookings.cancellation_refund_percentage` /
@@ -101,7 +101,28 @@ final class BookingPresenter
      * already-cancelled Booking is shown to owe, so this never calls
      * App\Support\Booking\RefundEligibilityCalculator.
      *
-     * @return array{percentage: int, amount: string, execution: 'MANUAL'}|null
+     * BLUE V1 Phase B20: the EXECUTION state (has the refund actually been
+     * returned yet) is a separate, later-resolved fact, read from the
+     * `booking_refunds` obligation row - never promised as already
+     * returned while still PENDING. Null percentage/amount (a Contract
+     * Booking, which never has a refund obligation at all) still returns
+     * null here.
+     *
+     * Deliberately provider-neutral, unlike App\Support\Admin\
+     * AdminBookingPresenter's equivalent: this is the customer-facing API,
+     * which never names Stripe or exposes a raw provider refund reference
+     * (see test_booking_response_never_leaks_payment_or_provider_internals)
+     * - `method` is the one fixed, safe fact a customer needs ("their
+     * original payment method"), matching the BLUE V1 Phase B20 customer
+     * UX spec ("Returned to: Original payment method"). `failure_code`/
+     * `failure_message` are deliberately absent from this array (unlike
+     * AdminBookingPresenter's) for every status, `RECONCILIATION_REQUIRED`
+     * included - a future customer client (see mobile/lib/features/
+     * bookings/, not yet built) MUST render that one status code as safe
+     * copy such as "Refund needs attention", never the raw Stripe
+     * mismatch reason.
+     *
+     * @return array{percentage: int, amount: string, execution: 'AUTOMATIC', status: ?string, method: 'ORIGINAL_PAYMENT_METHOD', requested_at: ?string, succeeded_at: ?string, failed_at: ?string}|null
      */
     private static function refundDuePayload(object $booking): ?array
     {
@@ -109,10 +130,17 @@ final class BookingPresenter
             return null;
         }
 
+        $refundRow = DB::table('booking_refunds')->where('booking_id', $booking->id)->first();
+
         return [
             'percentage' => (int) $booking->cancellation_refund_percentage,
             'amount' => (string) $booking->cancellation_refund_amount,
-            'execution' => 'MANUAL',
+            'execution' => 'AUTOMATIC',
+            'status' => $refundRow === null ? null : DB::table('booking_refund_statuses')->where('id', $refundRow->status_id)->value('code'),
+            'method' => 'ORIGINAL_PAYMENT_METHOD',
+            'requested_at' => $refundRow === null ? null : Carbon::parse($refundRow->requested_at)->toIso8601String(),
+            'succeeded_at' => $refundRow?->succeeded_at === null ? null : Carbon::parse($refundRow->succeeded_at)->toIso8601String(),
+            'failed_at' => $refundRow?->failed_at === null ? null : Carbon::parse($refundRow->failed_at)->toIso8601String(),
         ];
     }
 

@@ -770,6 +770,111 @@ LOCK TABLES `booking_locations` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `booking_refund_statuses`
+--
+-- BLUE V1 Phase B20 - lifecycle of one Stripe refund EXECUTION (distinct
+-- from `bookings.cancellation_refund_percentage`/`_amount`, the frozen
+-- POLICY snapshot). See database/phase19_booking_refund_automation_migration.sql.
+--
+
+DROP TABLE IF EXISTS `booking_refund_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_refund_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_refund_statuses_code` (`code`),
+  KEY `idx_booking_refund_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_booking_refund_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_booking_refund_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_booking_refund_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_booking_refund_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_refund_statuses`
+--
+
+LOCK TABLES `booking_refund_statuses` WRITE;
+/*!40000 ALTER TABLE `booking_refund_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_refund_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `booking_refunds`
+--
+
+DROP TABLE IF EXISTS `booking_refunds`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_refunds` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `booking_id` binary(16) NOT NULL,
+  `payment_attempt_id` binary(16) NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `policy_percentage` tinyint unsigned NOT NULL,
+  `requested_amount` decimal(19,6) NOT NULL,
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_refund_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `provider_status_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `idempotency_key` varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `initiated_by_user_id` binary(16) NOT NULL,
+  `initiated_as` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `failure_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `failure_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `requested_at` datetime(6) NOT NULL,
+  `submitted_at` datetime(6) DEFAULT NULL,
+  `succeeded_at` datetime(6) DEFAULT NULL,
+  `failed_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_refunds_booking` (`booking_id`),
+  UNIQUE KEY `uq_booking_refunds_idempotency_key` (`idempotency_key`),
+  UNIQUE KEY `uq_booking_refunds_provider_reference` (`provider_code`,`provider_refund_reference`),
+  KEY `idx_booking_refunds_status_created` (`status_id`,`created_at`),
+  KEY `idx_booking_refunds_payment_attempt` (`payment_attempt_id`),
+  CONSTRAINT `fk_booking_refunds_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_payment_attempt` FOREIGN KEY (`payment_attempt_id`) REFERENCES `payment_attempts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_status` FOREIGN KEY (`status_id`) REFERENCES `booking_refund_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_initiated_by` FOREIGN KEY (`initiated_by_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_booking_refunds_policy_percentage` CHECK ((`policy_percentage` between 0 and 100)),
+  CONSTRAINT `chk_booking_refunds_requested_amount` CHECK ((`requested_amount` >= 0)),
+  CONSTRAINT `chk_booking_refunds_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_booking_refunds_idempotency_key` CHECK ((char_length(trim(`idempotency_key`)) between 8 and 191)),
+  CONSTRAINT `chk_booking_refunds_initiated_as` CHECK ((`initiated_as` in (_utf8mb4'CUSTOMER',_utf8mb4'ADMIN'))),
+  CONSTRAINT `chk_booking_refunds_reason` CHECK (((`reason` is null) or (char_length(trim(`reason`)) between 2 and 500))),
+  CONSTRAINT `chk_booking_refunds_failure_code` CHECK (((`failure_code` is null) or (char_length(trim(`failure_code`)) between 1 and 100))),
+  CONSTRAINT `chk_booking_refunds_failure_message` CHECK (((`failure_message` is null) or (char_length(trim(`failure_message`)) between 2 and 500))),
+  CONSTRAINT `chk_booking_refunds_submitted_at` CHECK (((`submitted_at` is null) or (`submitted_at` >= `requested_at`))),
+  CONSTRAINT `chk_booking_refunds_succeeded_at` CHECK (((`succeeded_at` is null) or ((`succeeded_at` >= `requested_at`) and (`provider_refund_reference` is not null)))),
+  CONSTRAINT `chk_booking_refunds_failed_at` CHECK (((`failed_at` is null) or (`failed_at` >= `requested_at`))),
+  CONSTRAINT `chk_booking_refunds_single_final_state` CHECK (((`succeeded_at` is null) or (`failed_at` is null))),
+  CONSTRAINT `chk_booking_refunds_failure_data` CHECK (((`failed_at` is null) and (`failure_code` is null) and (`failure_message` is null)) or ((`failed_at` is not null) and (`failure_code` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_refunds`
+--
+
+LOCK TABLES `booking_refunds` WRITE;
+/*!40000 ALTER TABLE `booking_refunds` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_refunds` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `booking_sources`
 --
 

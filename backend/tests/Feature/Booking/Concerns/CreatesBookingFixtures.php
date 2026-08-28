@@ -54,6 +54,20 @@ trait CreatesBookingFixtures
         return DB::table('bookings')->where('id', UuidBinary::toBinary($bookingUuid))->first();
     }
 
+    /**
+     * BLUE V1 Phase B20 - the `booking_refunds` execution obligation row
+     * for a Booking, if one was created.
+     */
+    private function bookingRefundRow(object $booking): ?object
+    {
+        return DB::table('booking_refunds')->where('booking_id', $booking->id)->first();
+    }
+
+    private function bookingRefundStatusCode(object $refundRow): ?string
+    {
+        return DB::table('booking_refund_statuses')->where('id', $refundRow->status_id)->value('code');
+    }
+
     private function listBookings(string $accessToken): TestResponse
     {
         return $this->getJson('/api/v1/bookings', ['Authorization' => 'Bearer '.$accessToken]);

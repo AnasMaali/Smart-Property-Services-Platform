@@ -1641,6 +1641,57 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 23B. BOOKING REFUND STATUSES
+-- BLUE V1 Phase B20 - lifecycle of a Stripe refund EXECUTION
+-- (booking_refunds.status_id), distinct from the frozen policy
+-- snapshot on `bookings`. See
+-- phase19_booking_refund_automation_migration.sql.
+-- =============================================================
+
+INSERT INTO booking_refund_statuses (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'PENDING',
+    'Pending',
+    'The refund obligation exists but Stripe has not yet confirmed it succeeded - safe and required to retry.',
+    1,
+    TRUE
+),
+(
+    'SUCCEEDED',
+    'Succeeded',
+    'Stripe confirmed the refund was returned to the original payment method.',
+    2,
+    TRUE
+),
+(
+    'FAILED',
+    'Failed',
+    'Stripe definitively rejected the refund request - not retryable without operator intervention.',
+    3,
+    TRUE
+),
+(
+    'RECONCILIATION_REQUIRED',
+    'Reconciliation required',
+    'An authoritative Stripe refund webhook reported an amount or currency that did not match the persisted obligation (BLUE V1 is AED-only) - not automatically retryable, requires operator investigation.',
+    4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 24. TECHNICIAN STATUSES
 -- =============================================================
 

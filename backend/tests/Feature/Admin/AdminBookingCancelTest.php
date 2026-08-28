@@ -4,6 +4,7 @@ namespace Tests\Feature\Admin;
 
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
@@ -251,5 +252,56 @@ class AdminBookingCancelTest extends TestCase
         $this->assertSame('CANCELLED', $response->json('data.booking.status'));
         $this->assertNotNull($response->json('data.booking.cancelled_at'));
         $this->assertNotNull($response->json('data.booking.refund_due'));
+    }
+
+    // -----------------------------------------------------------------
+    // BLUE V1 Phase B20 - same policy/refund automation as the Customer
+    // -----------------------------------------------------------------
+
+    public function test_admin_cancellation_creates_the_same_automatic_refund_obligation_as_customer_cancellation(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $fixture = $this->successfulPayment();
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        $response = $this->cancelViaAdmin($admin['access_token'], UuidBinary::toString($booking->id), 'Admin-initiated cancellation.')
+            ->assertStatus(200);
+
+        $this->assertSame('AUTOMATIC', $response->json('data.refund_due.execution'));
+
+        $refundRow = DB::table('booking_refunds')->where('booking_id', $booking->id)->first();
+        $this->assertNotNull($refundRow);
+        $this->assertSame('ADMIN', $refundRow->initiated_as);
+        $this->assertSame($admin['user_uuid'], UuidBinary::toString($refundRow->initiated_by_user_id));
+
+        $statusCode = DB::table('booking_refund_statuses')->where('id', $refundRow->status_id)->value('code');
+        $this->assertSame('SUCCEEDED', $statusCode);
+    }
+
+    public function test_admin_cannot_cancel_a_booking_after_its_appointment_has_started_no_bypass(): void
+    {
+        // The Admin session is minted at real wall-clock time (its JWT nbf/
+        // exp are validated by firebase/php-jwt against the REAL system
+        // clock, never Carbon::setTestNow() - see App\Services\Auth\
+        // JwtTokenService) - a session minted while Carbon is already
+        // frozen to a future instant would look "not yet valid" instead.
+        // A tiny (minutes-scale) Carbon jump afterward keeps
+        // AdminSessionPolicy's own idle-timeout check (which IS
+        // Carbon-based) comfortably inside its window.
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+
+        $startsAt = Carbon::now()->addMinutes(2);
+        $fixture = $this->successfulPayment(['starts_at' => $startsAt]);
+        $booking = $this->bookingRowForPayment($fixture['payment']);
+
+        Carbon::setTestNow($startsAt->copy()->addSecond());
+
+        $this->cancelViaAdmin($admin['access_token'], UuidBinary::toString($booking->id), 'Too late.')
+            ->assertStatus(409);
+
+        $this->assertSame('PAID', DB::table('booking_statuses')->where('id', DB::table('bookings')->where('id', $booking->id)->value('status_id'))->value('code'));
+        $this->assertSame(0, $this->auditCount());
+
+        Carbon::setTestNow();
     }
 }

@@ -256,6 +256,137 @@ if (page) {
         }
     }
 
+    /**
+     * BLUE V1 Phase B20 - the post-cancellation refund state, read
+     * verbatim from booking.refund_due (App\Support\Admin\
+     * AdminBookingPresenter::refundDuePayload()) - status/provider/
+     * reference/timestamps/failure reason are never invented here, only
+     * formatted. A refund is a consequence of Cancel booking, never a
+     * separate action, so this box has no button of its own.
+     */
+    function renderRefundDue(refundDue, currency) {
+        const box = page.querySelector('[data-refund-due-box]');
+
+        if (!refundDue) {
+            box.style.display = 'none';
+            return;
+        }
+
+        const needsAttention = refundDue.status === 'RECONCILIATION_REQUIRED';
+
+        setText('refund_percentage', String(refundDue.percentage));
+        setText('refund_amount', formatMoney(refundDue.amount, currency));
+        setText('refund_status', refundDue.status ? statusLabel(refundDue.status) : 'Pending');
+        setText('refund_execution', refundDue.execution === 'STRIPE_AUTOMATIC' ? 'Automatic via Stripe' : refundDue.execution);
+        setText('refund_provider', refundDue.provider);
+
+        // BLUE V1 Phase B20 fix 2 - RECONCILIATION_REQUIRED must read as
+        // clearly distinct from ordinary PENDING/processing, never merely
+        // another status word in the same list.
+        const attentionBanner = page.querySelector('[data-refund-attention-banner]');
+        attentionBanner.style.display = needsAttention ? 'block' : 'none';
+
+        const referenceRow = page.querySelector('[data-refund-reference-row]');
+        if (refundDue.provider_refund_reference) {
+            setText('refund_provider_reference', refundDue.provider_refund_reference);
+            referenceRow.style.display = 'flex';
+        } else {
+            referenceRow.style.display = 'none';
+        }
+
+        setText('refund_requested_at', formatDateTime(refundDue.requested_at));
+
+        const succeededRow = page.querySelector('[data-refund-succeeded-row]');
+        if (refundDue.succeeded_at) {
+            setText('refund_succeeded_at', formatDateTime(refundDue.succeeded_at));
+            succeededRow.style.display = 'flex';
+        } else {
+            succeededRow.style.display = 'none';
+        }
+
+        const failedRow = page.querySelector('[data-refund-failed-row]');
+        if (refundDue.failed_at) {
+            setText('refund_failed_at_label', needsAttention ? 'Flagged at' : 'Failed at');
+            setText('refund_failed_at', formatDateTime(refundDue.failed_at));
+            failedRow.style.display = 'flex';
+        } else {
+            failedRow.style.display = 'none';
+        }
+
+        const failureReasonRow = page.querySelector('[data-refund-failure-reason-row]');
+        if (refundDue.failure_code || refundDue.failure_message) {
+            setText('refund_failure_reason', [refundDue.failure_code, refundDue.failure_message].filter(Boolean).join(' — '));
+            failureReasonRow.style.display = 'flex';
+        } else {
+            failureReasonRow.style.display = 'none';
+        }
+
+        box.style.display = 'block';
+    }
+
+    /**
+     * BLUE V1 Phase B20 - builds the read-only refund preview shown inside
+     * the shared confirm-action modal BEFORE an Admin confirms Cancel
+     * booking. Every number/label rendered here comes directly from GET
+     * /v1/admin/bookings/{booking}/cancellation-preview (App\Actions\
+     * Booking\PreviewBookingCancellationAction, reused verbatim from the
+     * customer endpoint) - this function only formats fields the backend
+     * already computed, it never calculates a percentage or amount itself.
+     */
+    function renderCancellationPreviewDetails(preview) {
+        const wrap = document.createElement('dl');
+        wrap.className = 'space-y-1.5';
+
+        const row = (label, value) => {
+            const div = document.createElement('div');
+            div.className = 'flex justify-between gap-4';
+
+            const dt = document.createElement('dt');
+            dt.className = 'text-slate-500';
+            dt.textContent = label;
+
+            const dd = document.createElement('dd');
+            dd.className = 'font-medium text-slate-900';
+            dd.textContent = value;
+
+            div.append(dt, dd);
+            return div;
+        };
+
+        if (preview.appointment?.starts_at) {
+            wrap.appendChild(row('Appointment', formatDateTime(preview.appointment.starts_at)));
+        }
+
+        if (!preview.refund) {
+            wrap.appendChild(row(
+                'Refund',
+                preview.reason_code === 'CONTRACT_ENTITLEMENT'
+                    ? 'None - covered by a Service Contract'
+                    : 'None',
+            ));
+
+            if (!preview.cancellable) {
+                wrap.appendChild(row('Note', 'This booking can no longer be cancelled.'));
+            }
+
+            return wrap;
+        }
+
+        wrap.appendChild(row('Captured amount', formatMoney(preview.paid_amount, preview.currency)));
+        wrap.appendChild(row(
+            'Cancellation refund',
+            `${preview.refund.percentage}% · ${formatMoney(preview.refund.amount, preview.currency)}`,
+        ));
+        wrap.appendChild(row('Execution', 'Automatic via Stripe'));
+        wrap.appendChild(row('Destination', 'Original payment method'));
+
+        if (!preview.cancellable) {
+            wrap.appendChild(row('Note', 'This booking can no longer be cancelled.'));
+        }
+
+        return wrap;
+    }
+
     function renderBooking(booking) {
         currentBooking = booking;
 
@@ -264,16 +395,7 @@ if (page) {
         setText('source', statusLabel(booking.source));
         renderBadge('status', booking.status);
 
-        const refundBox = page.querySelector('[data-refund-due-box]');
-
-        if (booking.refund_due) {
-            setText('refund_percentage', String(booking.refund_due.percentage));
-            setText('refund_amount', formatMoney(booking.refund_due.amount, booking.currency));
-            setText('refund_execution', booking.refund_due.execution);
-            refundBox.style.display = 'block';
-        } else {
-            refundBox.style.display = 'none';
-        }
+        renderRefundDue(booking.refund_due, booking.currency);
 
         page.querySelectorAll('[data-customer-link]').forEach((link) => {
             if (booking.customer) {
@@ -462,11 +584,31 @@ if (page) {
     // -----------------------------------------------------------------
 
     if (cancelBookingButton) {
-        cancelBookingButton.addEventListener('click', () => {
+        cancelBookingButton.addEventListener('click', async () => {
+            cancelBookingButton.disabled = true;
+
+            let detailsNode;
+
+            try {
+                const preview = await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/cancellation-preview`);
+                detailsNode = renderCancellationPreviewDetails(preview.data.preview);
+            } catch (error) {
+                // Degrade gracefully rather than blocking Cancel entirely -
+                // the real policy/refund enforcement always happens
+                // server-side on the POST .../cancel call below regardless
+                // of whether this preview loaded.
+                const note = document.createElement('p');
+                note.textContent = modalErrorMessage(error, 'Unable to load the refund preview.');
+                detailsNode = note;
+            } finally {
+                cancelBookingButton.disabled = false;
+            }
+
             openConfirmAction({
                 title: 'Cancel booking',
                 message: 'This permanently cancels the booking, its remaining service items, and releases any assigned technicians. A reason is required.',
                 confirmLabel: 'Cancel booking',
+                detailsNode,
                 onConfirm: async (reason) => {
                     if (!reason) {
                         throw new ApiError('A reason is required to cancel this booking.');

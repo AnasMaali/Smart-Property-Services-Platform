@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Contract;
 
+use App\Support\Booking\BookingStatuses;
+use App\Support\Contract\ContractStatuses;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Carbon;
@@ -133,7 +135,7 @@ class ContractBookingTest extends TestCase
         $response->assertStatus(409);
 
         $row = DB::table('service_contracts')->where('id', $built['contract']->id)->first();
-        $this->assertSame('EXPIRED', \App\Support\Contract\ContractStatuses::code((int) $row->status_id));
+        $this->assertSame('EXPIRED', ContractStatuses::code((int) $row->status_id));
     }
 
     public function test_booking_rejects_a_contract_item_from_another_contract(): void
@@ -272,6 +274,12 @@ class ContractBookingTest extends TestCase
 
         $response->assertStatus(200);
         $this->assertNull($response->json('data.refund_due'));
+
+        // BLUE V1 Phase B20 - a Contract Booking never triggers a Stripe
+        // refund obligation: it was never paid for directly.
+        $bookingIdBinary = UuidBinary::toBinary($booking->json('data.booking.uuid'));
+        $this->assertSame(0, DB::table('booking_refunds')->where('booking_id', $bookingIdBinary)->count());
+        $this->assertCount(0, $this->fakeGateway()->refundPaymentCalls);
     }
 
     public function test_customer_can_still_book_a_normal_service_not_covered_by_the_contract(): void
@@ -352,6 +360,6 @@ class ContractBookingTest extends TestCase
             ->assertStatus(200);
 
         $bookingRow = DB::table('bookings')->where('id', UuidBinary::toBinary($bookingUuid))->first();
-        $this->assertSame('COMPLETED', \App\Support\Booking\BookingStatuses::code((int) $bookingRow->status_id));
+        $this->assertSame('COMPLETED', BookingStatuses::code((int) $bookingRow->status_id));
     }
 }

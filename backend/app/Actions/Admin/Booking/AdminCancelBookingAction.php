@@ -34,7 +34,7 @@ use Illuminate\Http\Request;
 final class AdminCancelBookingAction
 {
     public function __construct(
-        private readonly CancelBookingAction $cancelBookingAction = new CancelBookingAction,
+        private readonly CancelBookingAction $cancelBookingAction,
     ) {}
 
     /**
@@ -47,6 +47,7 @@ final class AdminCancelBookingAction
             bookingUuid: $bookingUuid,
             requireOwnerUuid: null,
             reason: $reason,
+            initiatedAs: 'ADMIN',
             onRealCancellation: function () use ($request, $actor, $bookingUuid, $reason): void {
                 AdminAuditLogger::record(
                     request: $request,

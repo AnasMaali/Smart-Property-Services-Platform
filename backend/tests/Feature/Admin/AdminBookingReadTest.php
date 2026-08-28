@@ -296,11 +296,14 @@ class AdminBookingReadTest extends TestCase
 
         $this->assertSame(75, $data['refund_due']['percentage']);
         $this->assertSame($expectedRefund, $data['refund_due']['amount']);
-        $this->assertSame('MANUAL', $data['refund_due']['execution']);
+        $this->assertSame('STRIPE_AUTOMATIC', $data['refund_due']['execution']);
     }
 
     // 13. Admin Booking detail refund_due never exposes provider/Stripe
-    // internals - it is strictly {percentage, amount, execution}.
+    // internals beyond the explicit, safe execution-status fields BLUE V1
+    // Phase B20 added (status/provider/provider_refund_reference/
+    // requested_at/succeeded_at/failed_at) - never a raw Stripe object,
+    // client_secret, or any other provider-internal field.
     public function test_admin_booking_detail_refund_due_never_leaks_payment_or_provider_internals(): void
     {
         $admin = $this->createAndLoginAdmin(['ADMIN']);
@@ -321,7 +324,10 @@ class AdminBookingReadTest extends TestCase
             ->assertStatus(200);
 
         $refundDue = $response->json('data.booking.refund_due');
-        $this->assertSame(['percentage', 'amount', 'execution'], array_keys($refundDue));
+        $this->assertSame(
+            ['percentage', 'amount', 'execution', 'status', 'provider', 'provider_refund_reference', 'requested_at', 'succeeded_at', 'failed_at', 'failure_code', 'failure_message'],
+            array_keys($refundDue)
+        );
 
         $this->assertStringNotContainsString('client_secret', strtolower($response->getContent()));
     }
@@ -359,7 +365,7 @@ class AdminBookingReadTest extends TestCase
 
         $this->assertSame(100, $response->json('data.booking.refund_due.percentage'));
         $this->assertSame($expectedAmount, $response->json('data.booking.refund_due.amount'));
-        $this->assertSame('MANUAL', $response->json('data.booking.refund_due.execution'));
+        $this->assertSame('STRIPE_AUTOMATIC', $response->json('data.booking.refund_due.execution'));
     }
 
     // ---------------------------------------------------------------

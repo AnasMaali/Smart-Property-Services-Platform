@@ -55,8 +55,61 @@
 
             <div data-refund-due-box style="display: none;" class="mt-5 rounded-xl border
                         border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                Refund due: <span data-field="refund_percentage"></span>% ( <span data-field="refund_amount"></span> ) -
-                execution: <span data-field="refund_execution"></span>
+                <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Cancellation refund
+                </p>
+                <p data-refund-attention-banner style="display: none;" class="mt-2 rounded-lg
+                            border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold
+                            text-red-800">
+                    Refund needs attention - reconciliation required. Stripe reported an
+                    amount or currency that did not match this refund. It will NOT be
+                    retried automatically.
+                </p>
+                <dl class="mt-2 space-y-1.5">
+                    <div class="flex justify-between gap-4">
+                        <dt>Amount</dt>
+                        <dd class="font-medium">
+                            <span data-field="refund_percentage"></span>% ·
+                            <span data-field="refund_amount"></span>
+                        </dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt>Status</dt>
+                        <dd data-field="refund_status" class="font-medium"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt>Execution</dt>
+                        <dd data-field="refund_execution" class="font-medium"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt>Destination</dt>
+                        <dd>Original payment method</dd>
+                    </div>
+                    <div data-refund-provider-row class="flex justify-between gap-4">
+                        <dt>Provider</dt>
+                        <dd data-field="refund_provider" class="font-medium"></dd>
+                    </div>
+                    <div data-refund-reference-row style="display: none;" class="flex justify-between gap-4">
+                        <dt>Provider reference</dt>
+                        <dd data-field="refund_provider_reference" class="font-mono text-xs"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt>Requested at</dt>
+                        <dd data-field="refund_requested_at" class="font-medium"></dd>
+                    </div>
+                    <div data-refund-succeeded-row style="display: none;" class="flex justify-between gap-4">
+                        <dt>Succeeded at</dt>
+                        <dd data-field="refund_succeeded_at" class="font-medium"></dd>
+                    </div>
+                    <div data-refund-failed-row style="display: none;" class="flex justify-between gap-4">
+                        <dt data-field="refund_failed_at_label">Failed at</dt>
+                        <dd data-field="refund_failed_at" class="font-medium"></dd>
+                    </div>
+                    <div data-refund-failure-reason-row style="display: none;" class="flex justify-between gap-4">
+                        <dt>Failure reason</dt>
+                        <dd data-field="refund_failure_reason" class="font-medium"></dd>
+                    </div>
+                </dl>
             </div>
 
             <div data-force-complete-box style="display: none;" class="mt-5 flex flex-wrap
@@ -369,6 +422,9 @@
 
         <h2 data-confirm-action-title class="text-lg font-semibold text-slate-950"></h2>
         <p data-confirm-action-message class="mt-2 text-sm leading-6 text-slate-500"></p>
+
+        <div data-confirm-action-details style="display: none;" class="mt-4 rounded-xl border
+                    border-slate-200 bg-slate-50 p-4 text-sm text-slate-700"></div>
 
         <div data-confirm-action-error class="mt-4 hidden rounded-xl border border-red-200
                     bg-red-50 px-4 py-3 text-sm text-red-700"></div>

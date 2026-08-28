@@ -58,3 +58,13 @@ Schedule::command('bookings:convert-successful-payments')
 Schedule::command('accounts:process-pending-deletions')
     ->everyFiveMinutes()
     ->withoutOverlapping(10);
+
+// Retry Stripe execution for cancelled-Booking refund obligations whose
+// best-effort, post-cancellation attempt did not resolve (see
+// App\Actions\Payment\ExecuteBookingRefundAction /
+// App\Console\Commands\ExecutePendingBookingRefunds) - idempotent (stable
+// persisted Stripe idempotency key + PENDING-only guard) and safe to run
+// repeatedly, so a healthy system simply finds nothing.
+Schedule::command('bookings:execute-pending-refunds')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10);

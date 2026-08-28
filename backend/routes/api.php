@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingControlle
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
+use App\Http\Controllers\Api\V1\Admin\Booking\PreviewAdminBookingCancellationController;
 use App\Http\Controllers\Api\V1\Admin\Booking\RescheduleAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
@@ -78,6 +79,7 @@ use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 use App\Http\Controllers\Api\V1\Booking\GetBookingController;
 use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
+use App\Http\Controllers\Api\V1\Booking\PreviewBookingCancellationController;
 use App\Http\Controllers\Api\V1\Cart\AddCartItemController;
 use App\Http\Controllers\Api\V1\Cart\ClearCartController;
 use App\Http\Controllers\Api\V1\Cart\GetCartController;
@@ -162,6 +164,10 @@ Route::middleware('auth.customer')->group(function () {
 
     Route::get('/v1/bookings', ListBookingsController::class);
     Route::get('/v1/bookings/{booking}', GetBookingController::class);
+    // BLUE V1 Phase B20 - server-authoritative cancellation/refund preview,
+    // read before the customer confirms POST .../cancel. See
+    // App\Actions\Booking\PreviewBookingCancellationAction.
+    Route::get('/v1/bookings/{booking}/cancellation-preview', PreviewBookingCancellationController::class);
     Route::post('/v1/bookings/{booking}/cancel', CancelBookingController::class);
 
     // BLUE V1 Phase 10A - Customer Properties.
@@ -297,6 +303,10 @@ Route::middleware('auth.admin')->group(function () {
     // endpoint already uses) rather than a generic status-setter. Gated by
     // its own `bookings.cancel` capability, never `bookings.manage`.
     Route::post('/v1/admin/bookings/{booking}/cancel', CancelAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_CANCEL->middleware());
+    // BLUE V1 Phase B20 - same cancellation/refund preview the customer
+    // API exposes, reused verbatim (never a separate Admin calculator).
+    Route::get('/v1/admin/bookings/{booking}/cancellation-preview', PreviewAdminBookingCancellationController::class)
         ->middleware(AdminCapability::BOOKINGS_CANCEL->middleware());
     // BLUE V1 Phase B17 - Force Complete: break-glass operational recovery
     // only, never a substitute for normal technician Complete Work - see

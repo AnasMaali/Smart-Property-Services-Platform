@@ -19,9 +19,11 @@ use Tests\TestCase;
  * A later phase added customer-facing Booking cancellation
  * (api/v1/bookings/{booking}/cancel). That single, explicitly named route
  * is carved out below - it is NOT an Admin operational route (see
- * CancelBookingController), never touches Stripe, and refund execution
- * stays MANUAL. Every other `cancel`/`refund` route - Admin ones in
- * particular - remains forbidden unless explicitly added here.
+ * CancelBookingController). BLUE V1 Phase B20 below made its refund
+ * execution automatic via Stripe; this test only ever guards the route
+ * surface, never the execution mechanism. Every other `cancel`/`refund`
+ * route - Admin ones in particular - remains forbidden unless explicitly
+ * added here.
  *
  * BLUE V1 Phase 10E added exactly one Admin `cancel` route:
  * api/v1/admin/contracts/{contract}/cancel. This is Service Contract
@@ -37,6 +39,17 @@ use Tests\TestCase;
  * CancelBookingAction cascade the customer route above already uses -
  * never a second cancellation/refund implementation - so it is carved out
  * here for the same reason.
+ *
+ * BLUE V1 Phase B20 (Automated Booking Refunds via Stripe) replaced manual
+ * refund execution with automatic Stripe refunds on both cancel routes
+ * above, and added exactly two READ-ONLY preview routes whose URI happens
+ * to contain "cancel" (`cancellation-preview`):
+ * api/v1/bookings/{booking}/cancellation-preview (App\Actions\Booking\
+ * PreviewBookingCancellationAction, customer, ownership-scoped) and
+ * api/v1/admin/bookings/{booking}/cancellation-preview (the same Action,
+ * Admin, `bookings.cancel`-gated). Neither ever mutates a Booking, calls
+ * Stripe, or duplicates the cancellation policy - both are carved out here
+ * for the same reason as the cancel routes themselves.
  */
 class NoOperationalEndpointsExposedTest extends TestCase
 {
@@ -50,8 +63,10 @@ class NoOperationalEndpointsExposedTest extends TestCase
 
     private const ALLOWED_URI_EXCEPTIONS = [
         'api/v1/bookings/{booking}/cancel',
+        'api/v1/bookings/{booking}/cancellation-preview',
         'api/v1/admin/contracts/{contract}/cancel',
         'api/v1/admin/bookings/{booking}/cancel',
+        'api/v1/admin/bookings/{booking}/cancellation-preview',
     ];
 
     public function test_no_out_of_scope_operational_routes_are_registered(): void
@@ -137,6 +152,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
             'api/v1/admin/bookings/{booking}/cancel',
+            'api/v1/admin/bookings/{booking}/cancellation-preview',
             'api/v1/admin/bookings/{booking}/force-complete',
             'api/v1/admin/bookings/{booking}/reschedule',
             'api/v1/admin/contract-billings',
@@ -182,6 +198,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
             'api/v1/admin/bookings/{booking}/cancel',
+            'api/v1/admin/bookings/{booking}/cancellation-preview',
             'api/v1/admin/bookings/{booking}/force-complete',
             'api/v1/admin/bookings/{booking}/reschedule',
             'api/v1/admin/appointment-slots',

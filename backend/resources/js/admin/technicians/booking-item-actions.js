@@ -215,6 +215,7 @@ function confirmActionElements() {
         modal: confirmModal,
         title: confirmModal.querySelector('[data-confirm-action-title]'),
         message: confirmModal.querySelector('[data-confirm-action-message]'),
+        details: confirmModal.querySelector('[data-confirm-action-details]'),
         error: confirmModal.querySelector('[data-confirm-action-error]'),
         reason: confirmModal.querySelector('[data-confirm-action-reason]'),
         cancelButton: confirmModal.querySelector('[data-confirm-action-cancel]'),
@@ -222,7 +223,15 @@ function confirmActionElements() {
     };
 }
 
-export function openConfirmAction({ title, message, confirmLabel, onConfirm }) {
+/**
+ * $detailsNode (optional) is an already-built DOM node - e.g. the
+ * server-authoritative cancellation/refund preview bookings/show.js
+ * renders from GET /v1/admin/bookings/{booking}/cancellation-preview -
+ * shown above the reason field. This modal never builds that content
+ * itself; it only mounts whatever node the caller hands it, or hides the
+ * slot entirely when none is given (Start work / Complete work above).
+ */
+export function openConfirmAction({ title, message, confirmLabel, detailsNode, onConfirm }) {
     const els = confirmActionElements();
 
     if (!els) {
@@ -234,6 +243,18 @@ export function openConfirmAction({ title, message, confirmLabel, onConfirm }) {
     els.confirmButton.textContent = confirmLabel;
     els.reason.value = '';
     hideError(els.error);
+
+    if (els.details) {
+        els.details.replaceChildren();
+
+        if (detailsNode) {
+            els.details.appendChild(detailsNode);
+            els.details.style.display = 'block';
+        } else {
+            els.details.style.display = 'none';
+        }
+    }
+
     els.modal.style.display = 'flex';
 
     const onCancel = () => close();

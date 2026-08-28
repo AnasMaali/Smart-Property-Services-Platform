@@ -376,17 +376,31 @@ final class AdminBookingPresenter
     }
 
     /**
-     * Refund eligibility for an already-CANCELLED Booking only - read
-     * verbatim from the historical snapshot
-     * App\Actions\Booking\CancelBookingAction persisted at the moment of
-     * the Booking's first real cancellation
-     * (`bookings.cancellation_refund_percentage` /
-     * `cancellation_refund_amount`), identically to the customer-facing
-     * App\Support\Booking\BookingPresenter. Never recomputed here - a later
-     * change to `config('cancellation.*')` must never change what an
-     * already-cancelled Booking is shown to owe.
+     * Refund eligibility for an already-CANCELLED Booking only - identical
+     * to (and never a separate implementation from)
+     * App\Support\Booking\BookingPresenter::refundDuePayload(): the
+     * percentage/amount are the frozen policy snapshot
+     * App\Actions\Booking\CancelBookingAction persisted at cancellation
+     * time, and the execution status/provider fields (BLUE V1 Phase B20)
+     * are read live from the `booking_refunds` obligation row - never
+     * promised as already returned while still PENDING.
      *
-     * @return array{percentage: int, amount: string, execution: 'MANUAL'}|null
+     * failure_code/failure_message are included here (Admin-only - never on
+     * the customer-facing App\Support\Booking\BookingPresenter equivalent)
+     * since a FAILED (or fix-phase-2 RECONCILIATION_REQUIRED - an
+     * authoritative Stripe webhook whose amount/currency did not match the
+     * obligation; BLUE V1 is AED-only, so this is always an anomaly, never
+     * a currency the platform legitimately supports) refund is exactly the
+     * case an Admin needs to see and may need to act on; both are already
+     * safe, provider-neutral strings this Action itself wrote
+     * (StripePaymentGateway::classifyRefundFailure /
+     * ProcessPaymentWebhookAction::processRefundEvent), never a raw
+     * exception message or Stripe object. `status` for
+     * RECONCILIATION_REQUIRED must be rendered by the Admin UI as clearly
+     * distinct from ordinary PENDING/processing - see
+     * resources/js/admin/bookings/show.js.
+     *
+     * @return array{percentage: int, amount: string, execution: string, status: ?string, provider: ?string, provider_refund_reference: ?string, requested_at: ?string, succeeded_at: ?string, failed_at: ?string, failure_code: ?string, failure_message: ?string}|null
      */
     private static function refundDuePayload(object $row): ?array
     {
@@ -394,10 +408,20 @@ final class AdminBookingPresenter
             return null;
         }
 
+        $refundRow = DB::table('booking_refunds')->where('booking_id', $row->id)->first();
+
         return [
             'percentage' => (int) $row->cancellation_refund_percentage,
             'amount' => (string) $row->cancellation_refund_amount,
-            'execution' => 'MANUAL',
+            'execution' => 'STRIPE_AUTOMATIC',
+            'status' => $refundRow === null ? null : DB::table('booking_refund_statuses')->where('id', $refundRow->status_id)->value('code'),
+            'provider' => $refundRow?->provider_code,
+            'provider_refund_reference' => $refundRow?->provider_refund_reference,
+            'requested_at' => $refundRow === null ? null : Carbon::parse($refundRow->requested_at)->toIso8601String(),
+            'succeeded_at' => $refundRow?->succeeded_at === null ? null : Carbon::parse($refundRow->succeeded_at)->toIso8601String(),
+            'failed_at' => $refundRow?->failed_at === null ? null : Carbon::parse($refundRow->failed_at)->toIso8601String(),
+            'failure_code' => $refundRow?->failure_code,
+            'failure_message' => $refundRow?->failure_message,
         ];
     }
 
