@@ -98,6 +98,8 @@ if (page) {
     const editBookingButton = page.querySelector('[data-edit-booking-open]');
     const editBookingModal = document.querySelector('[data-edit-booking-modal]');
     const cancelBookingButton = page.querySelector('[data-cancel-booking-open]');
+    const forceCompleteBox = page.querySelector('[data-force-complete-box]');
+    const forceCompleteButton = page.querySelector('[data-force-complete-open]');
 
     let currentBooking = null;
 
@@ -331,6 +333,11 @@ if (page) {
             cancelBookingButton.style.display = isNonTerminal ? 'inline-flex' : 'none';
         }
 
+        if (forceCompleteBox) {
+            const hasIneligibleItem = booking.items.some((item) => ['PENDING_ASSIGNMENT', 'ASSIGNED', 'CANCELLED'].includes(item.status));
+            forceCompleteBox.style.display = isNonTerminal && booking.items.length > 0 && !hasIneligibleItem ? 'flex' : 'none';
+        }
+
         setText('items_count', String(booking.items.length));
         setText('total', formatMoney(booking.total, booking.currency));
 
@@ -460,6 +467,36 @@ if (page) {
                     }
 
                     await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/cancel`, {
+                        method: 'POST',
+                        body: { reason },
+                    });
+
+                    await loadBooking();
+                },
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Force complete (BLUE V1 Phase B17) - break-glass operational
+    // recovery only, visually and behaviorally separate from the normal
+    // per-item Start/Complete work actions above. A reason is mandatory;
+    // the server also requires a fresh Step-Up re-proof (handled
+    // transparently by lib/api-client.js's 428 retry).
+    // -----------------------------------------------------------------
+
+    if (forceCompleteButton) {
+        forceCompleteButton.addEventListener('click', () => {
+            openConfirmAction({
+                title: 'Force complete booking',
+                message: 'This bypasses the normal technician workflow and marks every remaining item as completed. This cannot be undone. A reason is required.',
+                confirmLabel: 'Force complete',
+                onConfirm: async (reason) => {
+                    if (!reason) {
+                        throw new ApiError('A reason is required to force-complete this booking.');
+                    }
+
+                    await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/force-complete`, {
                         method: 'POST',
                         body: { reason },
                     });

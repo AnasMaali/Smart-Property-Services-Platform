@@ -46,6 +46,21 @@ enum AdminCapability: string
      */
     case BOOKINGS_CANCEL = 'bookings.cancel';
 
+    /**
+     * BLUE V1 Phase B17. Break-glass operational recovery: force-completes
+     * a Booking through its Booking Items when the normal technician
+     * lifecycle cannot finish it. Strictly more dangerous than
+     * `bookings.cancel` (it fabricates completion state that feeds
+     * ratings eligibility and Contract entitlement usage) so it gets its
+     * own capability rather than folding into `bookings.manage`/
+     * `bookings.cancel`, and - like `contracts.cancel`/`pricing.publish` -
+     * also requires a fresh `admin.stepup` re-proof on top of this
+     * capability. Still granted to ADMIN by default in the canonical
+     * seed, exactly like those two precedents: step-up is the safety net
+     * here, not capability scarcity.
+     */
+    case BOOKINGS_FORCE_COMPLETE = 'bookings.force_complete';
+
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 

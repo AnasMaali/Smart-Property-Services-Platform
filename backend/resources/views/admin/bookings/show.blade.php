@@ -58,6 +58,24 @@
                 Refund due: <span data-field="refund_percentage"></span>% ( <span data-field="refund_amount"></span> ) -
                 execution: <span data-field="refund_execution"></span>
             </div>
+
+            <div data-force-complete-box style="display: none;" class="mt-5 flex flex-wrap
+                        items-center justify-between gap-3 rounded-xl border-2 border-dashed
+                        border-red-300 bg-red-50 p-4">
+                <p class="text-xs leading-5 text-red-800">
+                    <strong class="font-semibold">Break-glass override.</strong>
+                    Force complete marks every remaining item done without going through
+                    the normal technician workflow. Use only when that workflow cannot
+                    finish this booking.
+                </p>
+                <button
+                    type="button"
+                    data-force-complete-open
+                    class="shrink-0 rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold
+                           text-white hover:bg-red-800">
+                    Force complete
+                </button>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">

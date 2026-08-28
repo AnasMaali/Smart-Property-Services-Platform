@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
@@ -295,6 +296,13 @@ Route::middleware('auth.admin')->group(function () {
     // its own `bookings.cancel` capability, never `bookings.manage`.
     Route::post('/v1/admin/bookings/{booking}/cancel', CancelAdminBookingController::class)
         ->middleware(AdminCapability::BOOKINGS_CANCEL->middleware());
+    // BLUE V1 Phase B17 - Force Complete: break-glass operational recovery
+    // only, never a substitute for normal technician Complete Work - see
+    // App\Actions\Admin\Booking\AdminForceCompleteBookingAction's docblock.
+    // Mirrors contracts.cancel/pricing.publish exactly: the capability gate
+    // runs first, admin.stepup (a fresh WebAuthn re-proof) second.
+    Route::post('/v1/admin/bookings/{booking}/force-complete', ForceCompleteAdminBookingController::class)
+        ->middleware([AdminCapability::BOOKINGS_FORCE_COMPLETE->middleware(), 'admin.stepup']);
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());

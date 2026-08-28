@@ -135,6 +135,12 @@ VALUES
     TRUE
 ),
 (
+    'bookings.force_complete',
+    'Force Complete Bookings',
+    'Break-glass operational recovery: force-complete a Booking through its Booking Items when the normal technician lifecycle cannot finish it. Requires WebAuthn Step-Up, like contracts.cancel.',
+    TRUE
+),
+(
     'technicians.view',
     'View Technicians',
     'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
@@ -280,6 +286,7 @@ WHERE r.code = 'ADMIN'
     'bookings.view',
     'bookings.manage',
     'bookings.cancel',
+    'bookings.force_complete',
     'technicians.view',
     'technicians.assign',
     'contracts.view',
