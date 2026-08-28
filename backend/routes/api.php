@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
+use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\CancelContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\GetAdminContractController;
@@ -107,28 +108,6 @@ use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
 use App\Support\Admin\AdminCapability;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
-
-Route::get(
-    '/v1/admin/bookings',
-    ListAdminBookingsController::class
-)->middleware(
-    AdminCapability::BOOKINGS_VIEW->middleware()
-);
-
-Route::get(
-    '/v1/admin/bookings/{booking}',
-    GetAdminBookingController::class
-)->middleware(
-    AdminCapability::BOOKINGS_VIEW->middleware()
-);
-
-Route::patch(
-    '/v1/admin/bookings/{booking}',
-    UpdateAdminBookingController::class
-)->middleware(
-    AdminCapability::BOOKINGS_MANAGE->middleware()
-);
 
 Route::post('/v1/auth/register', RegisterController::class)->middleware('throttle:auth-register');
 Route::post('/v1/auth/verify-phone', VerifyPhoneController::class)->middleware('throttle:auth-otp-verify');
@@ -296,6 +275,15 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
     Route::get('/v1/admin/bookings/{booking}', GetAdminBookingController::class)
         ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+    // BLUE V1 Phase B15 - Edit Booking: operational visit/location fields
+    // only (street/address/building/floor/unit/landmark/notes/contact
+    // phone). Never Booking status, service, items, pricing, payment,
+    // Contract linkage, or appointment slot - see
+    // App\Actions\Admin\Booking\AdminUpdateBookingAction's docblock. Gated
+    // by its own `bookings.manage` capability, deliberately never reusing
+    // `bookings.view`.
+    Route::patch('/v1/admin/bookings/{booking}', UpdateAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_MANAGE->middleware());
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());

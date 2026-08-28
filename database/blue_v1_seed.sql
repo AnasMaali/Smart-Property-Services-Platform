@@ -123,6 +123,12 @@ VALUES
     TRUE
 ),
 (
+    'bookings.manage',
+    'Manage Bookings',
+    'Update authorized operational Booking details without changing financial snapshots, services, ownership, or appointment capacity.',
+    TRUE
+),
+(
     'technicians.view',
     'View Technicians',
     'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
@@ -266,6 +272,7 @@ CROSS JOIN admin_permissions p
 WHERE r.code = 'ADMIN'
   AND p.code IN (
     'bookings.view',
+    'bookings.manage',
     'technicians.view',
     'technicians.assign',
     'contracts.view',

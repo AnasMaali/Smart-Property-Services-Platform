@@ -16,7 +16,7 @@ final class UpdateAdminBookingController extends Controller
         AdminUpdateBookingAction $action,
     ): JsonResponse {
         /** @var User $actor */
-        $actor = $request->user();
+        $actor = $request->attributes->get('auth_user');
 
         $result = $action->handle(
             request: $request,

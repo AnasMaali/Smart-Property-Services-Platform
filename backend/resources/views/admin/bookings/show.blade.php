@@ -132,7 +132,17 @@
 
 
         <div class="rounded-2xl border border-slate-200 bg-white p-6">
-            <h3 class="text-sm font-semibold text-slate-900">Location</h3>
+            <div class="flex items-start justify-between gap-4">
+                <h3 class="text-sm font-semibold text-slate-900">Location</h3>
+                <button
+                    type="button"
+                    data-edit-booking-open
+                    style="display: none;"
+                    class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5
+                           text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    Edit booking
+                </button>
+            </div>
             <p data-field="location_summary" class="mt-2 text-sm leading-6 text-slate-600"></p>
             <p data-field="location_contact" class="mt-1 text-xs text-slate-400"></p>
         </div>
@@ -356,6 +366,137 @@
                 Confirm
             </button>
         </div>
+
+    </div>
+
+</div>
+
+
+<div
+    data-edit-booking-modal
+    style="display: none;"
+    class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+
+    <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+
+        <h2 class="text-lg font-semibold text-slate-950">Edit booking</h2>
+        <p class="mt-1 text-sm text-slate-500">
+            Operational visit/location details only. Customer, service, pricing,
+            status, and appointment cannot be changed here.
+        </p>
+
+        <div data-edit-booking-error class="mt-4 hidden rounded-xl border border-red-200
+                    bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+
+        <form data-edit-booking-form class="mt-4 space-y-4">
+
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div class="sm:col-span-2">
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Street</label>
+                    <input
+                        name="street_name"
+                        type="text"
+                        required
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div class="sm:col-span-2">
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Address</label>
+                    <textarea
+                        name="address_line"
+                        rows="2"
+                        required
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100"></textarea>
+                </div>
+
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Building</label>
+                    <input
+                        name="building_name_or_number"
+                        type="text"
+                        required
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Floor</label>
+                    <input
+                        name="floor_number"
+                        type="text"
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Unit</label>
+                    <input
+                        name="unit_number"
+                        type="text"
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Nearby landmark</label>
+                    <input
+                        name="nearby_landmark"
+                        type="text"
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Visit contact phone</label>
+                    <input
+                        name="visit_contact_phone"
+                        type="text"
+                        required
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100">
+                </div>
+
+                <div class="sm:col-span-2">
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Location notes</label>
+                    <textarea
+                        name="additional_location_notes"
+                        rows="2"
+                        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500
+                               focus:ring-4 focus:ring-blue-100"></textarea>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-1">
+                <button
+                    type="button"
+                    data-edit-booking-cancel
+                    class="rounded-xl px-4 py-2.5 text-sm font-medium
+                           text-slate-600 hover:bg-slate-50">
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    data-edit-booking-submit
+                    class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm
+                           font-semibold text-white transition
+                           hover:bg-slate-800 disabled:cursor-not-allowed
+                           disabled:opacity-60">
+                    Save changes
+                </button>
+            </div>
+
+        </form>
 
     </div>
 

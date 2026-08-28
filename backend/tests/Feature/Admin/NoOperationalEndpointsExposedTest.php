@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Admin;
 
+use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
@@ -65,18 +66,38 @@ class NoOperationalEndpointsExposedTest extends TestCase
         $this->assertSame([], $matches, 'Found unexpected operational route(s) registered: '.implode(', ', $matches));
     }
 
-    public function test_no_generic_booking_status_setter_route_exists(): void
+    /**
+     * BLUE V1 Phase B15 added exactly one PATCH /v1/admin/bookings/{booking}
+     * route - the scoped Edit Booking operation (App\Actions\Admin\Booking\
+     * AdminUpdateBookingAction), gated by its own `bookings.manage`
+     * capability. It is intentionally NOT a generic status-setter: its
+     * FormRequest (App\Http\Requests\Admin\UpdateAdminBookingRequest) only
+     * ever validates the eight operational visit/location fields, so a
+     * `status` (or any other) key in the body is simply dropped by
+     * `$request->validated()` and can never reach a write - see
+     * AdminFinancialIsolationTest::test_no_generic_admin_status_endpoint_exists
+     * for the behavioral proof against a real Booking. This test only
+     * confirms no OTHER, unnamed PUT/PATCH route was added beyond that one.
+     */
+    public function test_no_generic_booking_status_setter_route_exists_beyond_the_scoped_edit_booking_route(): void
     {
-        $hasGenericStatusRoute = collect(Route::getRoutes())
+        $unexpectedRoute = collect(Route::getRoutes())
             ->contains(function ($route) {
                 $uri = strtolower($route->uri());
                 $methods = $route->methods();
 
-                return $uri === 'api/v1/admin/bookings/{booking}'
-                    && (in_array('PATCH', $methods, true) || in_array('PUT', $methods, true));
+                if ($uri !== 'api/v1/admin/bookings/{booking}') {
+                    return false;
+                }
+
+                if (! (in_array('PATCH', $methods, true) || in_array('PUT', $methods, true))) {
+                    return false;
+                }
+
+                return $route->getActionName() !== UpdateAdminBookingController::class;
             });
 
-        $this->assertFalse($hasGenericStatusRoute, 'A generic PATCH/PUT booking status-setter route must never exist - only named operations (complete, assign-technician, etc.) are allowed.');
+        $this->assertFalse($unexpectedRoute, 'Only the scoped Edit Booking controller may handle PATCH/PUT /v1/admin/bookings/{booking}.');
     }
 
     public function test_only_the_expected_admin_routes_exist(): void

@@ -69,6 +69,19 @@ function transitionLabel(entry) {
     return `${from} → ${statusLabel(entry.to_status)}`;
 }
 
+const EDIT_BOOKING_FIELDS = [
+    'street_name',
+    'address_line',
+    'building_name_or_number',
+    'floor_number',
+    'unit_number',
+    'nearby_landmark',
+    'additional_location_notes',
+    'visit_contact_phone',
+];
+
+const TERMINAL_BOOKING_STATUSES = ['COMPLETED', 'CANCELLED'];
+
 const page = document.querySelector('[data-booking-detail-page]');
 
 if (page) {
@@ -82,6 +95,24 @@ if (page) {
     const historyRowTemplate = document.querySelector('[data-history-row-template]');
     const itemHistoryRowTemplate = document.querySelector('[data-item-history-row-template]');
     const statusHistoryContainer = page.querySelector('[data-status-history]');
+    const editBookingButton = page.querySelector('[data-edit-booking-open]');
+    const editBookingModal = document.querySelector('[data-edit-booking-modal]');
+
+    let currentBooking = null;
+
+    function showModalError(errorEl, message) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+    }
+
+    function hideModalError(errorEl) {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+    }
+
+    function modalErrorMessage(error, fallback) {
+        return error instanceof ApiError ? error.message : fallback;
+    }
 
     function field(name) {
         return page.querySelector(`[data-field="${name}"]`);
@@ -221,6 +252,8 @@ if (page) {
     }
 
     function renderBooking(booking) {
+        currentBooking = booking;
+
         setText('booking_number', booking.booking_number);
         setText('created_at', formatDateTime(booking.created_at));
         setText('source', statusLabel(booking.source));
@@ -287,6 +320,11 @@ if (page) {
         setText('location_summary', renderLocation(booking.location));
         setText('location_contact', booking.location?.visit_contact_phone ? `Visit contact: ${booking.location.visit_contact_phone}` : '');
 
+        if (editBookingButton) {
+            const canEdit = Boolean(booking.location) && !TERMINAL_BOOKING_STATUSES.includes(booking.status);
+            editBookingButton.style.display = canEdit ? 'inline-flex' : 'none';
+        }
+
         setText('items_count', String(booking.items.length));
         setText('total', formatMoney(booking.total, booking.currency));
 
@@ -309,6 +347,92 @@ if (page) {
             fragment.querySelector('[data-field="reason"]').textContent = entry.reason || '';
             fragment.querySelector('[data-field="changed_at"]').textContent = formatDateTime(entry.changed_at);
         });
+    }
+
+    // -----------------------------------------------------------------
+    // Edit booking (BLUE V1 Phase B15) - operational visit/location
+    // fields only. Prefills strictly from the currently loaded
+    // authoritative Booking response; on success it never patches local
+    // state, it reloads GET /v1/admin/bookings/{booking} exactly like the
+    // technician operations above.
+    // -----------------------------------------------------------------
+
+    function editBookingModalElements() {
+        if (!editBookingModal) {
+            return null;
+        }
+
+        return {
+            modal: editBookingModal,
+            error: editBookingModal.querySelector('[data-edit-booking-error]'),
+            form: editBookingModal.querySelector('[data-edit-booking-form]'),
+            cancelButton: editBookingModal.querySelector('[data-edit-booking-cancel]'),
+            submitButton: editBookingModal.querySelector('[data-edit-booking-submit]'),
+        };
+    }
+
+    function openEditBookingModal() {
+        const els = editBookingModalElements();
+
+        if (!els || !currentBooking?.location) {
+            return;
+        }
+
+        hideModalError(els.error);
+        els.form.reset();
+
+        EDIT_BOOKING_FIELDS.forEach((fieldName) => {
+            const input = els.form.elements.namedItem(fieldName);
+
+            if (input) {
+                input.value = currentBooking.location[fieldName] ?? '';
+            }
+        });
+
+        els.modal.style.display = 'flex';
+
+        const onCancel = () => close();
+
+        const close = () => {
+            els.modal.style.display = 'none';
+            els.cancelButton.removeEventListener('click', onCancel);
+            els.form.removeEventListener('submit', onSubmit);
+        };
+
+        async function onSubmit(event) {
+            event.preventDefault();
+            hideModalError(els.error);
+
+            const formData = new FormData(els.form);
+            const payload = {};
+
+            EDIT_BOOKING_FIELDS.forEach((fieldName) => {
+                payload[fieldName] = formData.get(fieldName) ?? '';
+            });
+
+            els.submitButton.disabled = true;
+
+            try {
+                await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}`, {
+                    method: 'PATCH',
+                    body: payload,
+                });
+
+                close();
+                await loadBooking();
+            } catch (error) {
+                showModalError(els.error, modalErrorMessage(error, 'Unable to update this booking.'));
+            } finally {
+                els.submitButton.disabled = false;
+            }
+        }
+
+        els.cancelButton.addEventListener('click', onCancel);
+        els.form.addEventListener('submit', onSubmit);
+    }
+
+    if (editBookingButton) {
+        editBookingButton.addEventListener('click', openEditBookingModal);
     }
 
     adminAuthReady().then((ready) => {
