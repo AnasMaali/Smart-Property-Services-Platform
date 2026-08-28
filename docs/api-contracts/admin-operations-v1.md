@@ -1412,3 +1412,53 @@ No table, column, migration, or index was added. The one new `audit.view` `admin
 added via the existing `INSERT ... ON DUPLICATE KEY UPDATE` seed convention in
 `database/blue_v1_seed.sql`, with equivalent DML applied only to `blue_test_db` — the pre-existing
 `blue_db` Admin-schema gap, reported in every phase since B5, remains untouched and unrelated to B12.
+
+## Admin "Change Price" (BLUE V1 Phase B18) — not implemented, and why
+
+No `PATCH`/mutation endpoint changes an existing Booking's price. This was investigated and
+deliberately not built, for the same category of reason as "Booking-Level Lifecycle" above: the
+schema does not support it safely, not that nobody got around to it.
+
+**There is no price column on `bookings` to change.** `bookings` (schema) carries no
+`total`/`price`/`amount` field at all — every read (customer `BookingPresenter`, Admin
+`AdminBookingPresenter`) computes the displayed total by summing `booking_items.line_total_amount`
+at request time. "Changing the Booking's price" can only mean rewriting `booking_items` pricing
+columns.
+
+**Those columns are a historical snapshot, not a live figure — by explicit design.** `bookings-v1.md`
+states the Booking read APIs are "entirely historical-snapshot based — nothing here re-runs
+`PricingEngine` or re-reads the live catalog/profile." `booking_items` enforces this at the schema
+level: `unit_total_amount`/`line_total_amount` are tied together by
+`chk_booking_items_line_total (line_total_amount = unit_total_amount * quantity)`, and
+`pricing_breakdown` (JSON, `NOT NULL`) is `PricingEngine`'s own recorded justification for that exact
+number, pinned to one immutable `pricing_scheme_version_id`. Hand-editing `unit_total_amount` without
+regenerating a coherent `pricing_breakdown` from a real pricing run would corrupt that provenance -
+exactly the "bypass existing pricing calculations" this phase was told not to do.
+
+**Every existing Booking is already tied to money that has already moved.** A `bookings` row only
+ever comes from one of two sources, and both already fixed the price before the Booking existed:
+
+- **STANDARD** (`payment_attempt_id` set, `UNIQUE` 1:1 with `payment_attempts`): `confirmed_amount`
+  is the amount Stripe actually captured for that exact `checkout_snapshot`
+  (`payment_attempts.checkout_snapshot`/`checkout_snapshot_hash`, both immutable) - see
+  `App\Actions\Booking\CancelBookingAction`'s own docblock ("confirmed_amount is authoritative after
+  successful payment"). `requires_reconciliation`/`reconciliation_reason_code` exist specifically to
+  flag an amount *mismatch* as an anomaly needing investigation - the schema already treats "recorded
+  price ≠ amount actually charged" as a fault state, never a normal, supported one.
+- **CONTRACT** (`service_contract_id`/`service_contract_item_id` set, no `payment_attempt_id`):
+  entitlement is tracked as a **visit count** (`App\Support\Contract\ContractEntitlementCalculator`:
+  `included_visits`/`used_visits`/`remaining_visits`), not a per-Booking dollar amount - there is no
+  "price" here to change independent of the Contract's own pricing rules, which this phase was told
+  never to mutate.
+
+**Conclusion**: every state a Booking can be in already has its price permanently reconciled against
+real money moved or a real Contract entitlement - there is no "unpaid draft" or "quote" state for a
+Booking to occupy (that only exists pre-payment, on the Cart). Any write to `booking_items` pricing
+columns would immediately desynchronize the displayed price from the amount actually charged/entitled,
+with no reconciliation mechanism to close the gap - and building one (an additional charge, a partial
+refund, a re-billed Contract usage) is explicitly out of scope for this phase (no new payment/refund
+infrastructure). No safe subset of "Change Price" exists under the current architecture, so no
+mutation endpoint, capability, or route was added. If a real business need for this emerges, it
+requires a dedicated future phase that first defines a reconciliation policy (additional
+payment/partial refund), the same prerequisite already named for "Booking cancellation / refunds"
+above before that later phase could be built.
