@@ -61,6 +61,17 @@ enum AdminCapability: string
      */
     case BOOKINGS_FORCE_COMPLETE = 'bookings.force_complete';
 
+    /**
+     * BLUE V1 Phase B19. Moving a Booking to a different appointment_slot
+     * is a distinct operational mutation (capacity/hold/Technician-overlap
+     * concerns bookings.manage's own docblock never covers) so it gets its
+     * own capability rather than overloading bookings.manage. No
+     * admin.stepup - unlike bookings.force_complete, a reschedule is
+     * reversible (can be rescheduled again) and never touches payment,
+     * pricing, or Contract entitlement.
+     */
+    case BOOKINGS_RESCHEDULE = 'bookings.reschedule';
+
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 

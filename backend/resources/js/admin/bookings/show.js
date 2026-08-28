@@ -100,6 +100,8 @@ if (page) {
     const cancelBookingButton = page.querySelector('[data-cancel-booking-open]');
     const forceCompleteBox = page.querySelector('[data-force-complete-box]');
     const forceCompleteButton = page.querySelector('[data-force-complete-open]');
+    const rescheduleButton = page.querySelector('[data-reschedule-booking-open]');
+    const rescheduleModal = document.querySelector('[data-reschedule-booking-modal]');
 
     let currentBooking = null;
 
@@ -338,6 +340,10 @@ if (page) {
             forceCompleteBox.style.display = isNonTerminal && booking.items.length > 0 && !hasIneligibleItem ? 'flex' : 'none';
         }
 
+        if (rescheduleButton) {
+            rescheduleButton.style.display = isNonTerminal && booking.status !== 'IN_PROGRESS' ? 'inline-flex' : 'none';
+        }
+
         setText('items_count', String(booking.items.length));
         setText('total', formatMoney(booking.total, booking.currency));
 
@@ -505,6 +511,146 @@ if (page) {
                 },
             });
         });
+    }
+
+    // -----------------------------------------------------------------
+    // Reschedule booking (BLUE V1 Phase B19) - moves this booking to a
+    // different appointment slot. The slot list comes from the backend's
+    // own availability computation (GET /v1/admin/appointment-slots) -
+    // never trusted/computed client-side. Backend re-validates capacity,
+    // Technician overlap, and lifecycle eligibility at submit time
+    // regardless of what this list showed a moment earlier.
+    // -----------------------------------------------------------------
+
+    function rescheduleModalElements() {
+        if (!rescheduleModal) {
+            return null;
+        }
+
+        return {
+            modal: rescheduleModal,
+            error: rescheduleModal.querySelector('[data-reschedule-booking-error]'),
+            current: rescheduleModal.querySelector('[data-reschedule-current]'),
+            form: rescheduleModal.querySelector('[data-reschedule-booking-form]'),
+            loading: rescheduleModal.querySelector('[data-reschedule-slots-loading]'),
+            empty: rescheduleModal.querySelector('[data-reschedule-slots-empty]'),
+            select: rescheduleModal.querySelector('[data-reschedule-slot-select]'),
+            preview: rescheduleModal.querySelector('[data-reschedule-preview]'),
+            previewText: rescheduleModal.querySelector('[data-reschedule-preview-text]'),
+            cancelButton: rescheduleModal.querySelector('[data-reschedule-booking-cancel]'),
+            submitButton: rescheduleModal.querySelector('[data-reschedule-booking-submit]'),
+        };
+    }
+
+    function formatSlotLabel(slot) {
+        return `${formatDateOnly(slot.starts_at)} · ${formatDateTime(slot.starts_at)}–${formatDateTime(slot.ends_at)} (${slot.time_window.name})`;
+    }
+
+    function openRescheduleModal() {
+        const els = rescheduleModalElements();
+
+        if (!els || !currentBooking?.appointment?.slot) {
+            return;
+        }
+
+        els.current.textContent = formatSlotLabel(currentBooking.appointment.slot);
+
+        hideModalError(els.error);
+        els.form.reset();
+        els.preview.style.display = 'none';
+        els.select.style.display = 'none';
+        els.empty.style.display = 'none';
+        els.loading.style.display = 'block';
+        els.modal.style.display = 'flex';
+
+        let slotsByUuid = {};
+
+        const updatePreview = () => {
+            const slot = slotsByUuid[els.select.value];
+            if (slot) {
+                els.previewText.textContent = formatSlotLabel(slot);
+                els.preview.style.display = 'block';
+            } else {
+                els.preview.style.display = 'none';
+            }
+        };
+
+        const onCancel = () => close();
+
+        const close = () => {
+            els.modal.style.display = 'none';
+            els.cancelButton.removeEventListener('click', onCancel);
+            els.form.removeEventListener('submit', onSubmit);
+            els.select.removeEventListener('change', updatePreview);
+        };
+
+        async function onSubmit(event) {
+            event.preventDefault();
+            hideModalError(els.error);
+
+            const formData = new FormData(els.form);
+            const slotUuid = formData.get('appointment_slot_uuid');
+            const reason = formData.get('reason')?.trim();
+
+            if (!slotUuid) {
+                showModalError(els.error, 'Choose a new appointment slot to continue.');
+                return;
+            }
+
+            if (!reason) {
+                showModalError(els.error, 'A reason is required to reschedule this booking.');
+                return;
+            }
+
+            els.submitButton.disabled = true;
+
+            try {
+                await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/reschedule`, {
+                    method: 'POST',
+                    body: { appointment_slot_uuid: slotUuid, reason },
+                });
+
+                close();
+                await loadBooking();
+            } catch (error) {
+                showModalError(els.error, modalErrorMessage(error, 'Unable to reschedule this booking.'));
+            } finally {
+                els.submitButton.disabled = false;
+            }
+        }
+
+        els.cancelButton.addEventListener('click', onCancel);
+        els.form.addEventListener('submit', onSubmit);
+        els.select.addEventListener('change', updatePreview);
+
+        request('/api/v1/admin/appointment-slots')
+            .then((response) => {
+                els.loading.style.display = 'none';
+                const slots = response.data.appointment_slots || [];
+
+                if (slots.length === 0) {
+                    els.empty.style.display = 'block';
+                    return;
+                }
+
+                slotsByUuid = Object.fromEntries(slots.map((slot) => [slot.uuid, slot]));
+                els.select.replaceChildren(...slots.map((slot) => {
+                    const option = document.createElement('option');
+                    option.value = slot.uuid;
+                    option.textContent = formatSlotLabel(slot);
+                    return option;
+                }));
+                els.select.style.display = 'block';
+                updatePreview();
+            })
+            .catch((error) => {
+                els.loading.style.display = 'none';
+                showModalError(els.error, modalErrorMessage(error, 'Unable to load available appointment slots.'));
+            });
+    }
+
+    if (rescheduleButton) {
+        rescheduleButton.addEventListener('click', openRescheduleModal);
     }
 
     adminAuthReady().then((ready) => {

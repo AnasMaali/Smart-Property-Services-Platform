@@ -222,6 +222,7 @@ class CreateContractBookingAction
             $occupied = DB::table('appointment_holds')
                 ->where('appointment_slot_id', $slotIdBinary)
                 ->whereNull('released_at')
+                ->whereNull('superseded_at')
                 ->where(function ($query) use ($now) {
                     $query->whereNotNull('converted_at')->orWhere('expires_at', '>', $now);
                 })

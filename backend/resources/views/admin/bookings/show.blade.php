@@ -99,7 +99,17 @@
             </div>
 
             <div class="rounded-2xl border border-slate-200 bg-white p-6">
-                <h3 class="text-sm font-semibold text-slate-900">Appointment</h3>
+                <div class="flex items-start justify-between gap-4">
+                    <h3 class="text-sm font-semibold text-slate-900">Appointment</h3>
+                    <button
+                        type="button"
+                        data-reschedule-booking-open
+                        style="display: none;"
+                        class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5
+                               text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                        Reschedule
+                    </button>
+                </div>
                 <dl class="mt-3 space-y-2 text-sm">
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Window</dt>
@@ -521,6 +531,90 @@
                            hover:bg-slate-800 disabled:cursor-not-allowed
                            disabled:opacity-60">
                     Save changes
+                </button>
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<div
+    data-reschedule-booking-modal
+    style="display: none;"
+    class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+
+    <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+
+        <h2 class="text-lg font-semibold text-slate-950">Reschedule booking</h2>
+        <p class="mt-1 text-sm text-slate-500">
+            Moves this booking to a different appointment slot. Customer, service,
+            price, and status are never changed here.
+        </p>
+
+        <div data-reschedule-booking-error class="mt-4 hidden rounded-xl border border-red-200
+                    bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+
+        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Current</p>
+            <p data-reschedule-current class="mt-1 font-medium text-slate-900"></p>
+        </div>
+
+        <form data-reschedule-booking-form class="mt-4 space-y-4">
+
+            <div>
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">New appointment slot</label>
+                <div data-reschedule-slots-loading class="text-sm text-slate-500">Loading available slots...</div>
+                <div data-reschedule-slots-empty style="display: none;" class="rounded-xl border
+                            border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    No available appointment slots right now.
+                </div>
+                <select
+                    name="appointment_slot_uuid"
+                    data-reschedule-slot-select
+                    style="display: none;"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                           text-sm text-slate-900 outline-none focus:border-blue-500
+                           focus:ring-4 focus:ring-blue-100">
+                </select>
+            </div>
+
+            <div data-reschedule-preview style="display: none;" class="rounded-xl border
+                        border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                <p class="text-xs font-medium uppercase tracking-wide text-blue-700">New</p>
+                <p data-reschedule-preview-text class="mt-1 font-medium"></p>
+            </div>
+
+            <div>
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">Reason</label>
+                <textarea
+                    name="reason"
+                    rows="2"
+                    required
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                           text-sm text-slate-900 outline-none focus:border-blue-500
+                           focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-1">
+                <button
+                    type="button"
+                    data-reschedule-booking-cancel
+                    class="rounded-xl px-4 py-2.5 text-sm font-medium
+                           text-slate-600 hover:bg-slate-50">
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    data-reschedule-booking-submit
+                    class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm
+                           font-semibold text-white transition
+                           hover:bg-slate-800 disabled:cursor-not-allowed
+                           disabled:opacity-60">
+                    Confirm reschedule
                 </button>
             </div>
 

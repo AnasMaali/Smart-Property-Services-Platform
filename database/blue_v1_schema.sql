@@ -341,6 +341,7 @@ CREATE TABLE `appointment_holds` (
   `expires_at` datetime(6) NOT NULL,
   `released_at` datetime(6) DEFAULT NULL,
   `converted_at` datetime(6) DEFAULT NULL,
+  `superseded_at` datetime(6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
@@ -354,7 +355,8 @@ CREATE TABLE `appointment_holds` (
   CONSTRAINT `chk_appointment_holds_converted_at` CHECK (((`converted_at` is null) or (`converted_at` >= `held_at`))),
   CONSTRAINT `chk_appointment_holds_expiration` CHECK ((`expires_at` > `held_at`)),
   CONSTRAINT `chk_appointment_holds_final_state` CHECK (((`released_at` is null) or (`converted_at` is null))),
-  CONSTRAINT `chk_appointment_holds_released_at` CHECK (((`released_at` is null) or (`released_at` >= `held_at`)))
+  CONSTRAINT `chk_appointment_holds_released_at` CHECK (((`released_at` is null) or (`released_at` >= `held_at`))),
+  CONSTRAINT `chk_appointment_holds_superseded_at` CHECK (((`superseded_at` is null) or ((`converted_at` is not null) and (`superseded_at` >= `converted_at`))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

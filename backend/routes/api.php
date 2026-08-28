@@ -11,7 +11,9 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
+use App\Http\Controllers\Api\V1\Admin\Booking\RescheduleAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\CancelContractController;
@@ -303,6 +305,19 @@ Route::middleware('auth.admin')->group(function () {
     // runs first, admin.stepup (a fresh WebAuthn re-proof) second.
     Route::post('/v1/admin/bookings/{booking}/force-complete', ForceCompleteAdminBookingController::class)
         ->middleware([AdminCapability::BOOKINGS_FORCE_COMPLETE->middleware(), 'admin.stepup']);
+    // BLUE V1 Phase B19 - Reschedule Booking: moves a non-terminal Booking
+    // to a different appointment_slot through the same capacity/hold model
+    // checkout uses - see App\Actions\Admin\Booking\
+    // AdminRescheduleBookingAction's docblock. The slot-listing route below
+    // is read-only availability (reuses App\Support\Checkout\
+    // AppointmentSlotAvailability, the customer checkout endpoint's own
+    // computation) for the reschedule picker - never a generic scheduling
+    // API. Both share `bookings.reschedule`; no admin.stepup (reversible,
+    // never touches payment/pricing/entitlement).
+    Route::get('/v1/admin/appointment-slots', ListAdminAppointmentSlotsController::class)
+        ->middleware(AdminCapability::BOOKINGS_RESCHEDULE->middleware());
+    Route::post('/v1/admin/bookings/{booking}/reschedule', RescheduleAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_RESCHEDULE->middleware());
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());

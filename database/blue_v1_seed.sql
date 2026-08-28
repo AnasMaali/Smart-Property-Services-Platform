@@ -141,6 +141,12 @@ VALUES
     TRUE
 ),
 (
+    'bookings.reschedule',
+    'Reschedule Bookings',
+    'Move a non-terminal Booking to a different appointment slot, re-validating capacity and any assigned Technician for overlap. Never touches payment, pricing, or Contract entitlement.',
+    TRUE
+),
+(
     'technicians.view',
     'View Technicians',
     'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
@@ -287,6 +293,7 @@ WHERE r.code = 'ADMIN'
     'bookings.manage',
     'bookings.cancel',
     'bookings.force_complete',
+    'bookings.reschedule',
     'technicians.view',
     'technicians.assign',
     'contracts.view',
