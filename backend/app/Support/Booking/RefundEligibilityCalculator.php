@@ -59,7 +59,7 @@ final class RefundEligibilityCalculator
      */
     public static function evaluate(string $appointmentStartsAt, string $cancelledAt, string $paidAmount, int $currencyMinorUnit): array
     {
-        $businessTimezone = (string) config('cancellation.timezone', 'UTC');
+        $businessTimezone = (string) config('cancellation.timezone', 'Asia/Dubai');
         $storageTimezone = (string) config('app.timezone', 'UTC');
 
         $appointmentStorage = CarbonImmutable::parse($appointmentStartsAt, $storageTimezone);
