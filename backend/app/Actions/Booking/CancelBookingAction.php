@@ -10,6 +10,7 @@ use App\Support\Booking\RefundEligibilityCalculator;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Uuid\UuidBinary;
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -23,10 +24,15 @@ final class CancelBookingAction
     ) {}
 
     /**
-     * Customer cancellation only.
+     * Shared cancellation cascade for both the customer self-service
+     * cancel endpoint and the Admin "Cancel Booking" operation
+     * (App\Actions\Admin\Booking\AdminCancelBookingAction) - never
+     * duplicated between the two callers.
      *
      * This action:
-     * - verifies Booking ownership
+     * - optionally verifies Booking ownership (customer flow only -
+     *   $requireOwnerUuid; the Admin caller passes null, since an Admin may
+     *   cancel any customer's Booking)
      * - cancels the parent Booking
      * - cancels every non-terminal Booking Item
      * - releases active Technician assignments
@@ -40,21 +46,39 @@ final class CancelBookingAction
      *
      * It NEVER calls Stripe and NEVER changes payment_attempts status.
      *
+     * $onRealCancellation, when given, is invoked inside this same
+     * transaction ONLY on a genuine PAID/ASSIGNED/IN_PROGRESS -> CANCELLED
+     * transition (never on an idempotent replay of an already-CANCELLED
+     * Booking) - this is how AdminCancelBookingAction writes its Admin
+     * audit event atomically with the state change, without this shared
+     * Action taking any dependency on Admin-only infrastructure itself.
+     *
+     * @param  string  $actorUserUuid  Recorded as changed_by_user_id / released_by_user_id - the customer themselves, or the acting Admin.
+     * @param  string|null  $requireOwnerUuid  When given, the Booking is 404 unless its Cart belongs to this Customer. Null skips the check (Admin flow).
      * @return array<string, mixed>
      */
-    public function handle(string $userUuid, string $bookingUuid): array
-    {
+    public function handle(
+        string $actorUserUuid,
+        string $bookingUuid,
+        ?string $requireOwnerUuid = null,
+        string $reason = 'Customer cancelled booking.',
+        ?Closure $onRealCancellation = null,
+    ): array {
         try {
             $bookingIdBinary = UuidBinary::toBinary($bookingUuid);
-            $userIdBinary = UuidBinary::toBinary($userUuid);
+            $actorIdBinary = UuidBinary::toBinary($actorUserUuid);
+            $requireOwnerIdBinary = $requireOwnerUuid === null ? null : UuidBinary::toBinary($requireOwnerUuid);
         } catch (InvalidArgumentException) {
             return $this->notFound('Booking not found.');
         }
 
         return DB::transaction(function () use (
             $bookingIdBinary,
-            $userIdBinary,
-            $bookingUuid
+            $actorIdBinary,
+            $requireOwnerIdBinary,
+            $bookingUuid,
+            $reason,
+            $onRealCancellation,
         ): array {
             /*
              * Root lock first.
@@ -74,14 +98,18 @@ final class CancelBookingAction
              * Booking -> Cart -> customer_user_id
              *
              * Foreign and unknown Bookings are intentionally both 404.
+             * Skipped entirely for the Admin flow ($requireOwnerIdBinary
+             * === null) - an Admin may cancel any customer's Booking.
              */
-            $ownsBooking = DB::table('carts')
-                ->where('id', $booking->cart_id)
-                ->where('customer_user_id', $userIdBinary)
-                ->exists();
+            if ($requireOwnerIdBinary !== null) {
+                $ownsBooking = DB::table('carts')
+                    ->where('id', $booking->cart_id)
+                    ->where('customer_user_id', $requireOwnerIdBinary)
+                    ->exists();
 
-            if (! $ownsBooking) {
-                return $this->notFound('Booking not found.');
+                if (! $ownsBooking) {
+                    return $this->notFound('Booking not found.');
+                }
             }
 
             $currentStatus = BookingStatuses::code((int) $booking->status_id);
@@ -209,8 +237,8 @@ final class CancelBookingAction
                     'booking_id' => $bookingIdBinary,
                     'from_status_id' => (int) $booking->status_id,
                     'to_status_id' => BookingStatuses::id('CANCELLED'),
-                    'changed_by_user_id' => $userIdBinary,
-                    'reason' => 'Customer cancelled booking.',
+                    'changed_by_user_id' => $actorIdBinary,
+                    'reason' => $reason,
                     'changed_at' => $now->format('Y-m-d H:i:s.u'),
                 ]);
             }
@@ -237,8 +265,8 @@ final class CancelBookingAction
                         'booking_item_id' => $item->id,
                         'from_status_id' => (int) $item->status_id,
                         'to_status_id' => BookingItemStatuses::id('CANCELLED'),
-                        'changed_by_user_id' => $userIdBinary,
-                        'reason' => 'Customer cancelled booking.',
+                        'changed_by_user_id' => $actorIdBinary,
+                        'reason' => $reason,
                         'changed_at' => $now->format('Y-m-d H:i:s.u'),
                     ]);
                 }
@@ -258,8 +286,8 @@ final class CancelBookingAction
                     ->whereNull('released_at')
                     ->update([
                         'released_at' => $releaseTimestamp,
-                        'released_by_user_id' => $userIdBinary,
-                        'release_reason' => 'Customer cancelled booking.',
+                        'released_by_user_id' => $actorIdBinary,
+                        'release_reason' => $reason,
                         'updated_at' => $releaseTimestamp,
                     ]);
             }
@@ -309,6 +337,10 @@ final class CancelBookingAction
                         'cancellation_refund_amount' => $refund['amount'],
                         'updated_at' => $now->format('Y-m-d H:i:s.u'),
                     ]);
+            }
+
+            if ($currentStatus !== 'CANCELLED') {
+                $onRealCancellation?->__invoke();
             }
 
             return $this->ok(

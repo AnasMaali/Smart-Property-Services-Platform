@@ -30,6 +30,22 @@ enum AdminCapability: string
      * AdminUpdateBookingAction's docblock.
      */
     case BOOKINGS_MANAGE = 'bookings.manage';
+
+    /**
+     * BLUE V1 Phase B16. Mirrors the `contracts.manage`/`contracts.cancel`
+     * split: cancellation is a one-way terminal transition with a real
+     * (manual) refund-eligibility consequence, so it gets its own
+     * capability rather than folding into `bookings.manage` - whose own
+     * docblock already explicitly excludes Booking lifecycle status.
+     * Unlike `contracts.cancel`, this does NOT require `admin.stepup`: a
+     * customer may already trigger the exact same cancellation/refund-
+     * eligibility outcome on their own Booking with no extra verification
+     * (POST /v1/bookings/{booking}/cancel), and cancelling one Booking
+     * never revokes a whole Contract's future authorization the way
+     * Contract cancellation does.
+     */
+    case BOOKINGS_CANCEL = 'bookings.cancel';
+
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 

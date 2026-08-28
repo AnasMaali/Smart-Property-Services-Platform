@@ -89,6 +89,7 @@ below exists without a real route enforcing it.
 |---|---|---|---|---|
 | `bookings.view` | Read paid Bookings/Booking Items across every customer | `GET /v1/admin/bookings`, `GET /v1/admin/bookings/{booking}` | ✅ | ✅ (override) |
 | `bookings.manage` | Edit operational visit/location fields on a non-terminal Booking (street/address/building/floor/unit/landmark/notes/contact phone only) | `PATCH /v1/admin/bookings/{booking}` | ✅ | ✅ (override) |
+| `bookings.cancel` | Cancel a Booking on behalf of a customer (reuses the customer cancel cascade/refund policy) | `POST /v1/admin/bookings/{booking}/cancel` | ✅ | ✅ (override) |
 | `technicians.view` | Read Technician records and candidate lists | `GET /v1/admin/technicians`, `GET /v1/admin/booking-items/{id}/technician-candidates` | ✅ | ✅ (override) |
 | `technicians.assign` | Assign/reassign/start/complete Technician work | `POST .../assign-technician`, `.../reassign-technician`, `.../start-work`, `.../complete-work` | ✅ | ✅ (override) |
 | `contracts.view` | Read Service Contracts | `GET /v1/admin/contracts`, `GET /v1/admin/contracts/{contract}` | ✅ | ✅ (override) |

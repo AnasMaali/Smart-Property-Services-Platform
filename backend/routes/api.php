@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminMfaVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
+use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
@@ -284,6 +285,16 @@ Route::middleware('auth.admin')->group(function () {
     // `bookings.view`.
     Route::patch('/v1/admin/bookings/{booking}', UpdateAdminBookingController::class)
         ->middleware(AdminCapability::BOOKINGS_MANAGE->middleware());
+    // BLUE V1 Phase B16 - Cancel Booking: the ONLY Admin-initiated Booking
+    // status transition this phase supports - see
+    // App\Actions\Admin\Booking\AdminCancelBookingAction's docblock for why
+    // ASSIGNED/IN_PROGRESS/COMPLETED are deliberately never exposed as a
+    // manual Admin override. Reuses App\Actions\Booking\CancelBookingAction
+    // (the same cascade/refund policy the customer self-service cancel
+    // endpoint already uses) rather than a generic status-setter. Gated by
+    // its own `bookings.cancel` capability, never `bookings.manage`.
+    Route::post('/v1/admin/bookings/{booking}/cancel', CancelAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_CANCEL->middleware());
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());

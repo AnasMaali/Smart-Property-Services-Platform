@@ -129,6 +129,12 @@ VALUES
     TRUE
 ),
 (
+    'bookings.cancel',
+    'Cancel Bookings',
+    'Cancel a Booking on behalf of a customer, reusing the same cascade and manual refund-eligibility policy as customer self-service cancellation.',
+    TRUE
+),
+(
     'technicians.view',
     'View Technicians',
     'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
@@ -273,6 +279,7 @@ WHERE r.code = 'ADMIN'
   AND p.code IN (
     'bookings.view',
     'bookings.manage',
+    'bookings.cancel',
     'technicians.view',
     'technicians.assign',
     'contracts.view',

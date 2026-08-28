@@ -20,7 +20,7 @@
 import { request, ApiError } from '../lib/api-client.js';
 import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
-import { attachTechnicianActions } from '../technicians/booking-item-actions.js';
+import { attachTechnicianActions, openConfirmAction } from '../technicians/booking-item-actions.js';
 
 function formatDateOnly(iso) {
     if (!iso) {
@@ -97,6 +97,7 @@ if (page) {
     const statusHistoryContainer = page.querySelector('[data-status-history]');
     const editBookingButton = page.querySelector('[data-edit-booking-open]');
     const editBookingModal = document.querySelector('[data-edit-booking-modal]');
+    const cancelBookingButton = page.querySelector('[data-cancel-booking-open]');
 
     let currentBooking = null;
 
@@ -320,9 +321,14 @@ if (page) {
         setText('location_summary', renderLocation(booking.location));
         setText('location_contact', booking.location?.visit_contact_phone ? `Visit contact: ${booking.location.visit_contact_phone}` : '');
 
+        const isNonTerminal = !TERMINAL_BOOKING_STATUSES.includes(booking.status);
+
         if (editBookingButton) {
-            const canEdit = Boolean(booking.location) && !TERMINAL_BOOKING_STATUSES.includes(booking.status);
-            editBookingButton.style.display = canEdit ? 'inline-flex' : 'none';
+            editBookingButton.style.display = Boolean(booking.location) && isNonTerminal ? 'inline-flex' : 'none';
+        }
+
+        if (cancelBookingButton) {
+            cancelBookingButton.style.display = isNonTerminal ? 'inline-flex' : 'none';
         }
 
         setText('items_count', String(booking.items.length));
@@ -433,6 +439,35 @@ if (page) {
 
     if (editBookingButton) {
         editBookingButton.addEventListener('click', openEditBookingModal);
+    }
+
+    // -----------------------------------------------------------------
+    // Cancel booking (BLUE V1 Phase B16) - the ONLY Admin-initiated status
+    // change this Workspace exposes. Reuses the same generic confirm-action
+    // modal as Start work / Complete work, but a reason is mandatory here
+    // (server-enforced too - this is only a UX pre-check).
+    // -----------------------------------------------------------------
+
+    if (cancelBookingButton) {
+        cancelBookingButton.addEventListener('click', () => {
+            openConfirmAction({
+                title: 'Cancel booking',
+                message: 'This permanently cancels the booking, its remaining service items, and releases any assigned technicians. A reason is required.',
+                confirmLabel: 'Cancel booking',
+                onConfirm: async (reason) => {
+                    if (!reason) {
+                        throw new ApiError('A reason is required to cancel this booking.');
+                    }
+
+                    await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/cancel`, {
+                        method: 'POST',
+                        body: { reason },
+                    });
+
+                    await loadBooking();
+                },
+            });
+        });
     }
 
     adminAuthReady().then((ready) => {

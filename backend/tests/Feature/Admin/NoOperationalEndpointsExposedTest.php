@@ -29,6 +29,14 @@ use Tests\TestCase;
  * - it never touches a Booking, Payment, or refund; it only stops a Contract
  * from authorizing further CONTRACT Bookings. It is carved out below for
  * that reason, the same way the customer Booking-cancel route already was.
+ *
+ * BLUE V1 Phase B16 added exactly one Admin Booking `cancel` route:
+ * api/v1/admin/bookings/{booking}/cancel
+ * (App\Actions\Admin\Booking\AdminCancelBookingAction). It is a thin,
+ * `bookings.cancel`-gated wrapper over the SAME App\Actions\Booking\
+ * CancelBookingAction cascade the customer route above already uses -
+ * never a second cancellation/refund implementation - so it is carved out
+ * here for the same reason.
  */
 class NoOperationalEndpointsExposedTest extends TestCase
 {
@@ -43,6 +51,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
     private const ALLOWED_URI_EXCEPTIONS = [
         'api/v1/bookings/{booking}/cancel',
         'api/v1/admin/contracts/{contract}/cancel',
+        'api/v1/admin/bookings/{booking}/cancel',
     ];
 
     public function test_no_out_of_scope_operational_routes_are_registered(): void
@@ -126,6 +135,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
+            'api/v1/admin/bookings/{booking}/cancel',
             'api/v1/admin/contract-billings',
             'api/v1/admin/contract-billings/{billing}',
             'api/v1/admin/contracts',
@@ -168,6 +178,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
         $operationalUris = [
             'api/v1/admin/bookings',
             'api/v1/admin/bookings/{booking}',
+            'api/v1/admin/bookings/{booking}/cancel',
             'api/v1/admin/technicians',
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',

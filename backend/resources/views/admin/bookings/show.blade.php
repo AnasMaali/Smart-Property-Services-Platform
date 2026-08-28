@@ -39,8 +39,18 @@
                     </p>
                 </div>
 
-                <span data-field="status" data-status-badge
-                      class="rounded-full px-3 py-1.5 text-xs font-semibold"></span>
+                <div class="flex flex-col items-end gap-2">
+                    <span data-field="status" data-status-badge
+                          class="rounded-full px-3 py-1.5 text-xs font-semibold"></span>
+                    <button
+                        type="button"
+                        data-cancel-booking-open
+                        style="display: none;"
+                        class="rounded-lg border border-red-200 bg-white px-3 py-1.5
+                               text-xs font-semibold text-red-700 hover:bg-red-50">
+                        Cancel booking
+                    </button>
+                </div>
             </div>
 
             <div data-refund-due-box style="display: none;" class="mt-5 rounded-xl border

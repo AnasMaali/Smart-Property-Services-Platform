@@ -201,7 +201,9 @@ function openTechnicianModal(item, onMutated) {
 }
 
 // -----------------------------------------------------------------
-// Generic confirm-action modal (Start work / Complete work)
+// Generic confirm-action modal (Start work / Complete work). Exported so
+// bookings/show.js can reuse it for the Booking-level "Cancel booking"
+// operation (BLUE V1 Phase B16) instead of building a second modal.
 // -----------------------------------------------------------------
 
 function confirmActionElements() {
@@ -220,7 +222,7 @@ function confirmActionElements() {
     };
 }
 
-function openConfirmAction({ title, message, confirmLabel, onConfirm }) {
+export function openConfirmAction({ title, message, confirmLabel, onConfirm }) {
     const els = confirmActionElements();
 
     if (!els) {
