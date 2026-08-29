@@ -166,6 +166,69 @@ if (page) {
         return 'No technician has been assigned to this item yet.';
     }
 
+    const WHATSAPP_ICON_SVG = '<svg viewBox="0 0 24 24" class="h-3.5 w-3.5 fill-current" aria-hidden="true">'
+        + '<path d="M12.04 2c-5.46 0-9.9 4.44-9.9 9.9 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.87 9.87 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.44 9.9-9.9 '
+        + '0-2.64-1.03-5.12-2.9-6.99A9.82 9.82 0 0 0 12.04 2Zm0 1.67c2.11 0 4.1.82 5.59 2.31a7.9 7.9 0 0 1 2.32 5.92c0 4.53-3.68 8.22-8.21 8.22a8.2 8.2 0 '
+        + '0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.14 8.14 0 0 1-1.26-4.36c0-4.53 3.69-8.23 8.24-8.23Zm-4.72 4.4c-.16 0-.42.06-.64.31-.22.25-.85.83-.85 '
+        + '2.02 0 1.19.87 2.34.99 2.5.12.16 1.7 2.6 4.13 3.63.58.25 1.03.4 1.38.51.58.18 1.11.16 1.53.1.47-.07 1.44-.59 1.64-1.16.2-.57.2-1.06.14-1.16-.06-.1-.22-.16-.46-.28-.24-.12-1.44-.71-1.66-.79-.22-.08-.38-.12-.55.12-.16.24-.63.79-.77.95-.14.16-.28.18-.52.06-.24-.12-1.01-.37-1.92-1.18-.71-.63-1.19-1.4-1.33-1.64-.14-.24-.02-.37.1-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.55-1.34-.76-1.83-.2-.48-.4-.42-.55-.42h-.46Z"/>'
+        + '</svg>';
+
+    /**
+     * BLUE V1 Simple WhatsApp Handoff - a plain `<a target="_blank">` to
+     * the server-generated wa.me URL (App\Support\Admin\
+     * AdminBookingPresenter / App\Support\WhatsApp\WhatsAppLinkBuilder) -
+     * this is the ONLY thing the button does. The message text and
+     * recipient are entirely server-computed; this file never composes or
+     * edits them. A real anchor (not window.open()) is used so the
+     * browser's native new-tab/handler-routing behavior applies on both
+     * desktop (WhatsApp Web) and mobile (the WhatsApp app).
+     */
+    function whatsappActionLink(label, whatsapp) {
+        const a = document.createElement('a');
+        a.href = whatsapp.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.className = 'inline-flex items-center gap-1.5 rounded-full border border-emerald-200 '
+            + 'bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100';
+        a.innerHTML = `${WHATSAPP_ICON_SVG}<span>${label}</span>`;
+
+        return a;
+    }
+
+    /**
+     * "Message technician" / "Message customer" / "Message previous
+     * technician" - never a delivery-status indicator (BLUE V1 does not
+     * track whether the Admin actually pressed Send inside WhatsApp).
+     * Hidden entirely when the backend could not build a safe wa.me link
+     * (missing/invalid phone, or an unresolved appointment) - never a
+     * broken button.
+     */
+    function renderWhatsappActions(root, item) {
+        const container = root.querySelector('[data-whatsapp-actions]');
+
+        if (!container) {
+            return;
+        }
+
+        const links = [];
+
+        if (item.active_assignment && item.active_assignment.whatsapp) {
+            links.push(whatsappActionLink('Message technician', item.active_assignment.whatsapp));
+        }
+
+        if (item.customer_whatsapp) {
+            links.push(whatsappActionLink('Message customer', item.customer_whatsapp));
+        }
+
+        item.assignment_history
+            .filter((entry) => entry.released_at && entry.whatsapp)
+            .forEach((entry) => {
+                links.push(whatsappActionLink(`Message previous technician (${entry.technician.full_name})`, entry.whatsapp));
+            });
+
+        container.replaceChildren(...links);
+    }
+
     function renderHistoryList(container, rowTemplate, entries, labelFieldSetter) {
         container.replaceChildren(...entries.map((entry) => {
             const fragment = rowTemplate.content.cloneNode(true);
@@ -223,6 +286,8 @@ if (page) {
         if (actionsContainer) {
             attachTechnicianActions(actionsContainer, item, loadBooking);
         }
+
+        renderWhatsappActions(root, item);
 
         return fragment;
     }

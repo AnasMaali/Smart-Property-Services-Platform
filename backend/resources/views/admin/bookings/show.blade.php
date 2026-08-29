@@ -299,6 +299,8 @@
             <p data-field="assignment_summary" class="mt-1.5 text-sm text-slate-700"></p>
 
             <div data-technician-actions class="mt-3 flex flex-wrap gap-2"></div>
+
+            <div data-whatsapp-actions class="mt-3 flex flex-wrap gap-2"></div>
         </div>
 
         <details data-item-history-box class="mt-3 hidden">

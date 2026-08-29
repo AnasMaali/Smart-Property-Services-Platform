@@ -4,6 +4,8 @@ namespace App\Support\Admin;
 
 use App\Support\Contract\ContractEntitlementCalculator;
 use App\Support\Uuid\UuidBinary;
+use App\Support\WhatsApp\WhatsAppLinkBuilder;
+use App\Support\WhatsApp\WhatsAppMessagePresenter;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -295,6 +297,8 @@ final class AdminBookingPresenter
             $total = bcadd($total, (string) $item->line_total_amount, 6);
         }
 
+        $whatsappContext = self::whatsappContext($row->booking_number, $customer, $location, $slot, $payment);
+
         return [
             'uuid' => UuidBinary::toString($row->id),
             'booking_number' => $row->booking_number,
@@ -345,6 +349,7 @@ final class AdminBookingPresenter
                 $optionSelections->get($item->id, collect()),
                 $choiceSelections->get($item->id, collect()),
                 $itemStatusHistories->get($item->id, collect()),
+                $whatsappContext,
             ))->all(),
             'status_history' => self::statusHistoryPayload($statusHistory),
             'created_at' => Carbon::parse($row->created_at)->toIso8601String(),
@@ -466,6 +471,11 @@ final class AdminBookingPresenter
     }
 
     /**
+     * @param  array<string, string|null>  $whatsappContext  BLUE V1 Simple WhatsApp Handoff -
+     *                                                       the Booking-level fields (customer/
+     *                                                       location/appointment/paid-amount)
+     *                                                       every WhatsApp message on this
+     *                                                       Booking shares - see whatsappContext().
      * @return array<string, mixed>
      */
     private static function itemPayload(
@@ -474,8 +484,24 @@ final class AdminBookingPresenter
         Collection $optionSelections,
         Collection $choiceSelections,
         Collection $statusHistory,
+        array $whatsappContext,
     ): array {
         $active = $assignments->first(fn ($assignment) => $assignment->released_at === null);
+
+        // BLUE V1 Simple WhatsApp Handoff - everything both the Technician
+        // and Customer message templates need for THIS item, minus
+        // technician_name (which varies per assignment - see
+        // assignmentPayload()).
+        $itemWhatsappFields = array_merge($whatsappContext, [
+            'service_name' => $item->service_name_snapshot,
+            'service_details' => self::serviceWhatsappDetails($item, $optionSelections, $choiceSelections),
+        ]);
+
+        // A Booking Item with more than one assignment row has been
+        // reassigned at least once - the customer message must then read
+        // as an UPDATE, not a first-time assignment (BLUE V1 Simple
+        // WhatsApp Handoff spec section 7).
+        $isReassignment = $assignments->count() > 1;
 
         return [
             'uuid' => UuidBinary::toString($item->id),
@@ -509,16 +535,18 @@ final class AdminBookingPresenter
                 'choice_description' => $choice->choice_description_snapshot,
                 'additional_amount' => $choice->additional_unit_amount_snapshot,
             ])->values()->all(),
-            'active_assignment' => $active === null ? null : self::assignmentPayload($active),
-            'assignment_history' => $assignments->values()->map(self::assignmentPayload(...))->all(),
+            'active_assignment' => $active === null ? null : self::assignmentPayload($active, $itemWhatsappFields),
+            'assignment_history' => $assignments->values()->map(fn ($assignment) => self::assignmentPayload($assignment, $itemWhatsappFields))->all(),
+            'customer_whatsapp' => $active === null ? null : self::customerWhatsappPayload($active, $itemWhatsappFields, $isReassignment),
             'status_history' => self::statusHistoryPayload($statusHistory),
         ];
     }
 
     /**
+     * @param  array<string, string|null>  $itemWhatsappFields
      * @return array<string, mixed>
      */
-    private static function assignmentPayload(object $assignment): array
+    private static function assignmentPayload(object $assignment, array $itemWhatsappFields): array
     {
         return [
             'uuid' => UuidBinary::toString($assignment->id),
@@ -535,6 +563,120 @@ final class AdminBookingPresenter
             'released_at' => $assignment->released_at === null ? null : Carbon::parse($assignment->released_at)->toIso8601String(),
             'release_reason' => $assignment->release_reason,
             'internal_note' => $assignment->internal_note,
+            'whatsapp' => self::technicianWhatsappPayload($assignment, $itemWhatsappFields),
         ];
+    }
+
+    /**
+     * BLUE V1 Simple WhatsApp Handoff - `null` (never a broken/unsafe URL)
+     * when the Technician's phone is missing/not valid E.164, or when the
+     * appointment context could not be resolved (a data-integrity
+     * anomaly, not the normal case - `bookings.appointment_slot_id` is
+     * required by schema). An active assignment gets the NEW ASSIGNMENT
+     * message; a released one gets the REMOVAL message (which never
+     * reveals the replacement Technician - it only ever needs the booking
+     * number).
+     *
+     * @param  array<string, string|null>  $itemWhatsappFields
+     * @return array{message: string, url: string}|null
+     */
+    private static function technicianWhatsappPayload(object $assignment, array $itemWhatsappFields): ?array
+    {
+        if ($assignment->released_at !== null) {
+            $message = WhatsAppMessagePresenter::technicianRemoved($itemWhatsappFields['booking_number']);
+
+            return WhatsAppLinkBuilder::build($assignment->technician_phone_number, $message);
+        }
+
+        if ($itemWhatsappFields['starts_at'] === null) {
+            return null;
+        }
+
+        $fields = array_merge($itemWhatsappFields, ['technician_name' => $assignment->technician_full_name]);
+        $message = WhatsAppMessagePresenter::technicianNewAssignment($fields);
+
+        return WhatsAppLinkBuilder::build($assignment->technician_phone_number, $message);
+    }
+
+    /**
+     * BLUE V1 Simple WhatsApp Handoff - the "Message customer" handoff for
+     * the ACTIVE Technician on this item only (a released assignment has
+     * no customer-facing counterpart - the customer is never told about
+     * an intermediate Technician they were never actually informed of
+     * beyond the current one).
+     *
+     * @param  array<string, string|null>  $itemWhatsappFields
+     * @return array{message: string, url: string}|null
+     */
+    private static function customerWhatsappPayload(object $activeAssignment, array $itemWhatsappFields, bool $isReassignment): ?array
+    {
+        if ($itemWhatsappFields['starts_at'] === null || $itemWhatsappFields['customer_phone'] === null) {
+            return null;
+        }
+
+        $fields = array_merge($itemWhatsappFields, ['technician_name' => $activeAssignment->technician_full_name]);
+
+        $message = $isReassignment
+            ? WhatsAppMessagePresenter::customerChanged($fields)
+            : WhatsAppMessagePresenter::customerAssigned($fields);
+
+        return WhatsAppLinkBuilder::build($itemWhatsappFields['customer_phone'], $message);
+    }
+
+    /**
+     * BLUE V1 Simple WhatsApp Handoff - the Booking-level fields shared by
+     * every Technician/Customer WhatsApp message on this Booking, resolved
+     * ONCE here from data `detail()` already fetched (never a second
+     * query, never anything client-supplied). `paid_amount` is the
+     * authoritative historical Booking/payment snapshot (`payment_attempts.
+     * confirmed_amount ?? requested_amount`) - `null` only for a
+     * contract-billed Booking (no `payment_attempt_id` at all), never
+     * recomputed from the Service's current live price.
+     *
+     * @return array<string, string|null>
+     */
+    private static function whatsappContext(string $bookingNumber, ?object $customer, ?object $location, ?object $slot, ?object $payment): array
+    {
+        return [
+            'booking_number' => $bookingNumber,
+            'customer_name' => $customer?->full_name ?? 'Customer',
+            'customer_phone' => $customer?->phone_number,
+            'visit_contact_phone' => (string) ($location?->visit_contact_phone ?? ''),
+            'starts_at' => $slot?->starts_at,
+            'ends_at' => $slot?->ends_at,
+            'time_window' => $slot?->window_name,
+            'property_type' => (string) ($location?->property_type_name_snapshot ?? ''),
+            'building' => (string) ($location?->building_name_or_number ?? ''),
+            'floor' => (string) ($location?->floor_number ?? ''),
+            'unit' => (string) ($location?->unit_number ?? ''),
+            'street' => (string) ($location?->street_name ?? ''),
+            'area' => (string) ($location?->area_name_snapshot ?? ''),
+            'city' => (string) ($location?->city_name_snapshot ?? ''),
+            'landmark' => (string) ($location?->nearby_landmark ?? ''),
+            'location_notes' => (string) ($location?->additional_location_notes ?? ''),
+            'paid_amount' => $payment === null ? null : (string) ($payment->confirmed_amount ?? $payment->requested_amount),
+        ];
+    }
+
+    /**
+     * "2x Deep clean" plus a short, clean summary of selected options/
+     * choices - never blank/ugly placeholder text when none exist. Built
+     * from the already-fetched $optionSelections/$choiceSelections
+     * Collections detail() batch-loaded - never a second per-item query.
+     */
+    private static function serviceWhatsappDetails(object $item, Collection $optionSelections, Collection $choiceSelections): string
+    {
+        $parts = [((int) $item->quantity).'x '.$item->service_name_snapshot];
+
+        $extras = array_merge(
+            $optionSelections->pluck('option_name_snapshot')->all(),
+            $choiceSelections->pluck('choice_name_snapshot')->all(),
+        );
+
+        if ($extras !== []) {
+            $parts[] = implode(', ', $extras);
+        }
+
+        return implode(' - ', $parts);
     }
 }
