@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\V1\Admin\Customer\GetAdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\Customer\ListAdminCustomersController;
 use App\Http\Controllers\Api\V1\Admin\Dashboard\GetAdminDashboardController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
+use App\Http\Controllers\Api\V1\Admin\Notifications\RetryOutboundNotificationController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\CreateAdminPricingRuleController;
@@ -341,6 +342,11 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/booking-items/{bookingItem}/start-work', StartWorkController::class)
         ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
     Route::post('/v1/admin/booking-items/{bookingItem}/complete-work', CompleteWorkController::class)
+        ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
+    // BLUE V1 Phase B21 - manual retry for one stuck/failed Technician
+    // WhatsApp notification obligation. Reuses `technicians.assign`
+    // (never a new capability) - see RetryOutboundNotificationController.
+    Route::post('/v1/admin/outbound-notifications/{notification}/retry', RetryOutboundNotificationController::class)
         ->middleware(AdminCapability::TECHNICIANS_ASSIGN->middleware());
 
     // BLUE V1 Phase 10E - Admin Service Contract management. Never

@@ -1678,6 +1678,110 @@ LOCK TABLES `otp_verifications` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `outbound_notification_statuses`
+--
+-- BLUE V1 Phase B21 - lifecycle of one outbound notification obligation
+-- (PENDING / SUBMITTED / FAILED / SKIPPED). See
+-- database/phase20_technician_notifications_migration.sql.
+--
+
+DROP TABLE IF EXISTS `outbound_notification_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `outbound_notification_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_outbound_notification_statuses_code` (`code`),
+  KEY `idx_outbound_notification_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_outbound_notification_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_outbound_notification_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_outbound_notification_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_outbound_notification_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `outbound_notification_statuses`
+--
+
+LOCK TABLES `outbound_notification_statuses` WRITE;
+/*!40000 ALTER TABLE `outbound_notification_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `outbound_notification_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `outbound_notifications`
+--
+
+DROP TABLE IF EXISTS `outbound_notifications`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `outbound_notifications` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `channel` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `notification_type` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `recipient_type` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `recipient_id` binary(16) NOT NULL,
+  `recipient_address_snapshot` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `booking_id` binary(16) NOT NULL,
+  `booking_item_id` binary(16) NOT NULL,
+  `technician_assignment_id` binary(16) DEFAULT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `idempotency_key` varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `payload_snapshot` json NOT NULL,
+  `provider_message_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `attempt_count` smallint unsigned NOT NULL DEFAULT '0',
+  `next_attempt_at` datetime(6) DEFAULT NULL,
+  `submitted_at` datetime(6) DEFAULT NULL,
+  `failed_at` datetime(6) DEFAULT NULL,
+  `last_error_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `last_error_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_outbound_notifications_idempotency_key` (`idempotency_key`),
+  KEY `idx_outbound_notifications_status_next_attempt` (`status_id`,`next_attempt_at`),
+  KEY `idx_outbound_notifications_technician_assignment` (`technician_assignment_id`),
+  KEY `idx_outbound_notifications_booking_item` (`booking_item_id`),
+  KEY `idx_outbound_notifications_booking` (`booking_id`),
+  KEY `idx_outbound_notifications_recipient` (`recipient_type`,`recipient_id`),
+  CONSTRAINT `fk_outbound_notifications_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_outbound_notifications_booking_item` FOREIGN KEY (`booking_item_id`) REFERENCES `booking_items` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_outbound_notifications_technician_assignment` FOREIGN KEY (`technician_assignment_id`) REFERENCES `technician_assignments` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_outbound_notifications_status` FOREIGN KEY (`status_id`) REFERENCES `outbound_notification_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_outbound_notifications_channel` CHECK ((`channel` in (_utf8mb4'WHATSAPP'))),
+  CONSTRAINT `chk_outbound_notifications_notification_type` CHECK ((`notification_type` in (_utf8mb4'TECHNICIAN_NEW_ASSIGNMENT',_utf8mb4'TECHNICIAN_ASSIGNMENT_REMOVED'))),
+  CONSTRAINT `chk_outbound_notifications_recipient_type` CHECK ((`recipient_type` in (_utf8mb4'TECHNICIAN'))),
+  CONSTRAINT `chk_outbound_notifications_recipient_address` CHECK ((char_length(trim(`recipient_address_snapshot`)) between 8 and 32)),
+  CONSTRAINT `chk_outbound_notifications_idempotency_key` CHECK ((char_length(trim(`idempotency_key`)) between 8 and 191)),
+  CONSTRAINT `chk_outbound_notifications_attempt_count` CHECK ((`attempt_count` >= 0)),
+  CONSTRAINT `chk_outbound_notifications_failure_code` CHECK (((`last_error_code` is null) or (char_length(trim(`last_error_code`)) between 1 and 100))),
+  CONSTRAINT `chk_outbound_notifications_failure_message` CHECK (((`last_error_message` is null) or (char_length(trim(`last_error_message`)) between 2 and 500))),
+  CONSTRAINT `chk_outbound_notifications_submitted_at` CHECK (((`submitted_at` is null) or (`submitted_at` >= `created_at`))),
+  CONSTRAINT `chk_outbound_notifications_failed_at` CHECK (((`failed_at` is null) or (`failed_at` >= `created_at`))),
+  CONSTRAINT `chk_outbound_notifications_single_final_state` CHECK (((`submitted_at` is null) or (`failed_at` is null))),
+  CONSTRAINT `chk_outbound_notifications_failure_data` CHECK ((((`failed_at` is null) and (`last_error_code` is null) and (`last_error_message` is null)) or ((`failed_at` is not null) and (`last_error_code` is not null)))),
+  CONSTRAINT `chk_outbound_notifications_submitted_reference` CHECK (((`submitted_at` is null) or (`provider_message_reference` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `outbound_notifications`
+--
+
+LOCK TABLES `outbound_notifications` WRITE;
+/*!40000 ALTER TABLE `outbound_notifications` DISABLE KEYS */;
+/*!40000 ALTER TABLE `outbound_notifications` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `password_reset_sessions`
 --
 

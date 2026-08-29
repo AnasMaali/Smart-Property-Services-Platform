@@ -2,14 +2,19 @@
 
 namespace App\Actions\Admin\Technician;
 
+use App\Actions\Notifications\CreateTechnicianAssignmentNotificationAction;
+use App\Actions\Notifications\SendTechnicianNotificationAction;
 use App\Actions\Technician\AssignTechnicianToBookingItemAction;
 use App\Models\User;
 use App\Support\Admin\AdminAssignmentPresenter;
 use App\Support\Admin\AdminAuditLogger;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Technician\TechnicianAssignmentOutcome;
+use App\Support\Uuid\UuidBinary;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Thin Admin transport wrapper around the existing
@@ -18,13 +23,26 @@ use Illuminate\Support\Str;
  * for the shared "never re-implement domain rules" reasoning, which applies
  * identically here. The previous assignment is released (never deleted) by
  * the domain Action itself; this wrapper only maps request/response shape.
+ *
+ * BLUE V1 Phase B21 - a genuine reassignment queues TWO independent
+ * WhatsApp notification obligations inside that SAME transaction (via the
+ * existing $afterMutation hook): NEW_ASSIGNMENT for the new Technician,
+ * and ASSIGNMENT_REMOVED for the Technician who was just released - see
+ * AdminAssignTechnicianAction's docblock for why the best-effort sends
+ * happen strictly after commit. The released assignment's own uuid (never
+ * exposed by TechnicianAssignmentResult, which only carries the previous
+ * Technician's uuid) is resolved here by its own released_at - it is the
+ * row `reassign()` just updated inside this same transaction, so this
+ * read sees it even before commit.
  */
 final class AdminReassignTechnicianAction
 {
     use BuildsCartResult;
 
     public function __construct(
+        private readonly SendTechnicianNotificationAction $sendNotification,
         private readonly AssignTechnicianToBookingItemAction $action = new AssignTechnicianToBookingItemAction,
+        private readonly CreateTechnicianAssignmentNotificationAction $createNotification = new CreateTechnicianAssignmentNotificationAction,
     ) {}
 
     /**
@@ -40,13 +58,15 @@ final class AdminReassignTechnicianAction
             return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
         }
 
+        $notificationUuids = [];
+
         $result = $this->action->reassign(
             $bookingItemUuid,
             $technicianUuid,
             $actor->id,
             $releaseReason,
             $internalNote,
-            function ($mutation) use ($request, $actor, $bookingItemUuid): void {
+            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuids): void {
                 AdminAuditLogger::record(
                     $request,
                     $actor,
@@ -59,8 +79,29 @@ final class AdminReassignTechnicianAction
                         'previous_technician_uuid' => $mutation->previousTechnicianUuid,
                     ]
                 );
+
+                $notificationUuids[] = $this->createNotification->createForNewAssignment($mutation->assignmentUuid);
+
+                $releasedAssignmentId = DB::table('technician_assignments')
+                    ->where('booking_item_id', UuidBinary::toBinary($bookingItemUuid))
+                    ->where('technician_id', UuidBinary::toBinary($mutation->previousTechnicianUuid))
+                    ->whereNotNull('released_at')
+                    ->orderByDesc('released_at')
+                    ->value('id');
+
+                if ($releasedAssignmentId !== null) {
+                    $notificationUuids[] = $this->createNotification->createForAssignmentRemoved(UuidBinary::toString($releasedAssignmentId));
+                }
             }
         );
+
+        foreach ($notificationUuids as $notificationUuid) {
+            try {
+                $this->sendNotification->handle($notificationUuid);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
 
         $response = match ($result->outcome) {
             TechnicianAssignmentOutcome::REASSIGNED => $this->ok(200, 'Technician reassigned successfully.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),

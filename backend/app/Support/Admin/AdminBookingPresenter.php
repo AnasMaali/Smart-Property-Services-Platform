@@ -3,6 +3,7 @@
 namespace App\Support\Admin;
 
 use App\Support\Contract\ContractEntitlementCalculator;
+use App\Support\Notifications\OutboundNotificationStatuses;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -535,6 +536,41 @@ final class AdminBookingPresenter
             'released_at' => $assignment->released_at === null ? null : Carbon::parse($assignment->released_at)->toIso8601String(),
             'release_reason' => $assignment->release_reason,
             'internal_note' => $assignment->internal_note,
+            'whatsapp_notification' => self::whatsappNotificationPayload($assignment->id),
+        ];
+    }
+
+    /**
+     * BLUE V1 Phase B21 - the NEW_ASSIGNMENT WhatsApp obligation tied to
+     * this one `technician_assignments` row, if any (a Booking assigned
+     * before this phase shipped has none - `null` is a legitimate,
+     * expected value, not an error). Never exposes
+     * `payload_snapshot`/`idempotency_key`/raw provider identifiers
+     * beyond the safe `provider_message_reference` an Admin may need to
+     * cross-reference a delivery in the Meta Business dashboard.
+     *
+     * @return array{uuid: string, status: string, provider_message_reference: ?string, requested_at: string, submitted_at: ?string, failed_at: ?string, failure_code: ?string, failure_message: ?string}|null
+     */
+    private static function whatsappNotificationPayload(string $assignmentIdBinary): ?array
+    {
+        $notification = DB::table('outbound_notifications')
+            ->where('technician_assignment_id', $assignmentIdBinary)
+            ->where('notification_type', 'TECHNICIAN_NEW_ASSIGNMENT')
+            ->first();
+
+        if ($notification === null) {
+            return null;
+        }
+
+        return [
+            'uuid' => UuidBinary::toString($notification->id),
+            'status' => OutboundNotificationStatuses::code((int) $notification->status_id),
+            'provider_message_reference' => $notification->provider_message_reference,
+            'requested_at' => Carbon::parse($notification->created_at)->toIso8601String(),
+            'submitted_at' => $notification->submitted_at === null ? null : Carbon::parse($notification->submitted_at)->toIso8601String(),
+            'failed_at' => $notification->failed_at === null ? null : Carbon::parse($notification->failed_at)->toIso8601String(),
+            'failure_code' => $notification->last_error_code,
+            'failure_message' => $notification->last_error_message,
         ];
     }
 }

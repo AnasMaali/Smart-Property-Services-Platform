@@ -166,6 +166,70 @@ if (page) {
         return 'No technician has been assigned to this item yet.';
     }
 
+    /**
+     * BLUE V1 Phase B21 - "Queued"/"Sent to WhatsApp"/"Failed"/"Skipped"/
+     * "Needs review" wording only (never "Delivered"/"Read" - no
+     * delivery/read webhook exists yet, so this app must never claim
+     * evidence it does not have). Mirrors the exact codes
+     * App\Support\Notifications\OutboundNotificationStatuses defines.
+     * RECONCILIATION_REQUIRED ("Needs review") is deliberately distinct
+     * from "Failed": the previous send attempt's outcome could not be
+     * confirmed (a connection/timeout failure, not a provider rejection),
+     * and - unlike a normal Failed notification - is NOT one-click
+     * retryable, since Meta has no idempotency key to make a blind resend
+     * safe (see renderWhatsappStatus() below, which never shows the retry
+     * button for this status).
+     */
+    function whatsappStatusLabel(code) {
+        switch (code) {
+            case 'PENDING':
+                return 'Queued';
+            case 'SUBMITTED':
+                return 'Sent to WhatsApp';
+            case 'FAILED':
+                return 'Failed';
+            case 'SKIPPED':
+                return 'Skipped';
+            case 'RECONCILIATION_REQUIRED':
+                return 'Needs review';
+            default:
+                return '—';
+        }
+    }
+
+    function renderWhatsappStatus(root, assignment) {
+        const row = root.querySelector('[data-whatsapp-status-row]');
+        const retryButton = root.querySelector('[data-whatsapp-retry]');
+        const notification = assignment && assignment.whatsapp_notification;
+
+        if (!notification) {
+            row.style.display = 'none';
+            return;
+        }
+
+        row.style.display = 'flex';
+        root.querySelector('[data-field="whatsapp_status"]').textContent = whatsappStatusLabel(notification.status);
+
+        if (notification.status === 'FAILED') {
+            retryButton.style.display = 'inline-flex';
+            retryButton.onclick = async () => {
+                retryButton.disabled = true;
+                try {
+                    await request(`/api/v1/admin/outbound-notifications/${encodeURIComponent(notification.uuid)}/retry`, {
+                        method: 'POST',
+                    });
+                    await loadBooking();
+                } catch (error) {
+                    window.alert(modalErrorMessage(error, 'Unable to retry this notification.'));
+                    retryButton.disabled = false;
+                }
+            };
+        } else {
+            retryButton.style.display = 'none';
+            retryButton.onclick = null;
+        }
+    }
+
     function renderHistoryList(container, rowTemplate, entries, labelFieldSetter) {
         container.replaceChildren(...entries.map((entry) => {
             const fragment = rowTemplate.content.cloneNode(true);
@@ -183,6 +247,7 @@ if (page) {
         root.querySelector('[data-field="quantity"]').textContent = String(item.quantity);
         root.querySelector('[data-field="line_total"]').textContent = formatMoney(item.pricing.line_total, currency);
         root.querySelector('[data-field="assignment_summary"]').textContent = renderAssignmentSummary(item);
+        renderWhatsappStatus(root, item.active_assignment);
 
         const statusBadge = root.querySelector('[data-field="item_status"]');
         statusBadge.textContent = statusLabel(item.status);

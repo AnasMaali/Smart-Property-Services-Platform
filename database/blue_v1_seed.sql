@@ -2360,6 +2360,63 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 33. OUTBOUND NOTIFICATION STATUSES
+-- BLUE V1 Phase B21 - lifecycle of one outbound notification
+-- obligation (outbound_notifications.status_id). See
+-- phase20_technician_notifications_migration.sql.
+-- =============================================================
+
+INSERT INTO outbound_notification_statuses (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'PENDING',
+    'Pending',
+    'The notification obligation exists but has not yet been (successfully) sent - safe and required to retry.',
+    1,
+    TRUE
+),
+(
+    'SUBMITTED',
+    'Sent to WhatsApp',
+    'The provider accepted the message. Proof of submission only - never proof of delivery or that it was read.',
+    2,
+    TRUE
+),
+(
+    'FAILED',
+    'Failed',
+    'The provider definitively rejected the message, or the retry limit was exhausted - not retried automatically without operator intervention.',
+    3,
+    TRUE
+),
+(
+    'SKIPPED',
+    'Skipped',
+    'Never sent because the Technician assignment it described was no longer active by send time - not an error.',
+    4,
+    TRUE
+),
+(
+    'RECONCILIATION_REQUIRED',
+    'Needs review',
+    'The provider outcome was ambiguous (e.g. a network/timeout failure with no confirmed response) - whether Meta already sent the message cannot be determined. Never auto-retried.',
+    5,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- COMPLETE SEED TRANSACTION
 -- =============================================================
 

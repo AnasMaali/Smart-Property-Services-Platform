@@ -2,6 +2,8 @@
 
 namespace App\Actions\Admin\Technician;
 
+use App\Actions\Notifications\CreateTechnicianAssignmentNotificationAction;
+use App\Actions\Notifications\SendTechnicianNotificationAction;
 use App\Actions\Technician\AssignTechnicianToBookingItemAction;
 use App\Models\User;
 use App\Support\Admin\AdminAssignmentPresenter;
@@ -10,6 +12,7 @@ use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Technician\TechnicianAssignmentOutcome;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Thin Admin transport wrapper around the existing, already-tested
@@ -20,13 +23,25 @@ use Illuminate\Support\Str;
  * the Action's outcome to an HTTP-shaped result. The actor is always the
  * `auth.admin`-resolved caller, never a request field (see
  * App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController).
+ *
+ * BLUE V1 Phase B21 - a genuine new assignment also queues exactly one
+ * WhatsApp NEW_ASSIGNMENT notification obligation, written inside the SAME
+ * transaction as the assignment itself (via the existing $afterMutation
+ * hook - AssignTechnicianToBookingItemAction itself stays entirely
+ * unaware of WhatsApp/Meta). The best-effort synchronous send happens
+ * strictly AFTER that transaction has committed - a WhatsApp failure
+ * here can never roll back or otherwise affect the assignment that
+ * already safely committed; the obligation remains PENDING and
+ * recoverable via `php artisan notifications:send-pending`.
  */
 final class AdminAssignTechnicianAction
 {
     use BuildsCartResult;
 
     public function __construct(
+        private readonly SendTechnicianNotificationAction $sendNotification,
         private readonly AssignTechnicianToBookingItemAction $action = new AssignTechnicianToBookingItemAction,
+        private readonly CreateTechnicianAssignmentNotificationAction $createNotification = new CreateTechnicianAssignmentNotificationAction,
     ) {}
 
     /**
@@ -42,12 +57,14 @@ final class AdminAssignTechnicianAction
             return $this->unprocessable('The selected technician is invalid.', ['technician_uuid' => ['The technician uuid is invalid.']]);
         }
 
+        $notificationUuid = null;
+
         $result = $this->action->assign(
             $bookingItemUuid,
             $technicianUuid,
             $actor->id,
             $internalNote,
-            function ($mutation) use ($request, $actor, $bookingItemUuid): void {
+            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuid): void {
                 AdminAuditLogger::record(
                     $request,
                     $actor,
@@ -59,8 +76,18 @@ final class AdminAssignTechnicianAction
                         'assignment_uuid' => $mutation->assignmentUuid,
                     ]
                 );
+
+                $notificationUuid = $this->createNotification->createForNewAssignment($mutation->assignmentUuid);
             }
         );
+
+        if ($notificationUuid !== null) {
+            try {
+                $this->sendNotification->handle($notificationUuid);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
 
         $response = match ($result->outcome) {
             TechnicianAssignmentOutcome::ASSIGNED => $this->ok(201, 'Technician assigned successfully.', ['assignment' => AdminAssignmentPresenter::present($result->assignmentUuid)]),

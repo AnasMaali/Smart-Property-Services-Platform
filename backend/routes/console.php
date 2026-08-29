@@ -68,3 +68,14 @@ Schedule::command('accounts:process-pending-deletions')
 Schedule::command('bookings:execute-pending-refunds')
     ->everyFiveMinutes()
     ->withoutOverlapping(10);
+
+// Retry WhatsApp delivery for Technician-assignment notification
+// obligations whose best-effort, post-assignment attempt did not resolve
+// (see App\Actions\Notifications\SendTechnicianNotificationAction /
+// App\Console\Commands\SendPendingTechnicianNotifications) - idempotent
+// (persisted idempotency key + PENDING-only guard + stale-assignment
+// SKIPPED guard) and safe to run repeatedly, so a healthy system simply
+// finds nothing.
+Schedule::command('notifications:send-pending')
+    ->everyMinute()
+    ->withoutOverlapping(1);

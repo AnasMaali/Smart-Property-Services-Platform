@@ -85,4 +85,37 @@ return [
         'timeout_seconds' => (int) env('TWILIO_TIMEOUT_SECONDS', 10),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Meta WhatsApp Cloud API (Technician job notifications)
+    |--------------------------------------------------------------------------
+    |
+    | Read only by App\Support\Notifications\Gateway\
+    | MetaWhatsAppTechnicianNotificationGateway, bound by
+    | App\Providers\TechnicianNotificationServiceProvider when
+    | TECHNICIAN_NOTIFICATION_DRIVER=meta_whatsapp - see
+    | config/technician_notifications.php. The provider validates every
+    | value below is present before ever constructing the gateway, so a
+    | misconfigured production deployment fails closed at resolution time,
+    | never silently. The Graph API version is deliberately configurable,
+    | never hardcoded, since Meta version-deprecates the Graph API on its
+    | own schedule. Never commit real values here.
+    |
+    | assignment_template / unassignment_template are the exact Meta-
+    | approved Utility template NAMES (not bodies) - see
+    | docs/handoff/technician-whatsapp-v1.md for the required template
+    | bodies/variable order to register with Meta.
+    |
+    */
+
+    'whatsapp' => [
+        'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
+        'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
+        'graph_version' => env('WHATSAPP_GRAPH_VERSION'),
+        'assignment_template' => env('WHATSAPP_ASSIGNMENT_TEMPLATE'),
+        'unassignment_template' => env('WHATSAPP_UNASSIGNMENT_TEMPLATE'),
+        'template_language' => env('WHATSAPP_TEMPLATE_LANGUAGE', 'en'),
+        'timeout_seconds' => (int) env('WHATSAPP_TIMEOUT_SECONDS', 10),
+    ],
+
 ];
