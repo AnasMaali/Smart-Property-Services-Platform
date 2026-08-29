@@ -180,12 +180,12 @@ if (page) {
      * safe (see renderWhatsappStatus() below, which never shows the retry
      * button for this status).
      */
-    function whatsappStatusLabel(code) {
+    function whatsappStatusLabel(code, sentLabel = 'Sent to WhatsApp') {
         switch (code) {
             case 'PENDING':
                 return 'Queued';
             case 'SUBMITTED':
-                return 'Sent to WhatsApp';
+                return sentLabel;
             case 'FAILED':
                 return 'Failed';
             case 'SKIPPED':
@@ -197,10 +197,18 @@ if (page) {
         }
     }
 
-    function renderWhatsappStatus(root, assignment) {
-        const row = root.querySelector('[data-whatsapp-status-row]');
-        const retryButton = root.querySelector('[data-whatsapp-retry]');
-        const notification = assignment && assignment.whatsapp_notification;
+    /**
+     * BLUE V1 Phase B22 - one shared renderer for every per-assignment
+     * notification channel (WhatsApp, email-to-technician,
+     * email-to-customer) - each is the exact same safe shape
+     * (App\Support\Admin\AdminBookingPresenter::presentNotificationRow()),
+     * so this is the single place "Queued"/"Sent"/"Failed"/"Skipped"/
+     * "Needs review" wording and the one-click retry button behavior are
+     * decided, never duplicated per channel.
+     */
+    function renderNotificationStatus(root, notification, {statusRowSelector, statusFieldSelector, retrySelector, sentLabel}) {
+        const row = root.querySelector(statusRowSelector);
+        const retryButton = root.querySelector(retrySelector);
 
         if (!notification) {
             row.style.display = 'none';
@@ -208,7 +216,7 @@ if (page) {
         }
 
         row.style.display = 'flex';
-        root.querySelector('[data-field="whatsapp_status"]').textContent = whatsappStatusLabel(notification.status);
+        root.querySelector(statusFieldSelector).textContent = whatsappStatusLabel(notification.status, sentLabel);
 
         if (notification.status === 'FAILED') {
             retryButton.style.display = 'inline-flex';
@@ -230,6 +238,33 @@ if (page) {
         }
     }
 
+    function renderWhatsappStatus(root, assignment) {
+        renderNotificationStatus(root, assignment && assignment.whatsapp_notification, {
+            statusRowSelector: '[data-whatsapp-status-row]',
+            statusFieldSelector: '[data-field="whatsapp_status"]',
+            retrySelector: '[data-whatsapp-retry]',
+            sentLabel: 'Sent to WhatsApp',
+        });
+    }
+
+    function renderTechnicianEmailStatus(root, assignment) {
+        renderNotificationStatus(root, assignment && assignment.technician_email_notification, {
+            statusRowSelector: '[data-technician-email-status-row]',
+            statusFieldSelector: '[data-field="technician_email_status"]',
+            retrySelector: '[data-technician-email-retry]',
+            sentLabel: 'Sent',
+        });
+    }
+
+    function renderCustomerEmailStatus(root, assignment) {
+        renderNotificationStatus(root, assignment && assignment.customer_email_notification, {
+            statusRowSelector: '[data-customer-email-status-row]',
+            statusFieldSelector: '[data-field="customer_email_status"]',
+            retrySelector: '[data-customer-email-retry]',
+            sentLabel: 'Sent',
+        });
+    }
+
     function renderHistoryList(container, rowTemplate, entries, labelFieldSetter) {
         container.replaceChildren(...entries.map((entry) => {
             const fragment = rowTemplate.content.cloneNode(true);
@@ -248,6 +283,8 @@ if (page) {
         root.querySelector('[data-field="line_total"]').textContent = formatMoney(item.pricing.line_total, currency);
         root.querySelector('[data-field="assignment_summary"]').textContent = renderAssignmentSummary(item);
         renderWhatsappStatus(root, item.active_assignment);
+        renderTechnicianEmailStatus(root, item.active_assignment);
+        renderCustomerEmailStatus(root, item.active_assignment);
 
         const statusBadge = root.querySelector('[data-field="item_status"]');
         statusBadge.textContent = statusLabel(item.status);

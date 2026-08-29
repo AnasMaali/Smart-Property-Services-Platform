@@ -2,7 +2,9 @@
 
 namespace App\Actions\Admin\Technician;
 
+use App\Actions\Notifications\CreateEmailNotificationAction;
 use App\Actions\Notifications\CreateTechnicianAssignmentNotificationAction;
+use App\Actions\Notifications\SendEmailNotificationAction;
 use App\Actions\Notifications\SendTechnicianNotificationAction;
 use App\Actions\Technician\AssignTechnicianToBookingItemAction;
 use App\Models\User;
@@ -33,6 +35,16 @@ use Throwable;
  * here can never roll back or otherwise affect the assignment that
  * already safely committed; the obligation remains PENDING and
  * recoverable via `php artisan notifications:send-pending`.
+ *
+ * BLUE V1 Phase B22 - the SAME $afterMutation hook also queues the
+ * TECHNICIAN_NEW_ASSIGNMENT_EMAIL obligation (to the Technician) and the
+ * CUSTOMER_TECHNICIAN_ASSIGNED_EMAIL obligation (to the Booking's
+ * customer) - same transactional-outbox placement, same best-effort
+ * synchronous send strictly after commit, same "a delivery failure can
+ * never roll back or block the assignment" guarantee. Either email
+ * obligation is simply never created (createNotification->create*Email()
+ * returns null) when there is no usable email address to record - never an
+ * error, never a reason to skip the other one.
  */
 final class AdminAssignTechnicianAction
 {
@@ -40,8 +52,10 @@ final class AdminAssignTechnicianAction
 
     public function __construct(
         private readonly SendTechnicianNotificationAction $sendNotification,
+        private readonly SendEmailNotificationAction $sendEmailNotification,
         private readonly AssignTechnicianToBookingItemAction $action = new AssignTechnicianToBookingItemAction,
         private readonly CreateTechnicianAssignmentNotificationAction $createNotification = new CreateTechnicianAssignmentNotificationAction,
+        private readonly CreateEmailNotificationAction $createEmailNotification = new CreateEmailNotificationAction,
     ) {}
 
     /**
@@ -58,13 +72,14 @@ final class AdminAssignTechnicianAction
         }
 
         $notificationUuid = null;
+        $emailNotificationUuids = [];
 
         $result = $this->action->assign(
             $bookingItemUuid,
             $technicianUuid,
             $actor->id,
             $internalNote,
-            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuid): void {
+            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuid, &$emailNotificationUuids): void {
                 AdminAuditLogger::record(
                     $request,
                     $actor,
@@ -78,12 +93,22 @@ final class AdminAssignTechnicianAction
                 );
 
                 $notificationUuid = $this->createNotification->createForNewAssignment($mutation->assignmentUuid);
+                $emailNotificationUuids[] = $this->createEmailNotification->createTechnicianNewAssignmentEmail($mutation->assignmentUuid);
+                $emailNotificationUuids[] = $this->createEmailNotification->createCustomerTechnicianAssignedEmail($mutation->assignmentUuid);
             }
         );
 
         if ($notificationUuid !== null) {
             try {
                 $this->sendNotification->handle($notificationUuid);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        foreach (array_filter($emailNotificationUuids) as $emailNotificationUuid) {
+            try {
+                $this->sendEmailNotification->handle($emailNotificationUuid);
             } catch (Throwable $e) {
                 report($e);
             }

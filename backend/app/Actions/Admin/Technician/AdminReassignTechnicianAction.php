@@ -2,7 +2,9 @@
 
 namespace App\Actions\Admin\Technician;
 
+use App\Actions\Notifications\CreateEmailNotificationAction;
 use App\Actions\Notifications\CreateTechnicianAssignmentNotificationAction;
+use App\Actions\Notifications\SendEmailNotificationAction;
 use App\Actions\Notifications\SendTechnicianNotificationAction;
 use App\Actions\Technician\AssignTechnicianToBookingItemAction;
 use App\Models\User;
@@ -34,6 +36,13 @@ use Throwable;
  * Technician's uuid) is resolved here by its own released_at - it is the
  * row `reassign()` just updated inside this same transaction, so this
  * read sees it even before commit.
+ *
+ * BLUE V1 Phase B22 - the SAME $afterMutation hook also queues THREE email
+ * obligations: TECHNICIAN_NEW_ASSIGNMENT_EMAIL (new Technician),
+ * TECHNICIAN_ASSIGNMENT_REMOVED_EMAIL (the just-released Technician), and
+ * CUSTOMER_TECHNICIAN_CHANGED_EMAIL (the Booking's customer) - same
+ * transactional-outbox placement and best-effort synchronous send as the
+ * existing WhatsApp obligations above.
  */
 final class AdminReassignTechnicianAction
 {
@@ -41,8 +50,10 @@ final class AdminReassignTechnicianAction
 
     public function __construct(
         private readonly SendTechnicianNotificationAction $sendNotification,
+        private readonly SendEmailNotificationAction $sendEmailNotification,
         private readonly AssignTechnicianToBookingItemAction $action = new AssignTechnicianToBookingItemAction,
         private readonly CreateTechnicianAssignmentNotificationAction $createNotification = new CreateTechnicianAssignmentNotificationAction,
+        private readonly CreateEmailNotificationAction $createEmailNotification = new CreateEmailNotificationAction,
     ) {}
 
     /**
@@ -59,6 +70,7 @@ final class AdminReassignTechnicianAction
         }
 
         $notificationUuids = [];
+        $emailNotificationUuids = [];
 
         $result = $this->action->reassign(
             $bookingItemUuid,
@@ -66,7 +78,7 @@ final class AdminReassignTechnicianAction
             $actor->id,
             $releaseReason,
             $internalNote,
-            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuids): void {
+            function ($mutation) use ($request, $actor, $bookingItemUuid, &$notificationUuids, &$emailNotificationUuids): void {
                 AdminAuditLogger::record(
                     $request,
                     $actor,
@@ -81,6 +93,8 @@ final class AdminReassignTechnicianAction
                 );
 
                 $notificationUuids[] = $this->createNotification->createForNewAssignment($mutation->assignmentUuid);
+                $emailNotificationUuids[] = $this->createEmailNotification->createTechnicianNewAssignmentEmail($mutation->assignmentUuid);
+                $emailNotificationUuids[] = $this->createEmailNotification->createCustomerTechnicianChangedEmail($mutation->assignmentUuid);
 
                 $releasedAssignmentId = DB::table('technician_assignments')
                     ->where('booking_item_id', UuidBinary::toBinary($bookingItemUuid))
@@ -91,6 +105,7 @@ final class AdminReassignTechnicianAction
 
                 if ($releasedAssignmentId !== null) {
                     $notificationUuids[] = $this->createNotification->createForAssignmentRemoved(UuidBinary::toString($releasedAssignmentId));
+                    $emailNotificationUuids[] = $this->createEmailNotification->createTechnicianAssignmentRemovedEmail(UuidBinary::toString($releasedAssignmentId));
                 }
             }
         );
@@ -98,6 +113,14 @@ final class AdminReassignTechnicianAction
         foreach ($notificationUuids as $notificationUuid) {
             try {
                 $this->sendNotification->handle($notificationUuid);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        foreach (array_filter($emailNotificationUuids) as $emailNotificationUuid) {
+            try {
+                $this->sendEmailNotification->handle($emailNotificationUuid);
             } catch (Throwable $e) {
                 report($e);
             }

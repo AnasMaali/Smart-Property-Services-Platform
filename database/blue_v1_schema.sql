@@ -1682,7 +1682,9 @@ UNLOCK TABLES;
 --
 -- BLUE V1 Phase B21 - lifecycle of one outbound notification obligation
 -- (PENDING / SUBMITTED / FAILED / SKIPPED). See
--- database/phase20_technician_notifications_migration.sql.
+-- database/phase20_technician_notifications_migration.sql. BLUE V1 Phase
+-- B22 (database/phase21_email_notifications_migration.sql) reuses these
+-- same five statuses for EMAIL-channel rows unchanged.
 --
 
 DROP TABLE IF EXISTS `outbound_notification_statuses`;
@@ -1729,7 +1731,7 @@ CREATE TABLE `outbound_notifications` (
   `notification_type` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `recipient_type` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `recipient_id` binary(16) NOT NULL,
-  `recipient_address_snapshot` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `recipient_address_snapshot` varchar(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `booking_id` binary(16) NOT NULL,
   `booking_item_id` binary(16) NOT NULL,
   `technician_assignment_id` binary(16) DEFAULT NULL,
@@ -1756,10 +1758,10 @@ CREATE TABLE `outbound_notifications` (
   CONSTRAINT `fk_outbound_notifications_booking_item` FOREIGN KEY (`booking_item_id`) REFERENCES `booking_items` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_outbound_notifications_technician_assignment` FOREIGN KEY (`technician_assignment_id`) REFERENCES `technician_assignments` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_outbound_notifications_status` FOREIGN KEY (`status_id`) REFERENCES `outbound_notification_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `chk_outbound_notifications_channel` CHECK ((`channel` in (_utf8mb4'WHATSAPP'))),
-  CONSTRAINT `chk_outbound_notifications_notification_type` CHECK ((`notification_type` in (_utf8mb4'TECHNICIAN_NEW_ASSIGNMENT',_utf8mb4'TECHNICIAN_ASSIGNMENT_REMOVED'))),
-  CONSTRAINT `chk_outbound_notifications_recipient_type` CHECK ((`recipient_type` in (_utf8mb4'TECHNICIAN'))),
-  CONSTRAINT `chk_outbound_notifications_recipient_address` CHECK ((char_length(trim(`recipient_address_snapshot`)) between 8 and 32)),
+  CONSTRAINT `chk_outbound_notifications_channel` CHECK ((`channel` in (_utf8mb4'WHATSAPP',_utf8mb4'EMAIL'))),
+  CONSTRAINT `chk_outbound_notifications_notification_type` CHECK ((`notification_type` in (_utf8mb4'TECHNICIAN_NEW_ASSIGNMENT',_utf8mb4'TECHNICIAN_ASSIGNMENT_REMOVED',_utf8mb4'TECHNICIAN_NEW_ASSIGNMENT_EMAIL',_utf8mb4'TECHNICIAN_ASSIGNMENT_REMOVED_EMAIL',_utf8mb4'CUSTOMER_TECHNICIAN_ASSIGNED_EMAIL',_utf8mb4'CUSTOMER_TECHNICIAN_CHANGED_EMAIL'))),
+  CONSTRAINT `chk_outbound_notifications_recipient_type` CHECK ((`recipient_type` in (_utf8mb4'TECHNICIAN',_utf8mb4'CUSTOMER'))),
+  CONSTRAINT `chk_outbound_notifications_recipient_address` CHECK ((char_length(trim(`recipient_address_snapshot`)) between 5 and 254)),
   CONSTRAINT `chk_outbound_notifications_idempotency_key` CHECK ((char_length(trim(`idempotency_key`)) between 8 and 191)),
   CONSTRAINT `chk_outbound_notifications_attempt_count` CHECK ((`attempt_count` >= 0)),
   CONSTRAINT `chk_outbound_notifications_failure_code` CHECK (((`last_error_code` is null) or (char_length(trim(`last_error_code`)) between 1 and 100))),

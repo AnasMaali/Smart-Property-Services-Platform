@@ -2,6 +2,7 @@
 
 namespace App\Actions\Admin\Notifications;
 
+use App\Actions\Notifications\SendEmailNotificationAction;
 use App\Actions\Notifications\SendTechnicianNotificationAction;
 use App\Support\Admin\AdminMutationAuthorizationOutcome;
 use App\Support\Admin\AdminMutationAuthorizer;
@@ -27,6 +28,11 @@ use Throwable;
  * notification, exactly the race App\Actions\Notifications\
  * SendTechnicianNotificationAction's own stale-assignment guard exists to
  * prevent) are both rejected.
+ *
+ * BLUE V1 Phase B22 - this SAME endpoint also retries EMAIL-channel
+ * obligations (App\Actions\Notifications\SendEmailNotificationAction),
+ * dispatched by the row's own `channel` column - never a second, parallel
+ * retry endpoint/capability for email.
  */
 final class AdminRetryTechnicianNotificationAction
 {
@@ -34,6 +40,7 @@ final class AdminRetryTechnicianNotificationAction
 
     public function __construct(
         private readonly SendTechnicianNotificationAction $sendNotification,
+        private readonly SendEmailNotificationAction $sendEmailNotification,
         private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
     ) {}
 
@@ -107,8 +114,13 @@ final class AdminRetryTechnicianNotificationAction
             return $this->conflict('This notification has already been sent (or was correctly skipped) and cannot be retried.');
         }
 
+        $channel = DB::table('outbound_notifications')->where('id', $idBinary)->value('channel');
+
         try {
-            $this->sendNotification->handle($notificationUuid);
+            match ($channel) {
+                'EMAIL' => $this->sendEmailNotification->handle($notificationUuid),
+                default => $this->sendNotification->handle($notificationUuid),
+            };
         } catch (Throwable $e) {
             report($e);
         }

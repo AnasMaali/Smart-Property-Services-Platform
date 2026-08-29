@@ -310,6 +310,30 @@
                 </button>
             </p>
 
+            <p data-technician-email-status-row style="display: none;" class="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+                Email to technician: <span data-field="technician_email_status" class="font-medium text-slate-700"></span>
+                <button
+                    type="button"
+                    data-technician-email-retry
+                    style="display: none;"
+                    class="rounded-full border border-slate-300 bg-white px-2 py-0.5
+                           text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    Retry email
+                </button>
+            </p>
+
+            <p data-customer-email-status-row style="display: none;" class="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+                Email to customer: <span data-field="customer_email_status" class="font-medium text-slate-700"></span>
+                <button
+                    type="button"
+                    data-customer-email-retry
+                    style="display: none;"
+                    class="rounded-full border border-slate-300 bg-white px-2 py-0.5
+                           text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    Retry email
+                </button>
+            </p>
+
             <div data-technician-actions class="mt-3 flex flex-wrap gap-2"></div>
         </div>
 

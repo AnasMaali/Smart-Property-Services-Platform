@@ -9,10 +9,13 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * BLUE V1 Phase B21 - manual Admin retry for one stuck/failed Technician
- * WhatsApp notification. Reuses the `technicians.assign` capability (see
- * routes/api.php) - this is an operational extension of the assign/
- * reassign flow, never a new, broader notification-mutation surface.
+ * BLUE V1 Phase B21/B22 - manual Admin retry for one stuck/failed
+ * Technician WhatsApp notification OR Technician/Customer email
+ * notification (channel-dispatched by App\Actions\Admin\Notifications\
+ * AdminRetryTechnicianNotificationAction). Reuses the `technicians.assign`
+ * capability (see routes/api.php) - this is an operational extension of
+ * the assign/reassign flow, never a new, broader notification-mutation
+ * surface.
  */
 final class RetryOutboundNotificationController extends Controller
 {

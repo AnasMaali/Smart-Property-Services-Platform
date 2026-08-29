@@ -86,9 +86,13 @@ class TechnicianNotificationTest extends TestCase
         $response->assertStatus(201);
         $assignmentUuid = $response->json('data.assignment.uuid');
 
+        // Exactly one WHATSAPP obligation - BLUE V1 Phase B22 also creates
+        // EMAIL-channel obligations for the same assignment (see
+        // tests/Feature/Admin/EmailNotificationTest.php), so this count is
+        // now scoped to the WHATSAPP channel specifically.
         $this->assertSame(
             1,
-            DB::table('outbound_notifications')->where('technician_assignment_id', UuidBinary::toBinary($assignmentUuid))->count()
+            DB::table('outbound_notifications')->where('technician_assignment_id', UuidBinary::toBinary($assignmentUuid))->where('channel', 'WHATSAPP')->count()
         );
 
         $notification = $this->notificationRow($assignmentUuid, 'TECHNICIAN_NEW_ASSIGNMENT');
@@ -200,7 +204,7 @@ class TechnicianNotificationTest extends TestCase
 
         $this->assertSame(
             1,
-            DB::table('outbound_notifications')->where('technician_assignment_id', $assignment->id)->count()
+            DB::table('outbound_notifications')->where('technician_assignment_id', $assignment->id)->where('channel', 'WHATSAPP')->count()
         );
         $this->assertCount($callsAfterFirst, $this->fakeNotificationGateway()->sendCalls);
     }
@@ -227,7 +231,7 @@ class TechnicianNotificationTest extends TestCase
 
         $this->assertSame(
             1,
-            DB::table('outbound_notifications')->where('technician_assignment_id', $assignment->id)->count()
+            DB::table('outbound_notifications')->where('technician_assignment_id', $assignment->id)->where('channel', 'WHATSAPP')->count()
         );
         $this->assertCount($callsAfterFirst, $this->fakeNotificationGateway()->sendCalls);
     }
@@ -660,7 +664,7 @@ class TechnicianNotificationTest extends TestCase
 
         $this->assertSame(
             1,
-            DB::table('outbound_notifications')->where('technician_assignment_id', $notification->technician_assignment_id)->count()
+            DB::table('outbound_notifications')->where('technician_assignment_id', $notification->technician_assignment_id)->where('channel', 'WHATSAPP')->count()
         );
 
         // Retrying an already-SUBMITTED notification is rejected, not a

@@ -536,28 +536,60 @@ final class AdminBookingPresenter
             'released_at' => $assignment->released_at === null ? null : Carbon::parse($assignment->released_at)->toIso8601String(),
             'release_reason' => $assignment->release_reason,
             'internal_note' => $assignment->internal_note,
-            'whatsapp_notification' => self::whatsappNotificationPayload($assignment->id),
+            'whatsapp_notification' => self::notificationPayload($assignment->id, 'TECHNICIAN_NEW_ASSIGNMENT'),
+            'technician_email_notification' => self::notificationPayload($assignment->id, 'TECHNICIAN_NEW_ASSIGNMENT_EMAIL'),
+            'customer_email_notification' => self::customerEmailNotificationPayload($assignment->id),
         ];
     }
 
     /**
-     * BLUE V1 Phase B21 - the NEW_ASSIGNMENT WhatsApp obligation tied to
-     * this one `technician_assignments` row, if any (a Booking assigned
-     * before this phase shipped has none - `null` is a legitimate,
-     * expected value, not an error). Never exposes
-     * `payload_snapshot`/`idempotency_key`/raw provider identifiers
-     * beyond the safe `provider_message_reference` an Admin may need to
-     * cross-reference a delivery in the Meta Business dashboard.
+     * BLUE V1 Phase B21/B22 - the NEW_ASSIGNMENT obligation (WhatsApp or
+     * email - selected by $notificationType) tied to this one
+     * `technician_assignments` row, if any (a Booking assigned before the
+     * relevant phase shipped has none - `null` is a legitimate, expected
+     * value, not an error). Never exposes `payload_snapshot`/
+     * `idempotency_key`/raw provider identifiers beyond the safe
+     * `provider_message_reference` an Admin may need to cross-reference a
+     * delivery in the Meta Business dashboard (WhatsApp) or a mail
+     * provider's own logs (email Message-ID).
      *
      * @return array{uuid: string, status: string, provider_message_reference: ?string, requested_at: string, submitted_at: ?string, failed_at: ?string, failure_code: ?string, failure_message: ?string}|null
      */
-    private static function whatsappNotificationPayload(string $assignmentIdBinary): ?array
+    private static function notificationPayload(string $assignmentIdBinary, string $notificationType): ?array
     {
-        $notification = DB::table('outbound_notifications')
-            ->where('technician_assignment_id', $assignmentIdBinary)
-            ->where('notification_type', 'TECHNICIAN_NEW_ASSIGNMENT')
-            ->first();
+        return self::presentNotificationRow(
+            DB::table('outbound_notifications')
+                ->where('technician_assignment_id', $assignmentIdBinary)
+                ->where('notification_type', $notificationType)
+                ->first()
+        );
+    }
 
+    /**
+     * BLUE V1 Phase B22 - the Customer-facing email obligation tied to this
+     * assignment, if any - matched by `recipient_type` rather than one
+     * fixed `notification_type` since a given assignment row only ever
+     * produces ONE of CUSTOMER_TECHNICIAN_ASSIGNED_EMAIL (a fresh
+     * assignment) or CUSTOMER_TECHNICIAN_CHANGED_EMAIL (a reassignment),
+     * never both.
+     *
+     * @return array{uuid: string, status: string, provider_message_reference: ?string, requested_at: string, submitted_at: ?string, failed_at: ?string, failure_code: ?string, failure_message: ?string}|null
+     */
+    private static function customerEmailNotificationPayload(string $assignmentIdBinary): ?array
+    {
+        return self::presentNotificationRow(
+            DB::table('outbound_notifications')
+                ->where('technician_assignment_id', $assignmentIdBinary)
+                ->where('recipient_type', 'CUSTOMER')
+                ->first()
+        );
+    }
+
+    /**
+     * @return array{uuid: string, status: string, provider_message_reference: ?string, requested_at: string, submitted_at: ?string, failed_at: ?string, failure_code: ?string, failure_message: ?string}|null
+     */
+    private static function presentNotificationRow(?object $notification): ?array
+    {
         if ($notification === null) {
             return null;
         }

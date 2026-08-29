@@ -236,9 +236,15 @@ final class TechnicianJobNotificationContent
      * Landmark/notes are intentionally folded in only when present,
      * rather than ever passed as a separate blank template parameter.
      *
+     * Public (not private) because App\Support\Notifications\Email\
+     * CustomerAssignmentEmailContent reuses this exact same field-to-text
+     * formatting for the customer-facing "address summary" line - never a
+     * second, duplicated implementation of "how BLUE renders a
+     * booking_locations row as one line."
+     *
      * @param  array<string, string>  $fields
      */
-    private static function locationSummary(array $fields): string
+    public static function locationSummary(array $fields): string
     {
         $parts = array_filter([
             $fields['property_type'],
