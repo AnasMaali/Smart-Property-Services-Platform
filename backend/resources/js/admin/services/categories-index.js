@@ -14,11 +14,18 @@ const page = document.querySelector('[data-categories-page]');
 
 if (page) {
     const statusFilter = page.querySelector('[data-status-filter]');
+    const searchFilter = page.querySelector('[data-search-filter]');
     const loadingEl = page.querySelector('[data-categories-loading]');
     const errorEl = page.querySelector('[data-categories-error]');
     const emptyEl = page.querySelector('[data-categories-empty]');
     const tableWrapper = page.querySelector('[data-categories-table-wrapper]');
     const tableBody = page.querySelector('[data-categories-body]');
+
+    const addCategoryModal = document.querySelector('[data-add-category-modal]');
+    const addCategoryOpenButton = page.querySelector('[data-add-category-open]');
+    const addCategoryForm = addCategoryModal.querySelector('[data-add-category-form]');
+    const addCategorySubmit = addCategoryModal.querySelector('[data-add-category-submit]');
+    const addCategoryError = addCategoryModal.querySelector('[data-add-category-error]');
 
     function setState(state) {
         loadingEl.classList.toggle('hidden', state !== 'loading');
@@ -84,6 +91,9 @@ if (page) {
         if (statusFilter.value) {
             params.set('is_active', statusFilter.value);
         }
+        if (searchFilter.value.trim()) {
+            params.set('search', searchFilter.value.trim());
+        }
 
         try {
             const response = await request(`/api/v1/admin/service-categories?${params.toString()}`);
@@ -104,6 +114,52 @@ if (page) {
     }
 
     statusFilter.addEventListener('change', loadCategories);
+
+    let searchDebounce = null;
+    searchFilter.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(loadCategories, 300);
+    });
+
+    function closeAddCategoryModal() {
+        addCategoryModal.style.display = 'none';
+        addCategoryForm.reset();
+        addCategoryForm.elements.namedItem('is_active').checked = true;
+        addCategoryError.classList.add('hidden');
+    }
+
+    addCategoryOpenButton.addEventListener('click', () => {
+        addCategoryError.classList.add('hidden');
+        addCategoryModal.style.display = 'flex';
+    });
+
+    addCategoryModal.querySelector('[data-add-category-cancel]').addEventListener('click', closeAddCategoryModal);
+
+    addCategoryForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addCategoryError.classList.add('hidden');
+        addCategorySubmit.disabled = true;
+
+        try {
+            const response = await request('/api/v1/admin/service-categories', {
+                method: 'POST',
+                body: {
+                    code: addCategoryForm.elements.namedItem('code').value.trim(),
+                    name: addCategoryForm.elements.namedItem('name').value.trim(),
+                    description: addCategoryForm.elements.namedItem('description').value.trim() || null,
+                    display_order: Number(addCategoryForm.elements.namedItem('display_order').value || 0),
+                    is_active: addCategoryForm.elements.namedItem('is_active').checked,
+                },
+            });
+
+            window.location.assign(`/admin/service-categories/${response.data.service_category.id}`);
+        } catch (error) {
+            addCategoryError.textContent = error instanceof ApiError ? error.message : 'Unable to create this category.';
+            addCategoryError.classList.remove('hidden');
+        } finally {
+            addCategorySubmit.disabled = false;
+        }
+    });
 
     adminAuthReady().then((ready) => {
         if (ready) {

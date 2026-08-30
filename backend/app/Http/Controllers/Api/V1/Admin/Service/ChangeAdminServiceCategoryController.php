@@ -2,20 +2,20 @@
 
 namespace App\Http\Controllers\Api\V1\Admin\Service;
 
-use App\Actions\Admin\Service\AdminActivateServiceAction;
+use App\Actions\Admin\Service\AdminChangeServiceCategoryAction;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\ChangeAdminServiceCategoryRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
-class ActivateAdminServiceController extends Controller
+class ChangeAdminServiceCategoryController extends Controller
 {
-    public function __invoke(Request $request, AdminActivateServiceAction $action, string $service): JsonResponse
+    public function __invoke(ChangeAdminServiceCategoryRequest $request, AdminChangeServiceCategoryAction $action, string $service): JsonResponse
     {
         /** @var User $authUser */
         $authUser = $request->attributes->get('auth_user');
 
-        $result = $action->handle($request, $service, $authUser);
+        $result = $action->handle($request, $service, $authUser, $request->integer('category_id'));
 
         return response()->json([
             'success' => $result['success'],

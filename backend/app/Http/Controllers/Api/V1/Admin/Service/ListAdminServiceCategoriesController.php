@@ -17,6 +17,10 @@ class ListAdminServiceCategoriesController extends Controller
             $filters['is_active'] = $request->boolean('is_active');
         }
 
+        if ($request->filled('search')) {
+            $filters['search'] = $request->string('search')->toString();
+        }
+
         $result = $action->handle($filters);
 
         return response()->json([

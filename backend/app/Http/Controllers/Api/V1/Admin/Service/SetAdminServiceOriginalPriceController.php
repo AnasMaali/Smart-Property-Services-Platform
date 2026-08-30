@@ -2,20 +2,22 @@
 
 namespace App\Http\Controllers\Api\V1\Admin\Service;
 
-use App\Actions\Admin\Service\AdminActivateServiceAction;
+use App\Actions\Admin\Service\AdminSetServiceOriginalPriceAction;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\SetAdminServiceOriginalPriceRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
-class ActivateAdminServiceController extends Controller
+class SetAdminServiceOriginalPriceController extends Controller
 {
-    public function __invoke(Request $request, AdminActivateServiceAction $action, string $service): JsonResponse
+    public function __invoke(SetAdminServiceOriginalPriceRequest $request, AdminSetServiceOriginalPriceAction $action, string $service): JsonResponse
     {
         /** @var User $authUser */
         $authUser = $request->attributes->get('auth_user');
 
-        $result = $action->handle($request, $service, $authUser);
+        $originalPrice = $request->input('original_price');
+
+        $result = $action->handle($request, $authUser, $service, $originalPrice === null ? null : (string) $originalPrice);
 
         return response()->json([
             'success' => $result['success'],

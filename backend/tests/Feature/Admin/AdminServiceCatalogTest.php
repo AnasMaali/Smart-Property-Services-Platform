@@ -438,6 +438,7 @@ class AdminServiceCatalogTest extends TestCase
         $admin = $this->createAndLoginAdmin(['ADMIN']);
         $categoryId = $this->createCartCategory();
         $service = $this->createCartService($categoryId);
+        $this->makeServiceActivationReady($service['uuid']);
 
         $deactivate = $this->postJson('/api/v1/admin/services/'.$service['uuid'].'/deactivate', [], $this->bearer($admin['access_token']));
         $deactivate->assertStatus(200);
@@ -516,5 +517,26 @@ class AdminServiceCatalogTest extends TestCase
         // by-slug detail page only checks the Service's own `is_active`,
         // never its Category's - so it remains individually reachable.
         $this->getJson('/api/v1/services/'.$service['slug'])->assertStatus(200);
+    }
+
+    /**
+     * BLUE V1 Phase B23 - AdminActivateServiceAction now enforces activation
+     * prerequisites (published current price + active specialization), so
+     * any fixture this suite intends to actually activate needs both.
+     */
+    private function makeServiceActivationReady(string $serviceUuid): void
+    {
+        $schemeUuid = $this->createCartPricingScheme($serviceUuid);
+        $this->createCartPricingRule($schemeUuid, ['rule_code' => 'BASE_PRICE', 'priority' => 1, 'effect_amount' => '100.000000']);
+
+        DB::table('service_specializations')->insert([
+            'service_id' => UuidBinary::toBinary($serviceUuid),
+            'specialization_id' => (int) DB::table('specializations')->value('id'),
+            'is_primary' => 1,
+            'display_order' => 0,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

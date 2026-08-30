@@ -3,8 +3,9 @@
 namespace App\Http\Requests\Admin;
 
 use App\Http\Requests\ApiFormRequest;
+use Illuminate\Validation\Rule;
 
-class ListAdminServiceCategoriesRequest extends ApiFormRequest
+class ChangeAdminServiceCategoryRequest extends ApiFormRequest
 {
     public function authorize(): bool
     {
@@ -14,8 +15,7 @@ class ListAdminServiceCategoriesRequest extends ApiFormRequest
     public function rules(): array
     {
         return [
-            'is_active' => ['nullable', 'boolean'],
-            'search' => ['nullable', 'string', 'max:120'],
+            'category_id' => ['required', 'integer', Rule::exists('service_categories', 'id')],
         ];
     }
 }

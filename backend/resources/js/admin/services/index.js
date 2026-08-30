@@ -27,6 +27,13 @@ if (page) {
     const prevPageButton = page.querySelector('[data-services-prev-page]');
     const nextPageButton = page.querySelector('[data-services-next-page]');
 
+    const addServiceModal = document.querySelector('[data-add-service-modal]');
+    const addServiceOpenButton = page.querySelector('[data-add-service-open]');
+    const addServiceForm = addServiceModal.querySelector('[data-add-service-form]');
+    const addServiceCategorySelect = addServiceModal.querySelector('[data-add-service-category-select]');
+    const addServiceSubmit = addServiceModal.querySelector('[data-add-service-submit]');
+    const addServiceError = addServiceModal.querySelector('[data-add-service-error]');
+
     const FILTER_FIELDS = ['category_id', 'is_active', 'search'];
 
     async function loadCategoryOptions(selectedCategoryId) {
@@ -39,6 +46,11 @@ if (page) {
                 option.value = String(category.id);
                 option.textContent = category.name;
                 categorySelect.appendChild(option);
+
+                const createOption = document.createElement('option');
+                createOption.value = String(category.id);
+                createOption.textContent = category.name;
+                addServiceCategorySelect.appendChild(createOption);
             });
 
             if (selectedCategoryId) {
@@ -116,6 +128,10 @@ if (page) {
         statusBadge.textContent = service.is_active ? 'Active' : 'Inactive';
         statusCell.appendChild(statusBadge);
 
+        const priceCell = document.createElement('td');
+        priceCell.className = 'px-5 py-3.5 text-slate-700';
+        priceCell.appendChild(renderPriceCell(service.pricing));
+
         const orderCell = document.createElement('td');
         orderCell.className = 'px-5 py-3.5 text-slate-500';
         orderCell.textContent = String(service.display_order);
@@ -138,9 +154,33 @@ if (page) {
         link.textContent = 'View';
         linkCell.appendChild(link);
 
-        row.append(nameCell, categoryCell, statusCell, orderCell, capabilitiesCell, updatedCell, linkCell);
+        row.append(nameCell, categoryCell, statusCell, priceCell, orderCell, capabilitiesCell, updatedCell, linkCell);
 
         return row;
+    }
+
+    function renderPriceCell(pricing) {
+        const wrapper = document.createElement('div');
+
+        if (!pricing || pricing.current_amount === null) {
+            wrapper.className = 'text-slate-400';
+            wrapper.textContent = 'Not priced';
+            return wrapper;
+        }
+
+        const current = document.createElement('span');
+        current.className = 'font-medium text-slate-900';
+        current.textContent = pricing.current_amount;
+        wrapper.appendChild(current);
+
+        if (pricing.has_discount) {
+            const original = document.createElement('span');
+            original.className = 'ml-1.5 text-xs text-slate-400 line-through';
+            original.textContent = pricing.original_amount;
+            wrapper.appendChild(original);
+        }
+
+        return wrapper;
     }
 
     async function loadServices(params) {
@@ -203,6 +243,47 @@ if (page) {
     clearButton.addEventListener('click', () => {
         filterForm.reset();
         navigate(new URLSearchParams());
+    });
+
+    function closeAddServiceModal() {
+        addServiceModal.style.display = 'none';
+        addServiceForm.reset();
+        addServiceError.classList.add('hidden');
+    }
+
+    addServiceOpenButton.addEventListener('click', () => {
+        addServiceError.classList.add('hidden');
+        addServiceModal.style.display = 'flex';
+    });
+
+    addServiceModal.querySelector('[data-add-service-cancel]').addEventListener('click', closeAddServiceModal);
+
+    addServiceForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addServiceError.classList.add('hidden');
+        addServiceSubmit.disabled = true;
+
+        try {
+            const response = await request('/api/v1/admin/services', {
+                method: 'POST',
+                body: {
+                    category_id: Number(addServiceCategorySelect.value),
+                    code: addServiceForm.elements.namedItem('code').value.trim(),
+                    slug: addServiceForm.elements.namedItem('slug').value.trim(),
+                    name: addServiceForm.elements.namedItem('name').value.trim(),
+                    short_description: addServiceForm.elements.namedItem('short_description').value.trim() || null,
+                    description: addServiceForm.elements.namedItem('description').value.trim() || null,
+                    display_order: Number(addServiceForm.elements.namedItem('display_order').value || 0),
+                },
+            });
+
+            window.location.assign(`/admin/services/${response.data.service.uuid}`);
+        } catch (error) {
+            addServiceError.textContent = error instanceof ApiError ? error.message : 'Unable to create this service.';
+            addServiceError.classList.remove('hidden');
+        } finally {
+            addServiceSubmit.disabled = false;
+        }
     });
 
     window.addEventListener('popstate', () => {

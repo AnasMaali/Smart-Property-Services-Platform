@@ -41,7 +41,7 @@ class ListCategoryServicesAction
             ->where('category_id', $categoryId)
             ->where('is_active', 1)
             ->orderBy('display_order')
-            ->get(['id', 'code', 'slug', 'name', 'short_description']);
+            ->get(['id', 'code', 'slug', 'name', 'short_description', 'original_price']);
 
         if ($services->isEmpty()) {
             return [
@@ -70,6 +70,7 @@ class ListCategoryServicesAction
                 $key = bin2hex($service->id);
                 $primaryImage = $primaryImagesByServiceId->get($key);
                 $pricingPreview = $pricingPreviewsByServiceUuid[UuidBinary::toString($service->id)];
+                $originalPrice = $service->original_price === null ? null : (string) $service->original_price;
 
                 return [
                     'uuid' => UuidBinary::toString($service->id),
@@ -77,6 +78,19 @@ class ListCategoryServicesAction
                     'slug' => $service->slug,
                     'name' => $service->name,
                     'short_description' => $service->short_description,
+                    // BLUE V1 Phase B23 - additive two-price display block,
+                    // computed from the SAME batched previewMany() call
+                    // already made above for `pricing_preview` - never a
+                    // second pricing calculation. Matches the shape
+                    // App\Actions\ServiceCatalog\GetServiceDetailsAction
+                    // exposes on the Service-details screen.
+                    'pricing' => [
+                        'currency' => $currency->code,
+                        'original_amount' => $originalPrice,
+                        'current_amount' => $pricingPreview->unitTotal,
+                        'has_discount' => $originalPrice !== null && $pricingPreview->unitTotal !== null
+                            && bccomp($originalPrice, $pricingPreview->unitTotal, 6) > 0,
+                    ],
                     'primary_image' => $primaryImage === null ? null : [
                         'storage_key' => $primaryImage->storage_key,
                         'mime_type' => $primaryImage->mime_type,

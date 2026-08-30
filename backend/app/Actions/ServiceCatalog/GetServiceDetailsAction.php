@@ -42,6 +42,7 @@ class GetServiceDetailsAction
                 'services.name',
                 'services.short_description',
                 'services.description',
+                'services.original_price',
                 'service_categories.id as category_id',
                 'service_categories.code as category_code',
                 'service_categories.name as category_name',
@@ -99,6 +100,22 @@ class GetServiceDetailsAction
             ],
             'media' => $media,
             'pricing_preview' => $pricingPreview->toArray(),
+            // BLUE V1 Phase B23 - additive two-price display block. Never
+            // a second pricing calculation: `current_amount` is exactly
+            // `pricing_preview.unit_total` from the SAME evaluate() call
+            // above, restated under the discount-display-friendly names
+            // the Admin catalog workspace also uses (App\Support\Admin\
+            // AdminServicePresenter::pricingSummaryFor()) - one selling-
+            // price authority, two response shapes for two different
+            // clients to migrate to at their own pace.
+            'pricing' => [
+                'currency' => $currencyCode,
+                'original_amount' => $service->original_price === null ? null : (string) $service->original_price,
+                'current_amount' => $pricingPreview->unitTotal,
+                'has_discount' => $service->original_price !== null
+                    && $pricingPreview->unitTotal !== null
+                    && bccomp((string) $service->original_price, $pricingPreview->unitTotal, 6) > 0,
+            ],
             'options' => $this->loadOptions($service->id, $now),
         ];
     }

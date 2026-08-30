@@ -58,6 +58,7 @@ final class AdminListServicesAction
                 'services.name',
                 'services.is_active',
                 'services.display_order',
+                'services.original_price',
                 'services.updated_at',
                 'service_categories.id as category_id',
                 'service_categories.name as category_name',

@@ -19,7 +19,7 @@ final class AdminListServiceCategoriesAction
     use BuildsCartResult;
 
     /**
-     * @param  array{is_active?: bool}  $filters
+     * @param  array{is_active?: bool, search?: string}  $filters
      */
     public function handle(array $filters): array
     {
@@ -27,6 +27,10 @@ final class AdminListServiceCategoriesAction
 
         if (array_key_exists('is_active', $filters)) {
             $query->where('is_active', $filters['is_active'] ? 1 : 0);
+        }
+
+        if (isset($filters['search'])) {
+            $query->where('name', 'like', '%'.$filters['search'].'%');
         }
 
         $rows = $query->orderBy('display_order')->get();

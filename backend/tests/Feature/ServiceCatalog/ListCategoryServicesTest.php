@@ -287,6 +287,33 @@ class ListCategoryServicesTest extends TestCase
     // service summary, and nested primary_image/pricing_preview - so any
     // future field added for an internal reason (category_id, is_active,
     // a raw pricing_scheme_id, ...) is caught here.
+    public function test_pricing_block_reports_discount_from_original_price(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+        DB::table('services')->where('id', UuidBinary::toBinary($serviceUuid))->update(['original_price' => '150.000000']);
+        $this->createPrice($serviceUuid, ['base_amount' => '120.000000']);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertSame('150.000000', $entry['pricing']['original_amount']);
+        $this->assertSame('120.000000', $entry['pricing']['current_amount']);
+        $this->assertTrue($entry['pricing']['has_discount']);
+    }
+
+    public function test_pricing_block_current_amount_is_null_without_a_scheme(): void
+    {
+        $categoryId = $this->createCategory();
+        $serviceUuid = $this->createService($categoryId);
+
+        $response = $this->getJson("/api/v1/service-categories/{$categoryId}/services");
+        $entry = collect($response->json('data.services'))->firstWhere('uuid', $serviceUuid);
+
+        $this->assertNull($entry['pricing']['current_amount']);
+        $this->assertFalse($entry['pricing']['has_discount']);
+    }
+
     public function test_response_exposes_only_the_documented_public_field_set(): void
     {
         $categoryId = $this->createCategory();
@@ -302,13 +329,14 @@ class ListCategoryServicesTest extends TestCase
         $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
 
         $entry = collect($data['services'])->firstWhere('uuid', $serviceUuid);
-        $this->assertSame(['uuid', 'code', 'slug', 'name', 'short_description', 'primary_image', 'pricing_preview'], array_keys($entry));
+        $this->assertSame(['uuid', 'code', 'slug', 'name', 'short_description', 'pricing', 'primary_image', 'pricing_preview'], array_keys($entry));
         $this->assertSame(
             ['storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels'],
             array_keys($entry['primary_image'])
         );
         $this->assertSame(['pricing_status', 'unit_total', 'currency'], array_keys($entry['pricing_preview']));
         $this->assertSame(['code', 'symbol', 'minor_unit'], array_keys($entry['pricing_preview']['currency']));
+        $this->assertSame(['currency', 'original_amount', 'current_amount', 'has_discount'], array_keys($entry['pricing']));
 
         $raw = $response->getContent();
         foreach (['category_id', 'service_id', 'is_active', 'pricing_rule_id', 'pricing_scheme_id'] as $forbiddenString) {

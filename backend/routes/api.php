@@ -36,19 +36,37 @@ use App\Http\Controllers\Api\V1\Admin\Pricing\DeleteAdminPricingRuleController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\GetAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\ListAdminPricingSchemesController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\PublishAdminPricingSchemeController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\SetAdminServiceCurrentPriceController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Rating\GetAdminRatingController;
 use App\Http\Controllers\Api\V1\Admin\Rating\ListAdminRatingsController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceMediaController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceOptionChoiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceOptionController;
+use App\Http\Controllers\Api\V1\Admin\Service\ChangeAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceOptionChoiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceMediaController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionChoiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCategoriesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminSpecializationsController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceOriginalPriceController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceSpecializationController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionChoiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionController;
+use App\Http\Controllers\Api\V1\Admin\Service\UploadAdminServiceMediaController;
 use App\Http\Controllers\Api\V1\Admin\Support\GetAdminSupportRequestController;
 use App\Http\Controllers\Api\V1\Admin\Support\ListAdminSupportRequestsController;
 use App\Http\Controllers\Api\V1\Admin\Support\SendAdminSupportMessageController;
@@ -402,6 +420,16 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/pricing-schemes/{pricingScheme}/publish', PublishAdminPricingSchemeController::class)
         ->middleware([AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
 
+    // BLUE V1 Phase B23 - the simplified "Current Price" convenience on top
+    // of the Pricing management endpoints just above - it authors a DRAFT
+    // and publishes it through the exact same canonical flow, so it
+    // requires the union of what draft-authoring AND publishing already
+    // require (`pricing.manage` + `pricing.publish` + `admin.stepup`) -
+    // never a lesser bar just because the UI makes it feel like "one simple
+    // field". See App\Actions\Admin\Pricing\AdminSetServiceCurrentPriceAction.
+    Route::post('/v1/admin/services/{service}/current-price', SetAdminServiceCurrentPriceController::class)
+        ->middleware([AdminCapability::PRICING_MANAGE->middleware(), AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
+
     // BLUE V1 Phase B6 - read-only global Admin visibility into Customers
     // and their Properties. A Property is always Customer-owned, so it
     // shares the same `customers.view` capability rather than a separate
@@ -426,18 +454,24 @@ Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/ratings/{booking}', GetAdminRatingController::class)
         ->middleware(AdminCapability::RATINGS_VIEW->middleware());
 
-    // BLUE V1 Phase B8 - Service Catalog (Categories/Services) management.
-    // `services.view` covers every read below (list/detail, including the
-    // nested capabilities/specializations/options/media/pricing-scheme
-    // summary on a Service); `services.manage` covers every mutation -
-    // display-metadata edits and activate/deactivate for both Categories
-    // and Services. Nothing about Options/Capabilities/Specializations/
-    // Media is mutable here - see App\Actions\Admin\Service\
-    // AdminGetServiceAction's docblock for why, and
+    // BLUE V1 Phase B8 - Service Catalog (Categories/Services) management,
+    // extended in Phase B23 to cover create/edit/category-move for both
+    // Categories and Services, plus create/edit/activate/deactivate for
+    // Options/Choices/Media/Specializations and the two-price catalog block
+    // (original price + canonical-PricingEngine current price). `services.
+    // view` covers every read below (list/detail, including the nested
+    // capabilities/specializations/options/media/pricing-scheme summary on
+    // a Service); `services.manage` covers every mutation. Capabilities
+    // remain read-only here - see App\Actions\Admin\Service\
+    // AdminGetServiceAction's docblock for why - and
     // docs/api-contracts/admin-operations-v1.md "Service Catalog" for the
     // full write-up.
+    Route::get('/v1/admin/specializations', ListAdminSpecializationsController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::get('/v1/admin/service-categories', ListAdminServiceCategoriesController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/service-categories', CreateAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
     Route::get('/v1/admin/service-categories/{category}', GetAdminServiceCategoryController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::patch('/v1/admin/service-categories/{category}', UpdateAdminServiceCategoryController::class)
@@ -448,6 +482,8 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
     Route::get('/v1/admin/services', ListAdminServicesController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/services', CreateAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
     Route::get('/v1/admin/services/{service}', GetAdminServiceController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::patch('/v1/admin/services/{service}', UpdateAdminServiceController::class)
@@ -455,6 +491,34 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/services/{service}/activate', ActivateAdminServiceController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
     Route::post('/v1/admin/services/{service}/deactivate', DeactivateAdminServiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/category', ChangeAdminServiceCategoryController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/original-price', SetAdminServiceOriginalPriceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/specializations', SetAdminServiceSpecializationController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/options', CreateAdminServiceOptionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-options/{option}', UpdateAdminServiceOptionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-options/{option}/activate', ActivateAdminServiceOptionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-options/{option}/deactivate', DeactivateAdminServiceOptionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-options/{option}/choices', CreateAdminServiceOptionChoiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-option-choices/{choice}', UpdateAdminServiceOptionChoiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-option-choices/{choice}/activate', ActivateAdminServiceOptionChoiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-option-choices/{choice}/deactivate', DeactivateAdminServiceOptionChoiceController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/services/{service}/media', UploadAdminServiceMediaController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-media/{media}/activate', ActivateAdminServiceMediaController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-media/{media}/deactivate', DeactivateAdminServiceMediaController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     // BLUE V1 Phase B7 - Support Requests/Messages. `support.view` covers

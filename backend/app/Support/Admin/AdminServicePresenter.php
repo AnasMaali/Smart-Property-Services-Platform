@@ -3,6 +3,7 @@
 namespace App\Support\Admin;
 
 use App\Support\Pricing\DefaultCurrency;
+use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingSchemeRepository;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
@@ -39,7 +40,7 @@ final class AdminServicePresenter
             ->select([
                 'services.id', 'services.code', 'services.slug', 'services.name',
                 'services.short_description', 'services.description', 'services.is_active',
-                'services.display_order', 'services.created_at', 'services.updated_at',
+                'services.display_order', 'services.original_price', 'services.created_at', 'services.updated_at',
                 'service_categories.id as category_id', 'service_categories.code as category_code',
                 'service_categories.name as category_name', 'service_categories.is_active as category_is_active',
             ])
@@ -57,20 +58,52 @@ final class AdminServicePresenter
 
         $serviceIds = $rows->pluck('id')->all();
         $capabilitiesByServiceId = self::capabilitiesFor($serviceIds);
+        $currentAmountByServiceUuid = self::currentAmountsFor($rows->pluck('id')->map(UuidBinary::toString(...))->all());
 
-        return $rows->map(fn (object $row) => [
-            'uuid' => UuidBinary::toString($row->id),
-            'code' => $row->code,
-            'name' => $row->name,
-            'is_active' => (bool) $row->is_active,
-            'display_order' => (int) $row->display_order,
-            'category' => [
-                'id' => $row->category_id,
-                'name' => $row->category_name,
-            ],
-            'capabilities' => $capabilitiesByServiceId->get(bin2hex($row->id), []),
-            'updated_at' => Carbon::parse($row->updated_at)->toIso8601String(),
-        ])->all();
+        return $rows->map(function (object $row) use ($capabilitiesByServiceId, $currentAmountByServiceUuid) {
+            $serviceUuid = UuidBinary::toString($row->id);
+            $originalPrice = $row->original_price === null ? null : (string) $row->original_price;
+            $currentAmount = $currentAmountByServiceUuid[$serviceUuid] ?? null;
+
+            return [
+                'uuid' => $serviceUuid,
+                'code' => $row->code,
+                'name' => $row->name,
+                'is_active' => (bool) $row->is_active,
+                'display_order' => (int) $row->display_order,
+                'category' => [
+                    'id' => $row->category_id,
+                    'name' => $row->category_name,
+                ],
+                'capabilities' => $capabilitiesByServiceId->get(bin2hex($row->id), []),
+                'pricing' => [
+                    'currency' => DefaultCurrency::code(),
+                    'original_amount' => $originalPrice,
+                    'current_amount' => $currentAmount,
+                    'has_discount' => $originalPrice !== null && $currentAmount !== null && bccomp($originalPrice, $currentAmount, 6) > 0,
+                ],
+                'updated_at' => Carbon::parse($row->updated_at)->toIso8601String(),
+            ];
+        })->all();
+    }
+
+    /**
+     * BLUE V1 Phase B23 - the SAME App\Support\Pricing\PricingEngine every
+     * customer catalog/cart/checkout call already uses, batched for a whole
+     * list screen - never a second, divergent "list price" calculation.
+     *
+     * @param  array<int, string>  $serviceUuids
+     * @return array<string, ?string> Keyed by service UUID string.
+     */
+    private static function currentAmountsFor(array $serviceUuids): array
+    {
+        if ($serviceUuids === []) {
+            return [];
+        }
+
+        $results = (new PricingEngine)->previewMany($serviceUuids, DefaultCurrency::code());
+
+        return array_map(fn ($result) => $result->unitTotal, $results);
     }
 
     /**
@@ -101,7 +134,7 @@ final class AdminServicePresenter
             'specializations' => self::specializationsFor($serviceId),
             'options' => self::optionsFor($serviceId),
             'media' => self::mediaFor($serviceId),
-            'pricing' => self::pricingSummaryFor($serviceId),
+            'pricing' => self::pricingSummaryFor($serviceId, $row->original_price === null ? null : (string) $row->original_price),
         ];
     }
 
@@ -169,6 +202,7 @@ final class AdminServicePresenter
                 'service_options.name',
                 'service_options.description',
                 'service_options.is_required',
+                'service_options.display_order',
                 'service_options.is_active',
                 'service_option_types.code as type_code',
             ])
@@ -204,7 +238,7 @@ final class AdminServicePresenter
         $choicesByOptionId = DB::table('service_option_choices')
             ->whereIn('service_option_id', $optionIds)
             ->orderBy('display_order')
-            ->get(['id', 'service_option_id', 'code', 'name', 'is_active'])
+            ->get(['id', 'service_option_id', 'code', 'name', 'description', 'display_order', 'is_active'])
             ->groupBy(fn (object $r) => bin2hex($r->service_option_id));
 
         return $options->map(function (object $option) use ($numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId) {
@@ -217,6 +251,7 @@ final class AdminServicePresenter
                 'description' => $option->description,
                 'type' => $option->type_code,
                 'is_required' => (bool) $option->is_required,
+                'display_order' => (int) $option->display_order,
                 'is_active' => (bool) $option->is_active,
             ];
 
@@ -247,6 +282,8 @@ final class AdminServicePresenter
                         'uuid' => UuidBinary::toString($choice->id),
                         'code' => $choice->code,
                         'name' => $choice->name,
+                        'description' => $choice->description,
+                        'display_order' => (int) $choice->display_order,
                         'is_active' => (bool) $choice->is_active,
                     ])
                     ->values()
@@ -282,25 +319,59 @@ final class AdminServicePresenter
     }
 
     /**
-     * Read-only: which pricing_scheme_versions exist for this Service in
-     * BLUE's default currency, and their publish status - never a rule
-     * evaluation (that remains PricingEngine's job) and never editable here.
-     * Full pricing-rule authoring/publishing is BLUE V1 Phase B9's exclusive
-     * domain - see docs/api-contracts/admin-operations-v1.md "Pricing
-     * boundary with B9".
+     * Which pricing_scheme_versions exist for this Service in BLUE's
+     * default currency (and their publish status - read-only, never
+     * editable here), PLUS the two-price catalog display block BLUE V1
+     * Phase B23 adds: `original_amount` is the additive `services.
+     * original_price` catalog metadata (never a pricing authority);
+     * `current_amount` is computed by the SAME App\Support\Pricing\
+     * PricingEngine every customer catalog/cart/checkout call already
+     * uses (`evaluate()` with no selections, quantity 1) - never a second,
+     * divergent calculation, and `null` exactly when the customer catalog
+     * would also see no available price yet. Full pricing-rule authoring/
+     * publishing beyond the simple current-price convenience
+     * (App\Actions\Admin\Pricing\AdminSetServiceCurrentPriceAction) remains
+     * BLUE V1 Phase B9's exclusive domain - see docs/api-contracts/
+     * admin-operations-v1.md "Pricing boundary with B9".
      *
      * @return array<string, mixed>
      */
-    private static function pricingSummaryFor(string $serviceIdBinary): array
+    private static function pricingSummaryFor(string $serviceIdBinary, ?string $originalPrice): array
     {
         $currencyCode = DefaultCurrency::code();
         $currencyId = (int) DB::table('currencies')->where('code', $currencyCode)->value('id');
 
         $schemeVersions = (new PricingSchemeRepository)->schemeVersionsFor($serviceIdBinary, $currencyId);
 
+        $currentAmount = self::currentSellingPrice(UuidBinary::toString($serviceIdBinary));
+
         return [
             'currency_code' => $currencyCode,
             'scheme_versions' => $schemeVersions,
+            'currency' => $currencyCode,
+            'original_amount' => $originalPrice,
+            'current_amount' => $currentAmount,
+            'has_discount' => $originalPrice !== null && $currentAmount !== null && bccomp($originalPrice, $currentAmount, 6) > 0,
         ];
+    }
+
+    /**
+     * The one place any Actions/Admin class may learn "what does this
+     * Service currently sell for" - App\Support\Pricing\PricingEngine
+     * itself is deliberately called only from this Support-layer presenter
+     * (never directly from an app/Actions/Admin/**\/*.php file), matching
+     * this codebase's Admin/pricing-engine isolation boundary asserted by
+     * Tests\Feature\Admin\AdminFinancialIsolationTest. Same `evaluate()`
+     * call (no selections, quantity 1) every customer catalog/cart/
+     * checkout call already uses - never a second, divergent calculation.
+     */
+    public static function currentSellingPrice(string $serviceUuid): ?string
+    {
+        return (new PricingEngine)->evaluate(
+            serviceIdUuid: $serviceUuid,
+            selections: [],
+            quantity: 1,
+            currencyCode: DefaultCurrency::code(),
+        )->unitTotal;
     }
 }

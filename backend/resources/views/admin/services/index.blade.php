@@ -7,6 +7,16 @@
 
 <div data-services-page class="space-y-6">
 
+    <div class="flex justify-end">
+        <button
+            type="button"
+            data-add-service-open
+            class="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold
+                   text-white transition hover:bg-slate-800">
+            + Add service
+        </button>
+    </div>
+
     <form data-services-filter-form class="rounded-2xl border border-slate-200 bg-white p-5">
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -88,6 +98,7 @@
                         <th class="px-5 py-3">Service</th>
                         <th class="px-5 py-3">Category</th>
                         <th class="px-5 py-3">Status</th>
+                        <th class="px-5 py-3">Price (AED)</th>
                         <th class="px-5 py-3">Display order</th>
                         <th class="px-5 py-3">Capabilities</th>
                         <th class="px-5 py-3">Updated</th>
@@ -128,6 +139,55 @@
 
     </div>
 
+</div>
+
+<div data-add-service-modal style="display: none;" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+    <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <h2 class="text-lg font-semibold text-slate-950">Add service</h2>
+        <p class="mt-1 text-xs text-slate-500">
+            Created inactive - configure category, pricing, specialization and options, then activate it.
+        </p>
+
+        <form data-add-service-form class="mt-4 space-y-3">
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Category</label>
+                <select name="category_id" data-add-service-category-select required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-slate-600">Code</label>
+                    <input type="text" name="code" required minlength="2" maxlength="80" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-slate-600">Slug</label>
+                    <input type="text" name="slug" required minlength="2" maxlength="160" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                </div>
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+                <input type="text" name="name" required minlength="2" maxlength="160" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Short description</label>
+                <input type="text" name="short_description" maxlength="300" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Description</label>
+                <textarea name="description" rows="3" maxlength="5000" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea>
+            </div>
+            <div class="max-w-xs">
+                <label class="mb-1 block text-xs font-medium text-slate-600">Display order</label>
+                <input type="number" name="display_order" min="0" max="65535" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+
+            <p data-add-service-error class="hidden text-sm text-red-600"></p>
+
+            <div class="mt-2 flex justify-end gap-3">
+                <button type="button" data-add-service-cancel class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" data-add-service-submit class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Create service</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 @endsection

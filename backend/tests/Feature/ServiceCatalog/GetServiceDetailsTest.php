@@ -325,7 +325,7 @@ class GetServiceDetailsTest extends TestCase
 
         $data = $response->json('data');
         $this->assertSame(
-            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'category', 'media', 'pricing_preview', 'options'],
+            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'category', 'media', 'pricing_preview', 'pricing', 'options'],
             array_keys($data)
         );
         $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
@@ -337,6 +337,7 @@ class GetServiceDetailsTest extends TestCase
             ['pricing_status', 'currency', 'pricing_scheme_version', 'base_amount', 'adjustments', 'unit_total', 'quantity', 'line_total', 'required_context'],
             array_keys($data['pricing_preview'])
         );
+        $this->assertSame(['currency', 'original_amount', 'current_amount', 'has_discount'], array_keys($data['pricing']));
 
         $numberPayload = collect($data['options'])->firstWhere('uuid', $numberOption);
         $this->assertSame(['uuid', 'code', 'name', 'description', 'type', 'is_required', 'numeric_rule'], array_keys($numberPayload));
@@ -574,6 +575,70 @@ class GetServiceDetailsTest extends TestCase
 
         $this->assertSame('QUOTE_REQUIRED', $response->json('data.pricing_preview.pricing_status'));
         $this->assertNull($response->json('data.pricing_preview.unit_total'));
+    }
+
+    // -----------------------------------------------------------------
+    // BLUE V1 Phase B23 - additive two-price `pricing` block
+    // -----------------------------------------------------------------
+
+    public function test_pricing_block_reports_discount_when_original_exceeds_current(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+        DB::table('services')->where('id', UuidBinary::toBinary($service['uuid']))->update(['original_price' => '150.000000']);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_amount' => '120.000000']);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+
+        $response->assertJsonPath('data.pricing.currency', 'AED');
+        $response->assertJsonPath('data.pricing.original_amount', '150.000000');
+        $response->assertJsonPath('data.pricing.current_amount', '120.000000');
+        $this->assertTrue($response->json('data.pricing.has_discount'));
+    }
+
+    public function test_pricing_block_reports_no_discount_when_no_original_price_set(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_amount' => '120.000000']);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+
+        $this->assertNull($response->json('data.pricing.original_amount'));
+        $response->assertJsonPath('data.pricing.current_amount', '120.000000');
+        $this->assertFalse($response->json('data.pricing.has_discount'));
+    }
+
+    public function test_pricing_block_current_amount_is_null_when_pricing_unavailable(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+        DB::table('services')->where('id', UuidBinary::toBinary($service['uuid']))->update(['original_price' => '150.000000']);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+
+        $this->assertNull($response->json('data.pricing.current_amount'));
+        $this->assertFalse($response->json('data.pricing.has_discount'));
+    }
+
+    public function test_pricing_amounts_are_json_strings_never_floats(): void
+    {
+        $categoryId = $this->createCategory();
+        $service = $this->createService($categoryId);
+        DB::table('services')->where('id', UuidBinary::toBinary($service['uuid']))->update(['original_price' => '150.000000']);
+
+        $scheme = $this->createPricingScheme($service['uuid']);
+        $this->createPricingRule($scheme, ['effect_amount' => '120.000000']);
+
+        $response = $this->getJson("/api/v1/services/{$service['slug']}");
+        $raw = $response->getContent();
+
+        $this->assertStringContainsString('"original_amount":"150.000000"', $raw);
+        $this->assertStringContainsString('"current_amount":"120.000000"', $raw);
     }
 
     public function test_all_identifiers_are_returned_as_uuid_strings_with_no_binary_leak(): void

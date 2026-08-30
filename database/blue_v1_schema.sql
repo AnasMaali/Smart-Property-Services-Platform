@@ -3185,6 +3185,7 @@ CREATE TABLE `services` (
   `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
   `display_order` smallint unsigned NOT NULL DEFAULT '0',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `original_price` decimal(19,6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
@@ -3198,6 +3199,7 @@ CREATE TABLE `services` (
   CONSTRAINT `chk_services_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
   CONSTRAINT `chk_services_is_active` CHECK ((`is_active` in (0,1))),
   CONSTRAINT `chk_services_name` CHECK ((char_length(trim(`name`)) between 2 and 160)),
+  CONSTRAINT `chk_services_original_price` CHECK (((`original_price` is null) or (`original_price` >= 0))),
   CONSTRAINT `chk_services_short_description` CHECK (((`short_description` is null) or (char_length(trim(`short_description`)) > 0))),
   CONSTRAINT `chk_services_slug` CHECK ((char_length(trim(`slug`)) between 2 and 160))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

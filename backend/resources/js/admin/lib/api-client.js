@@ -31,6 +31,10 @@ function redirectToLogin() {
     }
 }
 
+function isFormData(body) {
+    return typeof FormData !== 'undefined' && body instanceof FormData;
+}
+
 async function send(path, { method, body, headers }) {
     let response;
 
@@ -38,7 +42,10 @@ async function send(path, { method, body, headers }) {
         response = await fetch(path, {
             method,
             headers,
-            body: body !== undefined && body !== null ? JSON.stringify(body) : undefined,
+            // A FormData body (BLUE V1 Phase B23 - Service media upload) is
+            // sent as-is - the browser sets the multipart boundary itself,
+            // and JSON.stringify()-ing it would silently corrupt the file.
+            body: isFormData(body) ? body : (body !== undefined && body !== null ? JSON.stringify(body) : undefined),
         });
     } catch {
         throw new ApiError('Unable to reach the server. Check your connection and try again.', { status: 0 });
@@ -112,7 +119,7 @@ export async function request(path, { method = 'GET', body = null, allowStepUpRe
         headers: {
             Accept: 'application/json',
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-            ...(body ? { 'Content-Type': 'application/json' } : {}),
+            ...(body && !isFormData(body) ? { 'Content-Type': 'application/json' } : {}),
         },
     });
 
