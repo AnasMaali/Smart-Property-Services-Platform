@@ -45,6 +45,7 @@ class GetServiceDetailsAction
                 'services.description',
                 'services.original_price',
                 'services.is_featured',
+                'services.inspection_quote_credit_enabled',
                 'services.estimated_duration_minutes',
                 'services.min_quantity',
                 'services.max_quantity',
@@ -128,6 +129,19 @@ class GetServiceDetailsAction
             'content_sections' => $this->loadContentSections($service->id),
             'checkpoint_groups' => $this->loadCheckpointGroups($service->id),
             'payment_policy' => $this->paymentPolicyPayload($service->id),
+            // BLUE V1 Phase B25 - additive, data-driven signal for a
+            // shopper-facing "inspection fee paid today will be credited
+            // toward an approved follow-up repair quote" explanation.
+            // Never the live inspection amount itself (that already comes
+            // from `pricing_preview`/`pricing` above) - purely whether the
+            // workflow applies to this Service at all. See
+            // App\Support\Booking\InspectionCreditCalculator for how an
+            // actual credit is later computed from historical Booking
+            // facts, never from this flag.
+            'inspection_quote_policy' => [
+                'enabled' => (bool) $service->inspection_quote_credit_enabled,
+                'inspection_fee_credit_applies' => (bool) $service->inspection_quote_credit_enabled,
+            ],
         ];
     }
 

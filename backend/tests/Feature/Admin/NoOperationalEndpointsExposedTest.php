@@ -67,6 +67,13 @@ class NoOperationalEndpointsExposedTest extends TestCase
         'api/v1/admin/contracts/{contract}/cancel',
         'api/v1/admin/bookings/{booking}/cancel',
         'api/v1/admin/bookings/{booking}/cancellation-preview',
+        // BLUE V1 Phase B25 - withdraws a DRAFT repair quote that was never
+        // sent to the customer (App\Actions\Admin\Booking\
+        // AdminCancelDraftRepairQuoteAction). Never touches a Booking,
+        // Payment, or refund - it only marks an unsent quote document
+        // CANCELLED, the same reasoning already carved out contracts.cancel
+        // and bookings.cancel above for their own domains.
+        'api/v1/admin/repair-quotes/{quote}/cancel',
     ];
 
     public function test_no_out_of_scope_operational_routes_are_registered(): void
@@ -147,6 +154,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',
             'api/v1/admin/booking-items/{bookingItem}/complete-work',
             'api/v1/admin/booking-items/{bookingItem}/reassign-technician',
+            'api/v1/admin/booking-items/{bookingItem}/repair-quotes',
             'api/v1/admin/booking-items/{bookingItem}/start-work',
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/bookings',
@@ -179,6 +187,10 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/properties/{property}',
             'api/v1/admin/ratings',
             'api/v1/admin/ratings/{booking}',
+            'api/v1/admin/repair-quotes/{quote}',
+            'api/v1/admin/repair-quotes/{quote}/cancel',
+            'api/v1/admin/repair-quotes/{quote}/revise',
+            'api/v1/admin/repair-quotes/{quote}/send',
             'api/v1/admin/service-categories',
             'api/v1/admin/service-categories/{category}',
             'api/v1/admin/service-categories/{category}/activate',
@@ -218,6 +230,7 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/services/{service}/content-sections',
             'api/v1/admin/services/{service}/current-price',
             'api/v1/admin/services/{service}/deactivate',
+            'api/v1/admin/services/{service}/inspection-quote-policy',
             'api/v1/admin/services/{service}/media',
             'api/v1/admin/services/{service}/options',
             'api/v1/admin/services/{service}/original-price',

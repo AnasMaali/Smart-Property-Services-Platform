@@ -2,6 +2,7 @@
 
 namespace App\Support\Admin;
 
+use App\Support\Booking\InspectionCreditCalculator;
 use App\Support\Contract\ContractEntitlementCalculator;
 use App\Support\Uuid\UuidBinary;
 use App\Support\WhatsApp\WhatsAppLinkBuilder;
@@ -234,6 +235,7 @@ final class AdminBookingPresenter
             ->get([
                 'booking_items.id',
                 'booking_items.service_id',
+                'booking_items.status_id',
                 'booking_items.service_code_snapshot',
                 'booking_items.service_name_snapshot',
                 'booking_items.quantity',
@@ -360,6 +362,7 @@ final class AdminBookingPresenter
                 $choiceSelections->get($item->id, collect()),
                 $itemStatusHistories->get($item->id, collect()),
                 $whatsappContext,
+                $row,
             ))->all(),
             'status_history' => self::statusHistoryPayload($statusHistory),
             'created_at' => Carbon::parse($row->created_at)->toIso8601String(),
@@ -495,6 +498,7 @@ final class AdminBookingPresenter
         Collection $choiceSelections,
         Collection $statusHistory,
         array $whatsappContext,
+        object $booking,
     ): array {
         $active = $assignments->first(fn ($assignment) => $assignment->released_at === null);
 
@@ -549,7 +553,39 @@ final class AdminBookingPresenter
             'assignment_history' => $assignments->values()->map(fn ($assignment) => self::assignmentPayload($assignment, $itemWhatsappFields))->all(),
             'customer_whatsapp' => $active === null ? null : self::customerWhatsappPayload($active, $itemWhatsappFields, $isReassignment),
             'status_history' => self::statusHistoryPayload($statusHistory),
+            'inspection_quote' => self::inspectionQuotePayload($item, $booking),
         ];
+    }
+
+    /**
+     * BLUE V1 Phase B25 - the "Inspection Follow-up" panel data for one
+     * Booking Item: the existing repair quote (if any - always the most
+     * recent one, DRAFT/SENT/ACCEPTED/etc., never re-derived arithmetic)
+     * plus whether an Admin could create a NEW one right now. Both facts
+     * are safe to compute per-item on this single-Booking detail view -
+     * never batched/N+1-optimized the way the list screen's
+     * presentList() would need to be, since a Booking realistically has a
+     * handful of items.
+     *
+     * @return array<string, mixed>
+     */
+    private static function inspectionQuotePayload(object $item, object $booking): array
+    {
+        $existing = AdminRepairQuotePresenter::forBookingItem($item->id);
+
+        if ($existing !== null) {
+            return ['eligible' => true, 'quote' => $existing];
+        }
+
+        $serviceInspectionEnabled = (bool) DB::table('services')->where('id', $item->service_id)->value('inspection_quote_credit_enabled');
+
+        if (! $serviceInspectionEnabled) {
+            return ['eligible' => false, 'quote' => null];
+        }
+
+        $eligibility = InspectionCreditCalculator::eligibilityFor($item, $booking);
+
+        return ['eligible' => $eligibility['eligible'], 'quote' => null];
     }
 
     /**

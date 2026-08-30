@@ -333,6 +333,39 @@
             <div data-whatsapp-actions class="mt-3 flex flex-wrap gap-2"></div>
         </div>
 
+        <div data-inspection-quote-box style="display: none;" class="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Inspection Follow-up
+            </p>
+
+            <dl class="mt-2 space-y-1.5 text-sm">
+                <div class="flex justify-between gap-4">
+                    <dt class="text-slate-500">Quote status</dt>
+                    <dd data-field="quote_status" class="font-medium text-slate-900"></dd>
+                </div>
+                <div data-quote-amounts-row style="display: none;">
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Final repair amount</dt>
+                        <dd data-field="quote_quoted_amount" class="font-medium text-slate-900"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Inspection credit</dt>
+                        <dd data-field="quote_credit_amount" class="font-medium text-slate-900"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Remaining balance</dt>
+                        <dd data-field="quote_balance_due" class="font-medium text-slate-900"></dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Funding status</dt>
+                        <dd data-field="quote_funding_status" class="font-medium text-slate-900"></dd>
+                    </div>
+                </div>
+            </dl>
+
+            <div data-inspection-quote-actions class="mt-3 flex flex-wrap gap-2"></div>
+        </div>
+
         <details data-item-history-box class="mt-3 hidden">
             <summary class="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
                 Item history
@@ -463,7 +496,7 @@
 
         <div class="mt-3">
             <label class="mb-1.5 block text-xs font-medium text-slate-600">
-                Reason (optional)
+                <span data-confirm-action-reason-label>Reason (optional)</span>
             </label>
             <textarea
                 data-confirm-action-reason

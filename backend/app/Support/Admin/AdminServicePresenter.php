@@ -44,6 +44,7 @@ final class AdminServicePresenter
                 'services.id', 'services.code', 'services.slug', 'services.name',
                 'services.short_description', 'services.description', 'services.is_active',
                 'services.display_order', 'services.original_price', 'services.is_featured',
+                'services.inspection_quote_credit_enabled',
                 'services.estimated_duration_minutes', 'services.min_quantity', 'services.max_quantity',
                 'services.created_at', 'services.updated_at',
                 'service_categories.id as category_id', 'service_categories.code as category_code',
@@ -149,6 +150,9 @@ final class AdminServicePresenter
             'content_sections' => self::contentSectionsFor($serviceId),
             'checkpoint_groups' => self::checkpointGroupsFor($serviceId),
             'payment_policy' => self::paymentPolicyFor($serviceId),
+            'inspection_quote_policy' => [
+                'enabled' => (bool) $row->inspection_quote_credit_enabled,
+            ],
         ];
     }
 

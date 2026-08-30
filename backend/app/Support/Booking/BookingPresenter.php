@@ -91,6 +91,7 @@ final class BookingPresenter
             'location' => $location === null ? null : self::locationPayload($location),
             'appointment' => $slot === null ? null : self::appointmentPayload($slot),
             'items' => $items->map(self::itemPayload(...))->all(),
+            'follow_up_quote' => CustomerRepairQuotePresenter::forBooking($booking->id),
             'created_at' => Carbon::parse($booking->created_at)->toIso8601String(),
             'status_changed_at' => Carbon::parse($booking->status_changed_at)->toIso8601String(),
             'completed_at' => $booking->completed_at === null ? null : Carbon::parse($booking->completed_at)->toIso8601String(),

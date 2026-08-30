@@ -1468,6 +1468,80 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 21A. BOOKING ITEM REPAIR QUOTE STATUSES — BLUE V1 Phase B25
+-- Lifecycle of a post-inspection repair quote. Deliberately no
+-- PAID/FUNDED status - payment settlement is always derived from
+-- the quote's own balance_due_amount plus
+-- repair_quote_payment_attempts, never stored redundantly here.
+-- See App\Support\Booking\RepairQuoteFundingStatus.
+-- =============================================================
+
+INSERT INTO booking_item_repair_quote_statuses (
+    code,
+    name,
+    description,
+    is_terminal,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'DRAFT',
+    'Draft',
+    'The quote is being prepared by an Admin and is not yet visible to the customer. Amounts may still be edited.',
+    FALSE,
+    1,
+    TRUE
+),
+(
+    'SENT',
+    'Sent',
+    'The quote has been sent to the customer. Its amounts are now immutable - a correction requires a new revision.',
+    FALSE,
+    2,
+    TRUE
+),
+(
+    'ACCEPTED',
+    'Accepted',
+    'The customer accepted the quote. The remaining balance (if any) is now payable.',
+    FALSE,
+    3,
+    TRUE
+),
+(
+    'DECLINED',
+    'Declined',
+    'The customer declined the quote.',
+    TRUE,
+    4,
+    TRUE
+),
+(
+    'EXPIRED',
+    'Expired',
+    'The quote was not acted on before it expired.',
+    TRUE,
+    5,
+    TRUE
+),
+(
+    'CANCELLED',
+    'Cancelled',
+    'The quote was cancelled by an Admin (as a draft withdrawal, or because a revision superseded it).',
+    TRUE,
+    6,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_terminal = new.is_terminal,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 22. BOOKING ITEM STATUSES
 -- Status of each Service inside the Booking
 -- =============================================================

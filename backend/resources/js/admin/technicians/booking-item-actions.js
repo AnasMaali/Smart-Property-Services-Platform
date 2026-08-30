@@ -218,6 +218,7 @@ function confirmActionElements() {
         details: confirmModal.querySelector('[data-confirm-action-details]'),
         error: confirmModal.querySelector('[data-confirm-action-error]'),
         reason: confirmModal.querySelector('[data-confirm-action-reason]'),
+        reasonLabel: confirmModal.querySelector('[data-confirm-action-reason-label]'),
         cancelButton: confirmModal.querySelector('[data-confirm-action-cancel]'),
         confirmButton: confirmModal.querySelector('[data-confirm-action-confirm]'),
     };
@@ -231,7 +232,7 @@ function confirmActionElements() {
  * itself; it only mounts whatever node the caller hands it, or hides the
  * slot entirely when none is given (Start work / Complete work above).
  */
-export function openConfirmAction({ title, message, confirmLabel, detailsNode, onConfirm }) {
+export function openConfirmAction({ title, message, confirmLabel, detailsNode, reasonLabel, onConfirm }) {
     const els = confirmActionElements();
 
     if (!els) {
@@ -242,6 +243,11 @@ export function openConfirmAction({ title, message, confirmLabel, detailsNode, o
     els.message.textContent = message;
     els.confirmButton.textContent = confirmLabel;
     els.reason.value = '';
+
+    if (els.reasonLabel) {
+        els.reasonLabel.textContent = reasonLabel || 'Reason (optional)';
+    }
+
     hideError(els.error);
 
     if (els.details) {

@@ -9,14 +9,19 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminRepairQuoteDraftController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CollectAdminOnSitePaymentController;
+use App\Http\Controllers\Api\V1\Admin\Booking\CreateAdminRepairQuoteController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\PreviewAdminBookingCancellationController;
 use App\Http\Controllers\Api\V1\Admin\Booking\RescheduleAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\ReviseAdminRepairQuoteController;
+use App\Http\Controllers\Api\V1\Admin\Booking\SendAdminRepairQuoteController;
 use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\UpdateAdminRepairQuoteDraftController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ApproveContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\CancelContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\GetAdminContractController;
@@ -79,6 +84,7 @@ use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceOptionChoiceAttrib
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminSpecializationsController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceCatalogPolicyController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceInspectionQuotePolicyController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceOriginalPriceController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServicePaymentMethodsController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceSpecializationController;
@@ -118,9 +124,13 @@ use App\Http\Controllers\Api\V1\Auth\VerifyLoginOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
+use App\Http\Controllers\Api\V1\Booking\AcceptRepairQuoteController;
 use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
 use App\Http\Controllers\Api\V1\Booking\CreatePayOnSiteBookingController;
+use App\Http\Controllers\Api\V1\Booking\CreateRepairQuoteBalancePaymentController;
+use App\Http\Controllers\Api\V1\Booking\DeclineRepairQuoteController;
 use App\Http\Controllers\Api\V1\Booking\GetBookingController;
+use App\Http\Controllers\Api\V1\Booking\GetRepairQuoteController;
 use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
 use App\Http\Controllers\Api\V1\Booking\PreviewBookingCancellationController;
 use App\Http\Controllers\Api\V1\Cart\AddCartItemController;
@@ -218,6 +228,16 @@ Route::middleware('auth.customer')->group(function () {
     // successful-payment substitute, mirrors POST /v1/payments' own
     // Idempotency-Key convention exactly.
     Route::post('/v1/bookings/pay-on-site', CreatePayOnSiteBookingController::class);
+
+    // BLUE V1 Phase B25 - post-inspection repair quote read/accept/decline
+    // and the remaining-balance online payment. Ownership-scoped exactly
+    // like GET /v1/bookings/{booking} above - see App\Actions\Booking\
+    // GetRepairQuoteAction/AcceptRepairQuoteAction/DeclineRepairQuoteAction
+    // and App\Actions\Payment\CreateRepairQuoteBalancePaymentAction.
+    Route::get('/v1/bookings/{booking}/quote', GetRepairQuoteController::class);
+    Route::post('/v1/bookings/{booking}/quote/accept', AcceptRepairQuoteController::class);
+    Route::post('/v1/bookings/{booking}/quote/decline', DeclineRepairQuoteController::class);
+    Route::post('/v1/bookings/{booking}/quote/pay-balance', CreateRepairQuoteBalancePaymentController::class);
 
     // BLUE V1 Phase 10A - Customer Properties.
     Route::get('/v1/properties', ListPropertiesController::class);
@@ -370,6 +390,22 @@ Route::middleware('auth.admin')->group(function () {
     // weaker path just because no Stripe call is involved. See
     // App\Actions\Admin\Booking\AdminCollectOnSitePaymentAction's docblock.
     Route::post('/v1/admin/bookings/{booking}/collect-on-site-payment', CollectAdminOnSitePaymentController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
+    // BLUE V1 Phase B25 - post-inspection repair quote creation/draft-edit/
+    // send/revise/cancel. Every one of these is a financial mutation on an
+    // existing Booking, exactly like collect-on-site-payment above, so all
+    // five share the same `bookings.manage` + `admin.stepup` bar - never a
+    // new capability, never a weaker path. See App\Actions\Admin\Booking\
+    // AdminCreateRepairQuoteAction and its four sibling Actions.
+    Route::post('/v1/admin/booking-items/{bookingItem}/repair-quotes', CreateAdminRepairQuoteController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
+    Route::patch('/v1/admin/repair-quotes/{quote}', UpdateAdminRepairQuoteDraftController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
+    Route::post('/v1/admin/repair-quotes/{quote}/send', SendAdminRepairQuoteController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
+    Route::post('/v1/admin/repair-quotes/{quote}/revise', ReviseAdminRepairQuoteController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
+    Route::post('/v1/admin/repair-quotes/{quote}/cancel', CancelAdminRepairQuoteDraftController::class)
         ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
     // BLUE V1 Phase B19 - Reschedule Booking: moves a non-terminal Booking
     // to a different appointment_slot through the same capacity/hold model
@@ -586,6 +622,13 @@ Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/payment-method-types', ListAdminPaymentMethodTypesController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::post('/v1/admin/services/{service}/payment-methods', SetAdminServicePaymentMethodsController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    // BLUE V1 Phase B25 - whether this Service participates in the
+    // inspection -> follow-up-quote -> historical-credit workflow. A
+    // services.manage mutation exactly like payment-methods above - see
+    // App\Actions\Admin\Service\AdminSetServiceInspectionQuotePolicyAction.
+    Route::patch('/v1/admin/services/{service}/inspection-quote-policy', SetAdminServiceInspectionQuotePolicyController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     Route::get('/v1/admin/service-content-section-types', ListAdminServiceContentSectionTypesController::class)

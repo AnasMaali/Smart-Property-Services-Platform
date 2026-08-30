@@ -12,6 +12,7 @@ use App\Support\Payment\Gateway\NormalizedPaymentOutcome;
 use App\Support\Payment\Gateway\NormalizedRefundEvent;
 use App\Support\Payment\Gateway\PaymentGateway;
 use App\Support\Payment\PaymentAttemptStateMachine;
+use App\Support\Payment\RepairQuoteBalancePaymentStateMachine;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -60,6 +61,7 @@ class ProcessPaymentWebhookAction
         private readonly PaymentGateway $gateway,
         private readonly PaymentAttemptStateMachine $stateMachine = new PaymentAttemptStateMachine,
         private readonly CreateBookingFromSuccessfulPaymentAction $bookingConversion = new CreateBookingFromSuccessfulPaymentAction,
+        private readonly RepairQuoteBalancePaymentStateMachine $quoteBalanceStateMachine = new RepairQuoteBalancePaymentStateMachine,
     ) {}
 
     /**
@@ -264,9 +266,7 @@ class ProcessPaymentWebhookAction
         $attempt = $this->resolveAttempt($event);
 
         if ($attempt === null) {
-            $this->finalizeLedger($ledgerId, 'FAILED', null, 'PAYMENT_ATTEMPT_NOT_FOUND', 'No local payment attempt matched this event.');
-
-            return null;
+            return $this->processAgainstQuoteBalanceAttempt($event, $ledgerId);
         }
 
         $locked = DB::table('payment_attempts')->where('id', $attempt->id)->lockForUpdate()->first();
@@ -305,6 +305,157 @@ class ProcessPaymentWebhookAction
 
         if ($event->checkoutReference !== null) {
             return DB::table('payment_attempts')->where('checkout_reference', $event->checkoutReference)->first();
+        }
+
+        return null;
+    }
+
+    /**
+     * BLUE V1 Phase B25 - the SAME event this codebase already routes to
+     * `payment_attempts` above (checked first, unconditionally - a Stripe
+     * PaymentIntent id is globally unique, so there is never any ambiguity
+     * about which table a given `provider_session_reference` belongs to)
+     * falls back to `repair_quote_payment_attempts` when no ordinary Cart
+     * checkout attempt matches. Mirrors `processRefundEvent()`'s own
+     * separate resolve -> lock -> branch -> finalizeLedger shape against a
+     * different target table - never `payment_attempts` itself, and never
+     * a second webhook endpoint or a second PaymentGateway.
+     *
+     * `payment_webhook_events.payment_attempt_id` is FK-constrained to
+     * `payment_attempts` specifically, so it is deliberately left `null`
+     * for a quote-balance event (a `repair_quote_payment_attempts.id`
+     * would violate that FK) - the ledger's own `event_type`/
+     * `provider_transaction_reference` columns remain sufficient for an
+     * operator to trace it, and `repair_quote_payment_attempts` itself
+     * remains directly queryable by `provider_session_reference`.
+     */
+    private function processAgainstQuoteBalanceAttempt(NormalizedPaymentEvent $event, string $ledgerId): ?string
+    {
+        $attempt = $this->resolveQuoteBalanceAttempt($event);
+
+        if ($attempt === null) {
+            $this->finalizeLedger($ledgerId, 'FAILED', null, 'PAYMENT_ATTEMPT_NOT_FOUND', 'No local payment attempt matched this event.');
+
+            return null;
+        }
+
+        $locked = DB::table('repair_quote_payment_attempts')->where('id', $attempt->id)->lockForUpdate()->first();
+
+        if ($locked === null) {
+            $this->finalizeLedger($ledgerId, 'FAILED', null, 'PAYMENT_ATTEMPT_NOT_FOUND', 'No local payment attempt matched this event.');
+
+            return null;
+        }
+
+        $now = now();
+
+        match ($event->outcome) {
+            NormalizedPaymentOutcome::SUCCEEDED => $this->handleQuoteBalanceSucceeded($locked, $event, $now, $ledgerId),
+            NormalizedPaymentOutcome::CANCELED => $this->handleQuoteBalanceCanceled($locked, $event, $now, $ledgerId),
+            NormalizedPaymentOutcome::NON_TERMINAL => $this->handleQuoteBalanceNonTerminal($locked, $event, $ledgerId),
+            NormalizedPaymentOutcome::UNEXPECTED_NON_TERMINAL => $this->handleQuoteBalanceUnexpectedNonTerminal($locked, $event, $ledgerId),
+            NormalizedPaymentOutcome::UNRECOGNIZED => $this->finalizeLedger($ledgerId, 'IGNORED', null, null, null),
+        };
+
+        // Never fed to attemptBookingConversion() - a repair-quote balance
+        // payment never creates a Booking (the Booking already exists);
+        // its own funding status is always derived live, never written
+        // back onto `booking_item_repair_quotes` - see App\Support\
+        // Booking\RepairQuoteFundingStatus.
+        return null;
+    }
+
+    private function resolveQuoteBalanceAttempt(NormalizedPaymentEvent $event): ?object
+    {
+        if ($event->providerSessionReference !== null) {
+            $row = DB::table('repair_quote_payment_attempts')
+                ->where('provider_code', $this->gateway->providerCode())
+                ->where('provider_session_reference', $event->providerSessionReference)
+                ->first();
+
+            if ($row !== null) {
+                return $row;
+            }
+        }
+
+        if ($event->checkoutReference !== null) {
+            return DB::table('repair_quote_payment_attempts')->where('reference', $event->checkoutReference)->first();
+        }
+
+        return null;
+    }
+
+    private function handleQuoteBalanceSucceeded(object $locked, NormalizedPaymentEvent $event, Carbon $now, string $ledgerId): void
+    {
+        $reason = $this->quoteBalanceStateMachine->isPending($locked) ? $this->determineQuoteBalanceReconciliationReason($locked, $event) : null;
+
+        $transitioned = $this->quoteBalanceStateMachine->transitionToSuccessful(
+            $locked,
+            $now,
+            $event->amount ?? $locked->requested_amount,
+            $event->providerTransactionReference,
+            $event->providerStatusCode,
+            $event->paymentMethodType,
+            requiresReconciliation: $reason !== null,
+            reconciliationReasonCode: $reason,
+        );
+
+        $this->finalizeLedger($ledgerId, $transitioned ? 'PROCESSED' : 'IGNORED', null, null, null);
+    }
+
+    private function handleQuoteBalanceCanceled(object $locked, NormalizedPaymentEvent $event, Carbon $now, string $ledgerId): void
+    {
+        $transitioned = $this->quoteBalanceStateMachine->transitionToCancelled($locked, $now, $event->providerStatusCode);
+
+        $this->finalizeLedger($ledgerId, $transitioned ? 'PROCESSED' : 'IGNORED', null, null, null);
+    }
+
+    private function handleQuoteBalanceNonTerminal(object $locked, NormalizedPaymentEvent $event, string $ledgerId): void
+    {
+        if ($this->quoteBalanceStateMachine->isPending($locked)) {
+            $update = ['updated_at' => now()->format('Y-m-d H:i:s.u')];
+
+            if ($event->providerStatusCode !== null) {
+                $update['provider_status_code'] = $event->providerStatusCode;
+            }
+
+            DB::table('repair_quote_payment_attempts')->where('id', $locked->id)->update($update);
+        }
+
+        $this->finalizeLedger($ledgerId, 'PROCESSED', null, null, null);
+    }
+
+    private function handleQuoteBalanceUnexpectedNonTerminal(object $locked, NormalizedPaymentEvent $event, string $ledgerId): void
+    {
+        if ($this->quoteBalanceStateMachine->isPending($locked)) {
+            DB::table('repair_quote_payment_attempts')->where('id', $locked->id)->update([
+                'provider_status_code' => $event->providerStatusCode,
+                'requires_reconciliation' => 1,
+                'reconciliation_reason_code' => 'UNEXPECTED_PROVIDER_STATE',
+                'updated_at' => now()->format('Y-m-d H:i:s.u'),
+            ]);
+        }
+
+        $this->finalizeLedger($ledgerId, 'PROCESSED', null, null, null);
+    }
+
+    /**
+     * Simplified counterpart to determineReconciliationReason() - there is
+     * no Cart/Appointment Hold/checkout_snapshot for a quote-balance
+     * attempt, so only amount/currency can ever mismatch.
+     */
+    private function determineQuoteBalanceReconciliationReason(object $locked, NormalizedPaymentEvent $event): ?string
+    {
+        if ($event->amount !== null && bccomp($event->amount, (string) $locked->requested_amount, 6) !== 0) {
+            return 'AMOUNT_MISMATCH';
+        }
+
+        if ($event->currencyCode !== null) {
+            $currencyCode = DB::table('currencies')->where('id', $locked->currency_id)->value('code');
+
+            if ($event->currencyCode !== $currencyCode) {
+                return 'CURRENCY_MISMATCH';
+            }
         }
 
         return null;
