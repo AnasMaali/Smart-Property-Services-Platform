@@ -2,6 +2,7 @@
 
 namespace App\Support\Admin;
 
+use App\Support\Payment\ServicePaymentPolicy;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingSchemeRepository;
@@ -147,6 +148,7 @@ final class AdminServicePresenter
             'pricing' => self::pricingSummaryFor($serviceId, $row->original_price === null ? null : (string) $row->original_price),
             'content_sections' => self::contentSectionsFor($serviceId),
             'checkpoint_groups' => self::checkpointGroupsFor($serviceId),
+            'payment_policy' => self::paymentPolicyFor($serviceId),
         ];
     }
 
@@ -558,5 +560,25 @@ final class AdminServicePresenter
                 'checkpoints' => $checkpoints->all(),
             ];
         })->values()->all();
+    }
+
+    /**
+     * BLUE V1 Phase B24 - the Service's current allowed payment methods,
+     * shown to Admin regardless of any read/write boundary the customer
+     * side has (there is none here - `App\Actions\Admin\Service\
+     * AdminSetServicePaymentMethodsAction` is this domain's canonical
+     * writer). `requires_prepayment` is always the COMPUTED absence of
+     * PAY_ON_SITE - see App\Support\Payment\ServicePaymentPolicy.
+     *
+     * @return array<string, mixed>
+     */
+    private static function paymentPolicyFor(string $serviceIdBinary): array
+    {
+        $methods = ServicePaymentPolicy::allowedMethodsFor($serviceIdBinary)->values()->all();
+
+        return [
+            'allowed_methods' => $methods,
+            'requires_prepayment' => ServicePaymentPolicy::requiresPrepayment($methods),
+        ];
     }
 }

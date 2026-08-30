@@ -157,6 +157,7 @@ class GetCheckoutTest extends TestCase
         $this->assertSame([
             'cart_uuid', 'location', 'appointment', 'pricing_status', 'required_context',
             'requires_quote', 'ready_for_payment', 'currency', 'items', 'total',
+            'available_payment_methods', 'requires_prepayment',
         ], array_keys($checkout));
 
         $this->assertSame([

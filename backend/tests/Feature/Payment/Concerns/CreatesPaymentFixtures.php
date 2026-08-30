@@ -55,7 +55,7 @@ trait CreatesPaymentFixtures
         return $customer;
     }
 
-    private function createPayment(string $accessToken, ?string $idempotencyKey = null): TestResponse
+    private function createPayment(string $accessToken, ?string $idempotencyKey = null, ?string $paymentMethod = 'CARD'): TestResponse
     {
         $headers = ['Authorization' => 'Bearer '.$accessToken];
 
@@ -63,7 +63,9 @@ trait CreatesPaymentFixtures
             $headers['Idempotency-Key'] = $idempotencyKey;
         }
 
-        return $this->postJson('/api/v1/payments', [], $headers);
+        $body = $paymentMethod === null ? [] : ['payment_method' => $paymentMethod];
+
+        return $this->postJson('/api/v1/payments', $body, $headers);
     }
 
     private function getPayment(string $accessToken, string $paymentUuid): TestResponse

@@ -67,6 +67,11 @@ if (page) {
     const catalogPolicyForm = page.querySelector('[data-catalog-policy-form]');
     const catalogPolicyError = catalogPolicyForm.querySelector('[data-catalog-policy-error]');
 
+    const paymentPolicyForm = page.querySelector('[data-payment-policy-form]');
+    const paymentPolicyError = paymentPolicyForm.querySelector('[data-payment-policy-error]');
+    const paymentMethodsCheckboxes = paymentPolicyForm.querySelector('[data-payment-methods-checkboxes]');
+    const paymentPolicyRequiresPrepaymentEl = paymentPolicyForm.querySelector('[data-payment-policy-requires-prepayment]');
+
     const contentSectionsEl = page.querySelector('[data-content-sections]');
     const contentSectionsEmptyEl = page.querySelector('[data-content-sections-empty]');
     const addContentSectionForm = page.querySelector('[data-add-content-section-form]');
@@ -797,6 +802,7 @@ if (page) {
         renderContentSections(service.content_sections);
         renderCheckpointGroups(service.checkpoint_groups);
         populateCheckpointGroupSelect(service.checkpoint_groups);
+        renderPaymentPolicy(service.payment_policy);
     }
 
     function onToggleActive(isCurrentlyActive) {
@@ -1196,16 +1202,19 @@ if (page) {
         });
     }
 
+    let paymentMethodTypes = [];
+
     async function loadLookups() {
         populateSelect(optionTypeSelect, OPTION_TYPES, { valueKey: 'code', labelKey: 'label' });
 
         try {
-            const [categoriesResponse, specializationsResponse, sectionTypesResponse, checkpointActionTypesResponse, attributeTypesResponse] = await Promise.all([
+            const [categoriesResponse, specializationsResponse, sectionTypesResponse, checkpointActionTypesResponse, attributeTypesResponse, paymentMethodTypesResponse] = await Promise.all([
                 request('/api/v1/admin/service-categories'),
                 request('/api/v1/admin/specializations'),
                 request('/api/v1/admin/service-content-section-types'),
                 request('/api/v1/admin/service-checkpoint-action-types'),
                 request('/api/v1/admin/service-option-choice-attribute-types'),
+                request('/api/v1/admin/payment-method-types'),
             ]);
 
             populateSelect(changeCategorySelect, categoriesResponse.data.service_categories ?? [], { valueKey: 'id', labelKey: 'name' });
@@ -1213,12 +1222,64 @@ if (page) {
             populateSelect(contentSectionTypeSelect, sectionTypesResponse.data.section_types ?? [], { valueKey: 'code', labelKey: 'name' });
             populateSelect(checkpointActionTypeSelect, checkpointActionTypesResponse.data.action_types ?? [], { valueKey: 'code', labelKey: 'name' });
             populateSelect(choiceAttributeTypeSelect, attributeTypesResponse.data.attribute_types ?? [], { valueKey: 'code', labelKey: 'name' });
+            paymentMethodTypes = (paymentMethodTypesResponse.data.payment_method_types ?? []).filter((type) => type.is_active);
+
+            // loadLookups() and loadService() run concurrently (see the
+            // bottom of this file) - if the Service already loaded first,
+            // re-render its payment policy now that the type list exists.
+            if (latestService) {
+                renderPaymentPolicy(latestService.payment_policy);
+            }
         } catch {
             // Non-fatal: the read-only service detail (and its already-set
             // category/specializations) still render fine; only the "change
             // to..." dropdowns stay empty.
         }
     }
+
+    // --- Payment policy ---------------------------------------------------------
+
+    function renderPaymentPolicy(policy) {
+        const allowedCodes = new Set(policy.allowed_methods.map((m) => m.code));
+
+        paymentMethodsCheckboxes.replaceChildren(...paymentMethodTypes.map((type) => {
+            const label = document.createElement('label');
+            label.className = 'flex items-center gap-1.5';
+
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = type.code;
+            input.checked = allowedCodes.has(type.code);
+            input.className = 'rounded border-slate-300';
+
+            label.append(input, document.createTextNode(type.name));
+
+            return label;
+        }));
+
+        paymentPolicyRequiresPrepaymentEl.textContent = policy.requires_prepayment
+            ? 'Requires online prepayment (Pay on Site is not allowed).'
+            : 'Pay on Site is allowed - online prepayment is not required.';
+    }
+
+    paymentPolicyForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        paymentPolicyError.classList.add('hidden');
+
+        const selected = Array.from(paymentMethodsCheckboxes.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+
+        try {
+            await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/payment-methods`, {
+                method: 'POST',
+                body: { payment_methods: selected },
+            });
+
+            await loadService();
+        } catch (error) {
+            paymentPolicyError.textContent = messageOf(error, 'Unable to save the payment policy.');
+            paymentPolicyError.classList.remove('hidden');
+        }
+    });
 
     function populateCheckpointGroupSelect(groups) {
         checkpointGroupSelect.replaceChildren();

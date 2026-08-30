@@ -166,7 +166,7 @@ final class CancelBookingAction
              */
             if (! in_array(
                 $currentStatus,
-                ['PAID', 'ASSIGNED', 'IN_PROGRESS', 'CANCELLED'],
+                ['PAID', 'CONFIRMED', 'ASSIGNED', 'IN_PROGRESS', 'CANCELLED'],
                 true
             )) {
                 return $this->conflict(
@@ -201,22 +201,31 @@ final class CancelBookingAction
             }
 
             /*
-             * A CONTRACT-sourced Booking (BLUE V1 Phase 10F) has no
-             * payment_attempt_id at all - it was never paid for directly,
-             * so there is nothing to refund. Cancelling it only needs to
-             * move the Booking/Booking Item/assignment state; the
-             * refund-eligibility snapshot below is skipped entirely and
-             * stays permanently NULL, which chk_bookings_cancellation_refund_data
-             * already allows. The entitlement this Booking consumed is
+             * A Booking with no `payment_attempt_id` at all was never paid
+             * for directly through this Action's normal Stripe-refund path
+             * - there is nothing to automatically refund. Two distinct BLUE
+             * V1 sources share this shape: a CONTRACT-sourced Booking
+             * (Phase 10F - the entitlement this Booking consumed is
              * automatically and permanently freed the moment its status
-             * stops being counted as "used" - see
-             * App\Support\Contract\ContractEntitlementCalculator's docblock
-             * - with no extra write required here. BLUE V1 Phase B20's
-             * appointment-started cancellation restriction and automatic
-             * Stripe refund therefore never apply to a Contract Booking
-             * either - its cancellation behavior is entirely unchanged.
+             * stops being counted as "used", see App\Support\Contract\
+             * ContractEntitlementCalculator's docblock, with no extra write
+             * required here) and a PAY_ON_SITE-sourced Booking (Phase B24 -
+             * see App\Actions\Booking\CreatePayOnSiteBookingAction). For
+             * both, cancelling only needs to move the Booking/Booking
+             * Item/assignment state; the refund-eligibility snapshot below
+             * is skipped entirely and stays permanently NULL, which
+             * chk_bookings_cancellation_refund_data already allows. BLUE V1
+             * Phase B20's appointment-started cancellation restriction and
+             * automatic Stripe refund therefore never apply to either -
+             * their cancellation behavior is otherwise entirely unchanged.
+             * A PAY_ON_SITE Booking whose cash was ALREADY collected
+             * (App\Actions\Admin\Booking\AdminCollectOnSitePaymentAction)
+             * additionally flags its settlement `refund_status =
+             * MANUAL_REFUND_REQUIRED` below - never an automated refund for
+             * physical cash, and never silently reported as already
+             * returned.
              */
-            $isContractBooking = $booking->service_contract_id !== null;
+            $hasNoPaymentAttempt = $booking->payment_attempt_id === null;
 
             /*
              * Payment and appointment are read only (STANDARD Bookings
@@ -229,7 +238,7 @@ final class CancelBookingAction
             $payment = null;
             $slot = null;
 
-            if (! $isContractBooking) {
+            if (! $hasNoPaymentAttempt) {
                 $payment = DB::table('payment_attempts')
                     ->where('id', $booking->payment_attempt_id)
                     ->first([
@@ -275,7 +284,7 @@ final class CancelBookingAction
              */
             $refundEvaluation = null;
 
-            if (! $isContractBooking && $currentStatus !== 'CANCELLED') {
+            if (! $hasNoPaymentAttempt && $currentStatus !== 'CANCELLED') {
                 // BLUE V1 Phase B20 fix - payment_attempts.confirmed_amount
                 // is the ONLY financial source of truth for an automated
                 // refund. A STANDARD Booking only ever exists from a payment
@@ -333,6 +342,19 @@ final class CancelBookingAction
                     'reason' => $reason,
                     'changed_at' => $now->format('Y-m-d H:i:s.u'),
                 ]);
+
+                // BLUE V1 Phase B24 - a PAY_ON_SITE Booking whose cash was
+                // ALREADY collected before this cancellation is never given
+                // an automated refund (physical cash cannot be
+                // electronically returned) - flag it honestly instead of
+                // silently implying nothing is owed back. An uncollected
+                // settlement (collected_at still NULL) needs no flag: there
+                // is nothing to refund.
+                DB::table('booking_on_site_settlements')
+                    ->where('booking_id', $bookingIdBinary)
+                    ->whereNotNull('collected_at')
+                    ->whereNull('refund_status')
+                    ->update(['refund_status' => 'MANUAL_REFUND_REQUIRED', 'updated_at' => $now->format('Y-m-d H:i:s.u')]);
             }
 
             /*
@@ -402,7 +424,7 @@ final class CancelBookingAction
              * never App\Support\Booking\RefundEligibilityCalculator
              * directly.
              */
-            if ($isContractBooking) {
+            if ($hasNoPaymentAttempt) {
                 $refund = null;
             } elseif ($currentStatus === 'CANCELLED') {
                 $refund = [

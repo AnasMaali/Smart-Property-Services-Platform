@@ -2,6 +2,7 @@
 
 namespace App\Actions\ServiceCatalog;
 
+use App\Support\Payment\ServicePaymentPolicy;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingStatus;
@@ -64,9 +65,10 @@ class ListCategoryServicesAction
 
         $serviceUuids = $services->map(fn ($service) => UuidBinary::toString($service->id))->all();
         $pricingPreviewsByServiceUuid = $this->pricingEngine->previewMany($serviceUuids, $currencyCode);
+        $paymentMethodsByServiceId = ServicePaymentPolicy::allowedMethodsForMany($services->pluck('id')->all());
 
         $servicePayloads = $services
-            ->map(function ($service) use ($primaryImagesByServiceId, $pricingPreviewsByServiceUuid, $currency) {
+            ->map(function ($service) use ($primaryImagesByServiceId, $pricingPreviewsByServiceUuid, $currency, $paymentMethodsByServiceId) {
                 $key = bin2hex($service->id);
                 $primaryImage = $primaryImagesByServiceId->get($key);
                 $pricingPreview = $pricingPreviewsByServiceUuid[UuidBinary::toString($service->id)];
@@ -81,6 +83,14 @@ class ListCategoryServicesAction
                     'is_featured' => (bool) $service->is_featured,
                     'estimated_duration_minutes' => $service->estimated_duration_minutes === null ? null : (int) $service->estimated_duration_minutes,
                     'quantity' => ['min' => (int) $service->min_quantity, 'max' => (int) $service->max_quantity],
+                    // BLUE V1 Phase B24 - lightweight-only ("requires_prepayment")
+                    // on the list screen, per the phase spec - the full allowed
+                    // -methods list is reserved for the Service-detail screen
+                    // (App\Actions\ServiceCatalog\GetServiceDetailsAction) to
+                    // avoid a category list needing the full breakdown.
+                    'requires_prepayment' => ServicePaymentPolicy::requiresPrepayment(
+                        $paymentMethodsByServiceId->get($key, collect())
+                    ),
                     // BLUE V1 Phase B23 - additive two-price display block,
                     // computed from the SAME batched previewMany() call
                     // already made above for `pricing_preview` - never a

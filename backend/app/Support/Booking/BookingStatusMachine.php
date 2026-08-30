@@ -20,8 +20,19 @@ use Illuminate\Support\Facades\DB;
  * (database/blue_v1_seed.sql "22. BOOKING STATUSES") and
  * docs/03-features-and-requirements/08-request-status-tracking.md:
  *
- *   PAID -> ASSIGNED -> IN_PROGRESS -> COMPLETED
- *   {PAID, ASSIGNED, IN_PROGRESS} -> CANCELLED
+ *   {PAID, CONFIRMED} -> ASSIGNED -> IN_PROGRESS -> COMPLETED
+ *   {PAID, CONFIRMED, ASSIGNED, IN_PROGRESS} -> CANCELLED
+ *
+ * BLUE V1 Phase B24 adds CONFIRMED (a Booking accepted/scheduled for
+ * on-site cash payment - see App\Actions\Booking\
+ * CreatePayOnSiteBookingAction) as a second valid entry status alongside
+ * PAID, treated identically for every downstream operational transition -
+ * technician assignment/fulfillment/cancellation eligibility never cares
+ * WHETHER a Booking is prepaid or pay-on-site, only that it is confirmed.
+ * Never PAID -> CONFIRMED or CONFIRMED -> PAID: the two are permanently
+ * distinct historical facts about how the Booking was created (see
+ * `bookings.payment_method_code`), not a lifecycle stage a Booking moves
+ * through.
  *
  * No other transition is structurally possible. COMPLETED and CANCELLED are
  * both is_terminal=1 in the seed data, so neither method here ever accepts
@@ -31,7 +42,7 @@ final class BookingStatusMachine
 {
     public function transitionToAssigned(object $booking, Carbon $at): bool
     {
-        return $this->transition($booking, $at, from: 'PAID', to: 'ASSIGNED');
+        return $this->transition($booking, $at, from: ['PAID', 'CONFIRMED'], to: 'ASSIGNED');
     }
 
     public function transitionToInProgress(object $booking, Carbon $at): bool
@@ -60,6 +71,7 @@ final class BookingStatusMachine
     {
         if (! in_array((int) $booking->status_id, [
             BookingStatuses::id('PAID'),
+            BookingStatuses::id('CONFIRMED'),
             BookingStatuses::id('ASSIGNED'),
             BookingStatuses::id('IN_PROGRESS'),
         ], true)) {
@@ -74,10 +86,17 @@ final class BookingStatusMachine
         return (int) $booking->status_id === BookingStatuses::id($code);
     }
 
-    private function transition(object $booking, Carbon $at, ?string $from, string $to, ?string $timestampColumn = null): bool
+    /**
+     * @param  string|array<int, string>|null  $from
+     */
+    private function transition(object $booking, Carbon $at, string|array|null $from, string $to, ?string $timestampColumn = null): bool
     {
-        if ($from !== null && (int) $booking->status_id !== BookingStatuses::id($from)) {
-            return false;
+        if ($from !== null) {
+            $allowedIds = array_map(BookingStatuses::id(...), is_array($from) ? $from : [$from]);
+
+            if (! in_array((int) $booking->status_id, $allowedIds, true)) {
+                return false;
+            }
         }
 
         $timestamp = $at->format('Y-m-d H:i:s.u');

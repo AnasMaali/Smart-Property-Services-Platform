@@ -2,6 +2,7 @@
 
 namespace App\Actions\ServiceCatalog;
 
+use App\Support\Payment\ServicePaymentPolicy;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Uuid\UuidBinary;
@@ -126,6 +127,7 @@ class GetServiceDetailsAction
             'options' => $this->loadOptions($service->id, $now),
             'content_sections' => $this->loadContentSections($service->id),
             'checkpoint_groups' => $this->loadCheckpointGroups($service->id),
+            'payment_policy' => $this->paymentPolicyPayload($service->id),
         ];
     }
 
@@ -384,5 +386,25 @@ class GetServiceDetailsAction
         }
 
         return $payload;
+    }
+
+    /**
+     * BLUE V1 Phase B24 - the authoritative allowed-payment-methods block
+     * for this single Service (never internal DB ids, never Stripe
+     * configuration). A Cart mixing several Services must instead read the
+     * INTERSECTION from Checkout (App\Support\Checkout\
+     * CheckoutPaymentPolicy) - this per-Service block is what a shopper
+     * sees before adding anything to a Cart.
+     *
+     * @return array<string, mixed>
+     */
+    private function paymentPolicyPayload(string $serviceIdBinary): array
+    {
+        $methods = ServicePaymentPolicy::allowedMethodsFor($serviceIdBinary)->values()->all();
+
+        return [
+            'requires_prepayment' => ServicePaymentPolicy::requiresPrepayment($methods),
+            'allowed_methods' => array_map(fn ($m) => ['code' => $m['code'], 'label' => $m['name']], $methods),
+        ];
     }
 }

@@ -225,6 +225,8 @@ final class AdminBookingPresenter
             ->where('payment_attempts.id', $row->payment_attempt_id)
             ->first(['payment_statuses.code as status_code', 'payment_attempts.requested_amount', 'payment_attempts.confirmed_amount', 'payment_attempts.provider_code', 'payment_attempts.provider_transaction_reference', 'payment_attempts.successful_at']);
 
+        $onSiteSettlement = DB::table('booking_on_site_settlements')->where('booking_id', $row->id)->first();
+
         $items = DB::table('booking_items')
             ->join('booking_item_statuses', 'booking_item_statuses.id', '=', 'booking_items.status_id')
             ->where('booking_items.booking_id', $row->id)
@@ -333,6 +335,7 @@ final class AdminBookingPresenter
                 'decimal_places' => (int) $currency->minor_unit,
             ],
             'total' => $total,
+            'payment_method' => $row->payment_method_code,
             'payment' => $payment === null ? null : [
                 'uuid' => UuidBinary::toString($row->payment_attempt_id),
                 'status' => $payment->status_code,
@@ -340,6 +343,13 @@ final class AdminBookingPresenter
                 'provider' => $payment->provider_code,
                 'reference' => $payment->provider_transaction_reference,
                 'successful_at' => $payment->successful_at === null ? null : Carbon::parse($payment->successful_at)->toIso8601String(),
+            ],
+            'on_site_settlement' => $onSiteSettlement === null ? null : [
+                'amount_due' => (string) $onSiteSettlement->amount_due,
+                'amount_collected' => $onSiteSettlement->amount_collected === null ? null : (string) $onSiteSettlement->amount_collected,
+                'collection_status' => $onSiteSettlement->collected_at === null ? 'PENDING' : 'COLLECTED',
+                'collected_at' => $onSiteSettlement->collected_at === null ? null : Carbon::parse($onSiteSettlement->collected_at)->toIso8601String(),
+                'refund_status' => $onSiteSettlement->refund_status,
             ],
             'location' => $location === null ? null : self::locationPayload($location),
             'appointment' => $slot === null ? null : self::appointmentPayload($slot),

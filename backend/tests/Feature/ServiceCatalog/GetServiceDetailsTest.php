@@ -325,7 +325,7 @@ class GetServiceDetailsTest extends TestCase
 
         $data = $response->json('data');
         $this->assertSame(
-            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'is_featured', 'estimated_duration_minutes', 'quantity', 'category', 'media', 'pricing_preview', 'pricing', 'options', 'content_sections', 'checkpoint_groups'],
+            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'is_featured', 'estimated_duration_minutes', 'quantity', 'category', 'media', 'pricing_preview', 'pricing', 'options', 'content_sections', 'checkpoint_groups', 'payment_policy'],
             array_keys($data)
         );
         $this->assertSame(['min', 'max'], array_keys($data['quantity']));

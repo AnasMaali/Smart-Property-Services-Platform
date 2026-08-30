@@ -165,6 +165,20 @@ trait CreatesCartFixtures
             $this->makeCartEligible($uuid);
         }
 
+        // BLUE V1 Phase B24 - every QA fixture Service defaults to the
+        // exact same online-payment policy a real pre-Phase-B24 Service
+        // gets from the migration's own backwards-compatible backfill
+        // (CARD + APPLE_PAY allowed, PAY_ON_SITE not allowed) - so every
+        // existing Cart/Checkout/Payment test that predates Phase B24
+        // keeps working unchanged. Pass `payment_methods: false` to build a
+        // Service with no payment policy at all, or `payment_methods:
+        // ['PAY_ON_SITE']` (etc.) for a specific policy.
+        $paymentMethodCodes = $overrides['payment_methods'] ?? ['CARD', 'APPLE_PAY'];
+
+        if ($paymentMethodCodes !== false) {
+            $this->makePaymentMethodsAllowed($uuid, $paymentMethodCodes);
+        }
+
         return ['uuid' => $uuid, 'slug' => 'cart-qa-service-'.$sequence];
     }
 
@@ -175,6 +189,26 @@ trait CreatesCartFixtures
             'capability_type_id' => $this->cartEligibleCapabilityId,
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * @param  array<int, string>  $methodCodes
+     */
+    private function makePaymentMethodsAllowed(string $serviceUuid, array $methodCodes): void
+    {
+        $now = now();
+        $typeIds = DB::table('payment_method_types')->whereIn('code', $methodCodes)->pluck('id', 'code');
+
+        foreach ($typeIds as $typeId) {
+            DB::table('service_payment_methods')->insert([
+                'id' => UuidBinary::toBinary(UuidBinary::generate()),
+                'service_id' => UuidBinary::toBinary($serviceUuid),
+                'payment_method_type_id' => $typeId,
+                'is_active' => 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
     }
 
     private function createCartPricingScheme(string $serviceUuid, array $overrides = []): string

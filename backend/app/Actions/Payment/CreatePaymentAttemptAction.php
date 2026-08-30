@@ -59,10 +59,14 @@ class CreatePaymentAttemptAction
     /**
      * @return array<string, mixed>
      */
-    public function handle(string $userUuid, string $rawIdempotencyKey): array
+    public function handle(string $userUuid, string $rawIdempotencyKey, string $paymentMethod): array
     {
         if (! Str::isUuid($rawIdempotencyKey)) {
             return $this->unprocessable('The Idempotency-Key header must be a valid UUID.');
+        }
+
+        if (! in_array($paymentMethod, ['CARD', 'APPLE_PAY'], true)) {
+            return $this->unprocessable('The given data was invalid.', ['payment_method' => ['payment_method must be CARD or APPLE_PAY.']]);
         }
 
         $userIdBinary = UuidBinary::toBinary($userUuid);
@@ -79,7 +83,7 @@ class CreatePaymentAttemptAction
         }
 
         try {
-            $committed = DB::transaction(fn () => $this->commitTransactionA($userUuid, $userIdBinary, $idempotencyHash));
+            $committed = DB::transaction(fn () => $this->commitTransactionA($userUuid, $userIdBinary, $idempotencyHash, $paymentMethod));
         } catch (UniqueConstraintViolationException $e) {
             return $this->handleInsertRace($e, $idempotencyHash, $userIdBinary);
         }
@@ -176,7 +180,7 @@ class CreatePaymentAttemptAction
     /**
      * @return array<string, mixed>
      */
-    private function commitTransactionA(string $userUuid, string $userIdBinary, string $idempotencyHash): array
+    private function commitTransactionA(string $userUuid, string $userIdBinary, string $idempotencyHash, string $paymentMethod): array
     {
         $now = now();
 
@@ -266,6 +270,18 @@ class CreatePaymentAttemptAction
 
         if ($presented['ready_for_payment'] !== true) {
             return $this->unprocessable('Checkout is not ready for payment.');
+        }
+
+        // BLUE V1 Phase B24 - `available_payment_methods` is the SAME
+        // intersection App\Support\Checkout\CheckoutPaymentPolicy already
+        // computed for this exact Cart inside `present()` above - never
+        // recomputed, never trusted from the client.
+        $availableCodes = array_column($presented['available_payment_methods'], 'code');
+
+        if (! in_array($paymentMethod, $availableCodes, true)) {
+            return $this->unprocessable('The given data was invalid.', [
+                'payment_method' => ["{$paymentMethod} is not an available payment method for this Cart."],
+            ]);
         }
 
         $timestamp = $now->format('Y-m-d H:i:s.u');

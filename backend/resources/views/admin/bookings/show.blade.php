@@ -200,6 +200,36 @@
                         View payment &rarr;
                     </a>
                 </div>
+
+                <div data-on-site-payment-box style="display: none;">
+                    <dl class="mt-3 space-y-2 text-sm">
+                        <div class="flex justify-between gap-4">
+                            <dt class="text-slate-500">Payment method</dt>
+                            <dd class="font-medium text-slate-900">Pay on Site</dd>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <dt class="text-slate-500">Amount due</dt>
+                            <dd data-field="on_site_amount_due" class="font-medium text-slate-900"></dd>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <dt class="text-slate-500">Collection status</dt>
+                            <dd data-field="on_site_collection_status" class="font-medium text-slate-900"></dd>
+                        </div>
+                        <div data-on-site-collected-row style="display: none;" class="flex justify-between gap-4">
+                            <dt class="text-slate-500">Collected at</dt>
+                            <dd data-field="on_site_collected_at" class="font-medium text-slate-900"></dd>
+                        </div>
+                    </dl>
+                    <button
+                        type="button"
+                        data-collect-on-site-payment-open
+                        style="display: none;"
+                        class="mt-3 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold
+                               text-white hover:bg-slate-800">
+                        Mark as collected
+                    </button>
+                </div>
+
                 <p data-payment-empty style="display: none;" class="mt-3 text-sm text-slate-500">
                     This booking has no one-off payment - it is covered by a Service Contract.
                 </p>

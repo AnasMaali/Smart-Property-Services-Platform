@@ -30,6 +30,15 @@ class CreatePaymentRequest extends ApiFormRequest
             'success' => ['prohibited'],
             'checkout_reference' => ['prohibited'],
             'cart_uuid' => ['prohibited'],
+            // BLUE V1 Phase B24 - the customer's declared payment-method
+            // intent, validated against the Cart's authoritative available
+            // methods in App\Actions\Payment\CreatePaymentAttemptAction -
+            // never trusted for the actual Stripe call itself (Stripe's own
+            // `automatic_payment_methods` already decides what to present;
+            // see docs/api-contracts/payments-v1.md "Apple Pay readiness").
+            // Only CARD/APPLE_PAY are valid here - PAY_ON_SITE never
+            // reaches this endpoint at all (see POST /v1/bookings/pay-on-site).
+            'payment_method' => ['required', 'string', 'in:CARD,APPLE_PAY'],
         ];
     }
 }

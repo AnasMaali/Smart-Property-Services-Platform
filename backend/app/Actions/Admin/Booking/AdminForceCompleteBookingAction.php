@@ -131,7 +131,7 @@ final class AdminForceCompleteBookingAction
                 );
             }
 
-            if ($currentStatus === 'PAID') {
+            if (in_array($currentStatus, ['PAID', 'CONFIRMED'], true)) {
                 $this->bookingLifecycle->assign($bookingUuid, reason: $reason, actorUserUuid: $actorUuid);
                 $currentStatus = 'ASSIGNED';
             }

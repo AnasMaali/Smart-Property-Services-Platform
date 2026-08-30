@@ -64,11 +64,20 @@ final class BookingPresenter
             $total = bcadd($total, (string) $item->line_total_amount, 6);
         }
 
+        $onSiteSettlement = $sourceCode === 'PAY_ON_SITE'
+            ? DB::table('booking_on_site_settlements')->where('booking_id', $booking->id)->first(['amount_due', 'collected_at'])
+            : null;
+
         return [
             'uuid' => UuidBinary::toString($booking->id),
             'booking_number' => $booking->booking_number,
             'status' => $statusCode,
             'source' => $sourceCode,
+            'payment_method' => $booking->payment_method_code,
+            'on_site_payment' => $onSiteSettlement === null ? null : [
+                'amount_due' => (string) $onSiteSettlement->amount_due,
+                'collection_status' => $onSiteSettlement->collected_at === null ? 'PENDING' : 'COLLECTED',
+            ],
             'contract' => $booking->service_contract_id === null ? null : [
                 'contract_uuid' => UuidBinary::toString($booking->service_contract_id),
                 'contract_item_uuid' => UuidBinary::toString($booking->service_contract_item_id),

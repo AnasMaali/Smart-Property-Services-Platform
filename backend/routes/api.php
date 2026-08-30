@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\Auth\AdminRefreshController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpRequestController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminStepUpVerifyController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\CollectAdminOnSitePaymentController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminAppointmentSlotsController;
@@ -70,6 +71,7 @@ use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionChoice
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminPaymentMethodTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCategoriesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCheckpointActionTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceContentSectionTypesController;
@@ -78,6 +80,7 @@ use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminSpecializationsController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceCatalogPolicyController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceOriginalPriceController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServicePaymentMethodsController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceSpecializationController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCheckpointController;
@@ -116,6 +119,7 @@ use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
+use App\Http\Controllers\Api\V1\Booking\CreatePayOnSiteBookingController;
 use App\Http\Controllers\Api\V1\Booking\GetBookingController;
 use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
 use App\Http\Controllers\Api\V1\Booking\PreviewBookingCancellationController;
@@ -208,6 +212,12 @@ Route::middleware('auth.customer')->group(function () {
     // App\Actions\Booking\PreviewBookingCancellationAction.
     Route::get('/v1/bookings/{booking}/cancellation-preview', PreviewBookingCancellationController::class);
     Route::post('/v1/bookings/{booking}/cancel', CancelBookingController::class);
+    // BLUE V1 Phase B24 - confirms a Booking without an online Stripe
+    // payment, for a Cart whose every Service allows PAY_ON_SITE. See
+    // App\Actions\Booking\CreatePayOnSiteBookingAction's docblock - never a
+    // successful-payment substitute, mirrors POST /v1/payments' own
+    // Idempotency-Key convention exactly.
+    Route::post('/v1/bookings/pay-on-site', CreatePayOnSiteBookingController::class);
 
     // BLUE V1 Phase 10A - Customer Properties.
     Route::get('/v1/properties', ListPropertiesController::class);
@@ -354,6 +364,13 @@ Route::middleware('auth.admin')->group(function () {
     // runs first, admin.stepup (a fresh WebAuthn re-proof) second.
     Route::post('/v1/admin/bookings/{booking}/force-complete', ForceCompleteAdminBookingController::class)
         ->middleware([AdminCapability::BOOKINGS_FORCE_COMPLETE->middleware(), 'admin.stepup']);
+    // BLUE V1 Phase B24 - marks a Pay-on-Site Booking's cash as collected.
+    // A financial mutation exactly like force-complete/pricing.publish
+    // above, so it requires the same capability-then-step-up bar - never a
+    // weaker path just because no Stripe call is involved. See
+    // App\Actions\Admin\Booking\AdminCollectOnSitePaymentAction's docblock.
+    Route::post('/v1/admin/bookings/{booking}/collect-on-site-payment', CollectAdminOnSitePaymentController::class)
+        ->middleware([AdminCapability::BOOKINGS_MANAGE->middleware(), 'admin.stepup']);
     // BLUE V1 Phase B19 - Reschedule Booking: moves a non-terminal Booking
     // to a different appointment_slot through the same capacity/hold model
     // checkout uses - see App\Actions\Admin\Booking\
@@ -559,6 +576,16 @@ Route::middleware('auth.admin')->group(function () {
     // -types) sit under `services.view` since they are read-only dropdown
     // vocabulary, exactly like `/v1/admin/specializations` above.
     Route::post('/v1/admin/services/{service}/catalog-policy', SetAdminServiceCatalogPolicyController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    // BLUE V1 Phase B24 - Service payment policy (allowed CARD/APPLE_PAY/
+    // PAY_ON_SITE methods). `payment_method_types` is a read-only seeded
+    // lookup (services.view); the per-Service set is a services.manage
+    // mutation exactly like catalog-policy above - never a pricing.*
+    // capability, since this never touches the pricing engine.
+    Route::get('/v1/admin/payment-method-types', ListAdminPaymentMethodTypesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/services/{service}/payment-methods', SetAdminServicePaymentMethodsController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     Route::get('/v1/admin/service-content-section-types', ListAdminServiceContentSectionTypesController::class)

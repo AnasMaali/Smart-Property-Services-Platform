@@ -100,6 +100,7 @@ if (page) {
     const cancelBookingButton = page.querySelector('[data-cancel-booking-open]');
     const forceCompleteBox = page.querySelector('[data-force-complete-box]');
     const forceCompleteButton = page.querySelector('[data-force-complete-open]');
+    const collectOnSitePaymentButton = page.querySelector('[data-collect-on-site-payment-open]');
     const rescheduleButton = page.querySelector('[data-reschedule-booking-open]');
     const rescheduleModal = document.querySelector('[data-reschedule-booking-modal]');
 
@@ -482,17 +483,39 @@ if (page) {
         setText('appointment_summary', slot ? `${formatDateOnly(slot.starts_at)} · ${slot.time_window?.name || ''}`.trim() : '—');
 
         const paymentBox = page.querySelector('[data-payment-box]');
+        const onSitePaymentBox = page.querySelector('[data-on-site-payment-box]');
         const paymentEmpty = page.querySelector('[data-payment-empty]');
 
         if (booking.payment) {
             paymentBox.style.display = 'block';
+            onSitePaymentBox.style.display = 'none';
             paymentEmpty.style.display = 'none';
             setText('payment_status', statusLabel(booking.payment.status));
             setText('payment_amount', formatMoney(booking.payment.amount, booking.currency));
             setText('payment_provider', booking.payment.provider);
             page.querySelector('[data-payment-link]').href = `/admin/payments/${encodeURIComponent(booking.payment.uuid)}`;
+        } else if (booking.payment_method === 'PAY_ON_SITE' && booking.on_site_settlement) {
+            paymentBox.style.display = 'none';
+            onSitePaymentBox.style.display = 'block';
+            paymentEmpty.style.display = 'none';
+
+            const settlement = booking.on_site_settlement;
+            const isCollected = settlement.collection_status === 'COLLECTED';
+
+            setText('on_site_amount_due', formatMoney(settlement.amount_due, booking.currency));
+            setText('on_site_collection_status', statusLabel(settlement.collection_status));
+
+            const collectedRow = page.querySelector('[data-on-site-collected-row]');
+            collectedRow.style.display = isCollected ? 'flex' : 'none';
+            setText('on_site_collected_at', formatDateTime(settlement.collected_at));
+
+            if (collectOnSitePaymentButton) {
+                const isBookingNonTerminal = !TERMINAL_BOOKING_STATUSES.includes(booking.status);
+                collectOnSitePaymentButton.style.display = !isCollected && isBookingNonTerminal ? 'inline-flex' : 'none';
+            }
         } else {
             paymentBox.style.display = 'none';
+            onSitePaymentBox.style.display = 'none';
             paymentEmpty.style.display = 'block';
         }
 
@@ -712,6 +735,34 @@ if (page) {
                     await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/force-complete`, {
                         method: 'POST',
                         body: { reason },
+                    });
+
+                    await loadBooking();
+                },
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Collect on-site payment (BLUE V1 Phase B24) - marks the cash/manual
+    // amount owed on a PAY_ON_SITE Booking as collected. This is the only
+    // client-side entry point into POST /v1/admin/bookings/{booking}/
+    // collect-on-site-payment; authorization (bookings.manage), the fresh
+    // Step-Up re-proof (handled transparently by lib/api-client.js's 428
+    // retry), idempotency, and the audit entry are all enforced server-side
+    // by App\Actions\Admin\Booking\AdminCollectOnSitePaymentAction - this
+    // handler only re-fetches authoritative state afterwards.
+    // -----------------------------------------------------------------
+
+    if (collectOnSitePaymentButton) {
+        collectOnSitePaymentButton.addEventListener('click', () => {
+            openConfirmAction({
+                title: 'Mark on-site payment as collected',
+                message: 'Confirm that the customer paid the amount due in cash or by card on site. This cannot be undone.',
+                confirmLabel: 'Mark as collected',
+                onConfirm: async () => {
+                    await request(`/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/collect-on-site-payment`, {
+                        method: 'POST',
                     });
 
                     await loadBooking();

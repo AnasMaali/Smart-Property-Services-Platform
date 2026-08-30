@@ -1,16 +1,16 @@
 <?php
 
-namespace App\Http\Controllers\Api\V1\Payment;
+namespace App\Http\Controllers\Api\V1\Booking;
 
-use App\Actions\Payment\CreatePaymentAttemptAction;
+use App\Actions\Booking\CreatePayOnSiteBookingAction;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Payment\CreatePaymentRequest;
+use App\Http\Requests\Booking\CreatePayOnSiteBookingRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 
-class CreatePaymentController extends Controller
+class CreatePayOnSiteBookingController extends Controller
 {
-    public function __invoke(CreatePaymentRequest $request, CreatePaymentAttemptAction $action): JsonResponse
+    public function __invoke(CreatePayOnSiteBookingRequest $request, CreatePayOnSiteBookingAction $action): JsonResponse
     {
         $idempotencyKey = $request->header('Idempotency-Key');
 
@@ -25,7 +25,7 @@ class CreatePaymentController extends Controller
         /** @var User $authUser */
         $authUser = $request->attributes->get('auth_user');
 
-        $result = $action->handle($authUser->id, $idempotencyKey, $request->string('payment_method')->toString());
+        $result = $action->handle($authUser->id, $idempotencyKey);
 
         return response()->json([
             'success' => $result['success'],

@@ -770,6 +770,52 @@ LOCK TABLES `booking_locations` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `booking_on_site_settlements`
+--
+-- BLUE V1 Phase B24 - the post-payment record for a Pay-on-Site Booking:
+-- amount due, amount actually collected (NULL until collected), who/when
+-- collected it, and an honest `refund_status` flag (`MANUAL_REFUND_REQUIRED`)
+-- set when a Booking that already had cash collected is later cancelled -
+-- never an automated Stripe refund for cash. See
+-- database/phase24_payment_policy_migration.sql.
+--
+
+DROP TABLE IF EXISTS `booking_on_site_settlements`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_on_site_settlements` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `booking_id` binary(16) NOT NULL,
+  `amount_due` decimal(19,6) NOT NULL,
+  `amount_collected` decimal(19,6) DEFAULT NULL,
+  `collected_at` datetime(6) DEFAULT NULL,
+  `collected_by_admin_user_id` binary(16) DEFAULT NULL,
+  `refund_status` varchar(30) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_on_site_settlements_booking` (`booking_id`),
+  KEY `idx_booking_on_site_settlements_collected_by` (`collected_by_admin_user_id`),
+  CONSTRAINT `fk_booking_on_site_settlements_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_on_site_settlements_collected_by` FOREIGN KEY (`collected_by_admin_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_booking_on_site_settlements_amount_due` CHECK ((`amount_due` >= 0)),
+  CONSTRAINT `chk_booking_on_site_settlements_amount_collected` CHECK (((`amount_collected` is null) or (`amount_collected` >= 0))),
+  CONSTRAINT `chk_booking_on_site_settlements_collection_data` CHECK ((((`collected_at` is null) and (`amount_collected` is null) and (`collected_by_admin_user_id` is null)) or ((`collected_at` is not null) and (`amount_collected` is not null) and (`collected_by_admin_user_id` is not null)))),
+  CONSTRAINT `chk_booking_on_site_settlements_refund_status` CHECK (((`refund_status` is null) or (`refund_status` = 'MANUAL_REFUND_REQUIRED'))),
+  CONSTRAINT `chk_booking_on_site_settlements_refund_requires_collection` CHECK (((`refund_status` is null) or (`collected_at` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_on_site_settlements`
+--
+
+LOCK TABLES `booking_on_site_settlements` WRITE;
+/*!40000 ALTER TABLE `booking_on_site_settlements` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_on_site_settlements` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `booking_refund_statuses`
 --
 -- BLUE V1 Phase B20 - lifecycle of one Stripe refund EXECUTION (distinct
@@ -996,6 +1042,8 @@ CREATE TABLE `bookings` (
   `cart_id` binary(16) NOT NULL,
   `payment_attempt_id` binary(16) DEFAULT NULL,
   `booking_source_id` tinyint unsigned NOT NULL,
+  `payment_method_code` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `idempotency_key` binary(32) DEFAULT NULL,
   `service_contract_id` binary(16) DEFAULT NULL,
   `service_contract_item_id` binary(16) DEFAULT NULL,
   `appointment_slot_id` binary(16) NOT NULL,
@@ -1011,6 +1059,7 @@ CREATE TABLE `bookings` (
   UNIQUE KEY `uq_bookings_booking_number` (`booking_number`),
   UNIQUE KEY `uq_bookings_cart` (`cart_id`),
   UNIQUE KEY `uq_bookings_payment_attempt` (`payment_attempt_id`),
+  UNIQUE KEY `uq_bookings_idempotency_key` (`idempotency_key`),
   KEY `idx_bookings_status_created` (`status_id`,`created_at`),
   KEY `idx_bookings_appointment_status` (`appointment_slot_id`,`status_id`),
   KEY `idx_bookings_created_at` (`created_at`),
@@ -1030,9 +1079,14 @@ CREATE TABLE `bookings` (
   CONSTRAINT `chk_bookings_cancellation_refund_percentage` CHECK (((`cancellation_refund_percentage` is null) or (`cancellation_refund_percentage` between 0 and 100))),
   CONSTRAINT `chk_bookings_cancelled_at` CHECK (((`cancelled_at` is null) or (`cancelled_at` >= `created_at`))),
   CONSTRAINT `chk_bookings_completed_at` CHECK (((`completed_at` is null) or (`completed_at` >= `created_at`))),
+  CONSTRAINT `chk_bookings_payment_method_code` CHECK (((`payment_method_code` is null) or (`payment_method_code` in ('CARD','APPLE_PAY','PAY_ON_SITE')))),
   CONSTRAINT `chk_bookings_single_final_state` CHECK (((`completed_at` is null) or (`cancelled_at` is null))),
   CONSTRAINT `chk_bookings_status_changed_at` CHECK ((`status_changed_at` >= `created_at`)),
-  CONSTRAINT `chk_bookings_source_pairing` CHECK ((((`payment_attempt_id` is not null) and (`service_contract_id` is null) and (`service_contract_item_id` is null)) or ((`payment_attempt_id` is null) and (`service_contract_id` is not null) and (`service_contract_item_id` is not null))))
+  CONSTRAINT `chk_bookings_source_pairing` CHECK (
+    ((`payment_attempt_id` is not null) and (`service_contract_id` is null) and (`service_contract_item_id` is null))
+    or ((`payment_attempt_id` is null) and (`service_contract_id` is not null) and (`service_contract_item_id` is not null))
+    or ((`payment_attempt_id` is null) and (`service_contract_id` is null) and (`service_contract_item_id` is null) and (`payment_method_code` = 'PAY_ON_SITE'))
+  )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1713,6 +1767,41 @@ CREATE TABLE `password_reset_sessions` (
 LOCK TABLES `password_reset_sessions` WRITE;
 /*!40000 ALTER TABLE `password_reset_sessions` DISABLE KEYS */;
 /*!40000 ALTER TABLE `password_reset_sessions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `payment_method_types`
+--
+
+DROP TABLE IF EXISTS `payment_method_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `payment_method_types` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_payment_method_types_code` (`code`),
+  KEY `idx_payment_method_types_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_payment_method_types_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_payment_method_types_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_payment_method_types_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_payment_method_types_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `payment_method_types`
+--
+
+LOCK TABLES `payment_method_types` WRITE;
+/*!40000 ALTER TABLE `payment_method_types` DISABLE KEYS */;
+/*!40000 ALTER TABLE `payment_method_types` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -3319,6 +3408,38 @@ CREATE TABLE `service_options` (
 LOCK TABLES `service_options` WRITE;
 /*!40000 ALTER TABLE `service_options` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_options` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_payment_methods`
+--
+
+DROP TABLE IF EXISTS `service_payment_methods`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_payment_methods` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_id` binary(16) NOT NULL,
+  `payment_method_type_id` tinyint unsigned NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_payment_methods_service_type` (`service_id`,`payment_method_type_id`),
+  KEY `idx_service_payment_methods_type` (`payment_method_type_id`),
+  CONSTRAINT `fk_service_payment_methods_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_service_payment_methods_type` FOREIGN KEY (`payment_method_type_id`) REFERENCES `payment_method_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_service_payment_methods_active` CHECK ((`is_active` in (0,1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_payment_methods`
+--
+
+LOCK TABLES `service_payment_methods` WRITE;
+/*!40000 ALTER TABLE `service_payment_methods` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_payment_methods` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

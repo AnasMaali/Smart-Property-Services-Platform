@@ -359,6 +359,25 @@
         </div>
 
         <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <h3 class="text-sm font-semibold text-slate-900">Payment policy</h3>
+            <p class="mt-1 text-xs text-slate-400">
+                At least one method is required. "Requires prepayment online" is automatically true
+                whenever Pay on Site is not allowed - it is never set independently.
+            </p>
+
+            <form data-payment-policy-form class="mt-4 space-y-3">
+                <div data-payment-methods-checkboxes class="flex flex-wrap gap-4 text-sm"></div>
+                <p data-payment-policy-requires-prepayment class="text-xs text-slate-500"></p>
+                <div class="flex items-center gap-4">
+                    <button type="submit" class="rounded-lg bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                        Save payment policy
+                    </button>
+                    <p data-payment-policy-error class="hidden text-sm text-red-600"></p>
+                </div>
+            </form>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-6">
             <div class="flex items-center justify-between">
                 <div>
                     <h3 class="text-sm font-semibold text-slate-900">Content sections</h3>

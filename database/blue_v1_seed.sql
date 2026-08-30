@@ -1412,6 +1412,14 @@ INSERT INTO booking_statuses (
 )
 VALUES
 (
+    'CONFIRMED',
+    'Confirmed',
+    'The Booking is accepted and scheduled; payment is due on-site and has not been collected yet. Never used for a Stripe-paid Booking.',
+    FALSE,
+    0,
+    TRUE
+),
+(
     'PAID',
     'Paid',
     'Payment was confirmed and the Booking is ready for operational processing.',
@@ -1682,6 +1690,51 @@ VALUES
     'Reconciliation required',
     'An authoritative Stripe refund webhook reported an amount or currency that did not match the persisted obligation (BLUE V1 is AED-only) - not automatically retryable, requires operator investigation.',
     4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 23A. PAYMENT METHOD TYPES — BLUE V1 Phase B24
+-- The three rails a Service's payment policy can allow: CARD,
+-- APPLE_PAY (both online, via the same Stripe PaymentIntent), and
+-- PAY_ON_SITE (no online prepayment). See
+-- App\Support\Payment\ServicePaymentPolicy and
+-- database/phase24_payment_policy_migration.sql.
+-- =============================================================
+
+INSERT INTO payment_method_types (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'CARD',
+    'Credit Card',
+    'Card payment via Stripe (PaymentIntent).',
+    1,
+    TRUE
+),
+(
+    'APPLE_PAY',
+    'Apple Pay',
+    'Apple Pay via the same Stripe PaymentIntent as Card - never a second payment system.',
+    2,
+    TRUE
+),
+(
+    'PAY_ON_SITE',
+    'Pay on Site',
+    'Customer pays in cash on-site once the Service is delivered - no online prepayment.',
+    3,
     TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
@@ -2198,6 +2251,13 @@ VALUES
     'Contract',
     'A Booking created by consuming an active Service Contract entitlement, with no new customer Payment.',
     2,
+    TRUE
+),
+(
+    'PAY_ON_SITE',
+    'Pay on Site',
+    'A Booking created without a new customer Payment because every Service in the Cart allows on-site cash payment; the amount is due on-site.',
+    3,
     TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE

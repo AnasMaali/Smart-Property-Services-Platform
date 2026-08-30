@@ -79,6 +79,10 @@ final class CheckoutPresenter
             && $hold !== null
             && $aggregate['status'] === PricingStatus::PRICED;
 
+        $paymentPolicy = CheckoutPaymentPolicy::availableMethodsFor(
+            $items->map(fn ($item) => UuidBinary::toString($item->service_id))->all(),
+        );
+
         return [
             'cart_uuid' => $cart->id,
             'location' => $location === null ? null : $this->locationPayload($location),
@@ -94,6 +98,8 @@ final class CheckoutPresenter
             ],
             'items' => $itemPayloads,
             'total' => $aggregate['total'],
+            'available_payment_methods' => $paymentPolicy['methods'],
+            'requires_prepayment' => $paymentPolicy['requires_prepayment'],
         ];
     }
 
@@ -123,6 +129,8 @@ final class CheckoutPresenter
             ],
             'items' => [],
             'total' => '0.000000',
+            'available_payment_methods' => [],
+            'requires_prepayment' => true,
         ];
     }
 

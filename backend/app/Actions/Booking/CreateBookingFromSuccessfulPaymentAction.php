@@ -6,6 +6,7 @@ use App\Support\Booking\BookingConversionOutcome;
 use App\Support\Booking\BookingConversionResult;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Booking\BookingNumberGenerator;
+use App\Support\Booking\BookingSnapshotConverter;
 use App\Support\Booking\BookingSources;
 use App\Support\Booking\BookingStatuses;
 use App\Support\Cart\CartStatuses;
@@ -182,56 +183,7 @@ class CreateBookingFromSuccessfulPaymentAction
      */
     private function buildBookingItems(array $snapshot): ?array
     {
-        $snapshotItems = $snapshot['items'] ?? [];
-
-        if ($snapshotItems === []) {
-            return null;
-        }
-
-        $items = [];
-
-        foreach ($snapshotItems as $index => $snapshotItem) {
-            $pricing = $snapshotItem['pricing'] ?? null;
-
-            if ($pricing === null || ($pricing['pricing_status'] ?? null) !== 'PRICED') {
-                return null;
-            }
-
-            $quantity = (int) $snapshotItem['quantity'];
-            $unitTotal = (string) $pricing['unit_total'];
-            $lineTotal = (string) $pricing['line_total'];
-
-            if (bccomp(bcmul($unitTotal, (string) $quantity, 6), $lineTotal, 6) !== 0) {
-                return null;
-            }
-
-            $serviceIdBinary = UuidBinary::toBinary($snapshotItem['service']['uuid']);
-            $serviceCode = DB::table('services')->where('id', $serviceIdBinary)->value('code');
-            $schemeVersionId = DB::table('pricing_scheme_versions')
-                ->where('id', UuidBinary::toBinary($pricing['pricing_scheme_version']))
-                ->value('id');
-
-            if ($serviceCode === null || $schemeVersionId === null) {
-                return null;
-            }
-
-            $items[] = [
-                'display_order' => $index,
-                'source_cart_item_id' => UuidBinary::toBinary($snapshotItem['cart_item_uuid']),
-                'service_id' => $serviceIdBinary,
-                'pricing_scheme_version_id' => $schemeVersionId,
-                'service_code_snapshot' => $serviceCode,
-                'service_name_snapshot' => $snapshotItem['service']['name'],
-                'quantity' => $quantity,
-                'pricing_status_snapshot' => 'PRICED',
-                'base_amount_snapshot' => $pricing['base_amount'],
-                'pricing_breakdown' => CanonicalJson::encode($pricing['adjustments'] ?? []),
-                'unit_total_amount' => $unitTotal,
-                'line_total_amount' => $lineTotal,
-            ];
-        }
-
-        return $items;
+        return BookingSnapshotConverter::buildItems($snapshot['items'] ?? []);
     }
 
     /**
@@ -248,46 +200,7 @@ class CreateBookingFromSuccessfulPaymentAction
      */
     private function resolveLocationSnapshot(?array $snapshotLocation): ?array
     {
-        if ($snapshotLocation === null) {
-            return null;
-        }
-
-        $propertyTypeId = $snapshotLocation['property_type']['id'] ?? null;
-        $areaId = $snapshotLocation['area']['id'] ?? null;
-
-        if ($propertyTypeId === null || $areaId === null) {
-            return null;
-        }
-
-        $propertyTypeName = DB::table('property_types')->where('id', (int) $propertyTypeId)->value('name');
-
-        $area = DB::table('areas')
-            ->join('cities', 'cities.id', '=', 'areas.city_id')
-            ->join('countries', 'countries.id', '=', 'cities.country_id')
-            ->where('areas.id', (int) $areaId)
-            ->first(['areas.name as area_name', 'cities.name as city_name', 'countries.name as country_name']);
-
-        if ($propertyTypeName === null || $area === null) {
-            return null;
-        }
-
-        return [
-            'property_type_id' => (int) $propertyTypeId,
-            'area_id' => (int) $areaId,
-            'property_type_name_snapshot' => $propertyTypeName,
-            'country_name_snapshot' => $area->country_name,
-            'city_name_snapshot' => $area->city_name,
-            'area_name_snapshot' => $area->area_name,
-            'other_property_type_name' => $snapshotLocation['other_property_type_name'] ?? null,
-            'street_name' => $snapshotLocation['street_name'],
-            'address_line' => $snapshotLocation['address_line'],
-            'building_name_or_number' => $snapshotLocation['building_name_or_number'],
-            'floor_number' => $snapshotLocation['floor_number'] ?? null,
-            'unit_number' => $snapshotLocation['unit_number'] ?? null,
-            'nearby_landmark' => $snapshotLocation['nearby_landmark'] ?? null,
-            'additional_location_notes' => $snapshotLocation['additional_location_notes'] ?? null,
-            'visit_contact_phone' => $snapshotLocation['visit_contact_phone'],
-        ];
+        return BookingSnapshotConverter::resolveLocation($snapshotLocation);
     }
 
     /**
@@ -307,6 +220,7 @@ class CreateBookingFromSuccessfulPaymentAction
             'cart_id' => $attempt->cart_id,
             'payment_attempt_id' => $attempt->id,
             'booking_source_id' => BookingSources::id('STANDARD'),
+            'payment_method_code' => $this->paymentMethodCodeFor($attempt->payment_method_type),
             'appointment_slot_id' => $hold->appointment_slot_id,
             'status_id' => $paidStatusId,
             'status_changed_at' => $timestamp,
@@ -380,6 +294,25 @@ class CreateBookingFromSuccessfulPaymentAction
         ]);
 
         return UuidBinary::toString($bookingIdBinary);
+    }
+
+    /**
+     * BLUE V1 Phase B24 - maps the provider-verified, lowercase Stripe
+     * `payment_method_type` (App\Support\Payment\Gateway\
+     * StripePaymentGateway::normalizePaymentMethodType() - a wallet type
+     * such as "apple_pay" when Stripe expands it, otherwise the declared
+     * `payment_method_types[0]`, e.g. "card") onto BLUE's own canonical
+     * `bookings.payment_method_code` vocabulary. Never a value Flutter
+     * declares. Every non-Apple-Pay online method (plain "card", or an
+     * unrecognized/未-known value, or null when Stripe has not reported one
+     * yet) safely falls back to CARD - the only two online rails this
+     * phase's business requirement recognizes are CARD and APPLE_PAY, and
+     * this Action's caller is by definition the successful-Stripe-payment
+     * path, never Pay-on-Site.
+     */
+    private function paymentMethodCodeFor(?string $stripePaymentMethodType): string
+    {
+        return $stripePaymentMethodType === 'apple_pay' ? 'APPLE_PAY' : 'CARD';
     }
 
     private function flagReconciliation(string $paymentAttemptIdBinary, Carbon $at, string $reasonCode): void
