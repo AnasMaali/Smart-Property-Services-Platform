@@ -229,6 +229,11 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/support-requests/{supportRequest}',
             'api/v1/admin/support-requests/{supportRequest}/messages',
             'api/v1/admin/technicians',
+            'api/v1/admin/technicians/{technician}',
+            'api/v1/admin/technicians/{technician}/jobs',
+            'api/v1/admin/technicians/{technician}/ratings',
+            'api/v1/admin/technicians/{technician}/specializations',
+            'api/v1/admin/technicians/{technician}/status',
         ], $adminUris);
     }
 
@@ -243,6 +248,11 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/bookings/{booking}/reschedule',
             'api/v1/admin/appointment-slots',
             'api/v1/admin/technicians',
+            'api/v1/admin/technicians/{technician}',
+            'api/v1/admin/technicians/{technician}/jobs',
+            'api/v1/admin/technicians/{technician}/ratings',
+            'api/v1/admin/technicians/{technician}/specializations',
+            'api/v1/admin/technicians/{technician}/status',
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',
             'api/v1/admin/booking-items/{bookingItem}/reassign-technician',

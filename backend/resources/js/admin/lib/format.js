@@ -59,6 +59,12 @@ const STATUS_BADGE_CLASSES = {
     DRAFT: 'bg-amber-50 text-amber-700',
     PUBLISHED: 'bg-emerald-50 text-emerald-700',
     RETIRED: 'bg-slate-100 text-slate-600',
+
+    // technician_statuses (ACTIVE/CANCELLED above already cover shared codes)
+    AVAILABLE: 'bg-emerald-50 text-emerald-700',
+    BUSY: 'bg-amber-50 text-amber-700',
+    ON_LEAVE: 'bg-slate-100 text-slate-600',
+    INACTIVE: 'bg-red-50 text-red-700',
 };
 
 const DEFAULT_STATUS_BADGE_CLASSES = 'bg-slate-100 text-slate-600';

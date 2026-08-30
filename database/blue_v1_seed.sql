@@ -159,6 +159,12 @@ VALUES
     TRUE
 ),
 (
+    'technicians.manage',
+    'Manage Technicians',
+    'Create and edit Technician records, change Technician status (Available/Busy/On Leave/Inactive), and manage a Technician''s specializations. Distinct from technicians.assign, which covers Booking-Item-level assignment.',
+    TRUE
+),
+(
     'contracts.view',
     'View Service Contracts',
     'View Service Contracts and their items, status history, and acceptance/billing summary.',
@@ -296,6 +302,7 @@ WHERE r.code = 'ADMIN'
     'bookings.reschedule',
     'technicians.view',
     'technicians.assign',
+    'technicians.manage',
     'contracts.view',
     'contracts.manage',
     'contracts.cancel',

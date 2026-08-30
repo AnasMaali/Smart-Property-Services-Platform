@@ -28,6 +28,11 @@ Route::prefix('admin')->name('admin.')->group(function () {
     // all data/authorization from the API client-side" convention as above.
     Route::view('/technicians', 'admin.technicians.index')->name('technicians.index');
 
+    // BLUE V1 Technician Admin Management - Technician detail shell route.
+    Route::get('/technicians/{technician}', function (string $technician) {
+        return view('admin.technicians.show', ['technicianUuid' => $technician]);
+    })->name('technicians.show');
+
     // BLUE V1 Phase B4 - Contracts shell routes. Same convention as
     // Bookings/Technicians above.
     Route::view('/contracts', 'admin.contracts.index')->name('contracts.index');

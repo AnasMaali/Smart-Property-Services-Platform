@@ -96,10 +96,17 @@ use App\Http\Controllers\Api\V1\Admin\Support\ListAdminSupportRequestsController
 use App\Http\Controllers\Api\V1\Admin\Support\SendAdminSupportMessageController;
 use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
+use App\Http\Controllers\Api\V1\Admin\Technician\CreateAdminTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\GetAdminTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechnicianJobsController;
+use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechnicianRatingsController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
+use App\Http\Controllers\Api\V1\Admin\Technician\SetAdminTechnicianSpecializationController;
+use App\Http\Controllers\Api\V1\Admin\Technician\SetAdminTechnicianStatusController;
 use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
+use App\Http\Controllers\Api\V1\Admin\Technician\UpdateAdminTechnicianController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\DeleteAccountController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
@@ -386,6 +393,20 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BOOKINGS_RESCHEDULE->middleware());
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
+        ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
+    Route::post('/v1/admin/technicians', CreateAdminTechnicianController::class)
+        ->middleware(AdminCapability::TECHNICIANS_MANAGE->middleware());
+    Route::get('/v1/admin/technicians/{technician}', GetAdminTechnicianController::class)
+        ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
+    Route::patch('/v1/admin/technicians/{technician}', UpdateAdminTechnicianController::class)
+        ->middleware(AdminCapability::TECHNICIANS_MANAGE->middleware());
+    Route::post('/v1/admin/technicians/{technician}/status', SetAdminTechnicianStatusController::class)
+        ->middleware(AdminCapability::TECHNICIANS_MANAGE->middleware());
+    Route::post('/v1/admin/technicians/{technician}/specializations', SetAdminTechnicianSpecializationController::class)
+        ->middleware(AdminCapability::TECHNICIANS_MANAGE->middleware());
+    Route::get('/v1/admin/technicians/{technician}/jobs', ListAdminTechnicianJobsController::class)
+        ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
+    Route::get('/v1/admin/technicians/{technician}/ratings', ListAdminTechnicianRatingsController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());
 
     Route::get('/v1/admin/booking-items/{bookingItem}/technician-candidates', ListTechnicianCandidatesController::class)

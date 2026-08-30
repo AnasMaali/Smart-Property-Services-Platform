@@ -12,8 +12,13 @@ class ListAdminTechniciansController extends Controller
     public function __invoke(ListAdminTechniciansRequest $request, AdminListTechniciansAction $action): JsonResponse
     {
         $filters = array_filter([
+            'q' => $request->string('q')->toString() ?: null,
             'status' => $request->string('status')->toString() ?: null,
             'specialization' => $request->string('specialization')->toString() ?: null,
+            'assignable' => $request->has('assignable') ? $request->boolean('assignable') : null,
+            'rating_min' => $request->input('rating_min'),
+            'rating_max' => $request->input('rating_max'),
+            'sort' => $request->string('sort')->toString() ?: null,
         ], fn ($value) => $value !== null);
 
         $result = $action->handle(

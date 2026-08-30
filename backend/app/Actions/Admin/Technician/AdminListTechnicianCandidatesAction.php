@@ -94,7 +94,7 @@ final class AdminListTechnicianCandidatesAction
             })
             ->where('technician_statuses.is_assignable', 1)
             ->orderBy('technicians.full_name')
-            ->get(['technicians.*', 'technician_statuses.code as status_code']);
+            ->get(['technicians.*', 'technician_statuses.code as status_code', 'technician_statuses.is_assignable as status_is_assignable']);
 
         if ($candidateRows->isEmpty()) {
             return $this->ok(200, 'No eligible technicians found.', [

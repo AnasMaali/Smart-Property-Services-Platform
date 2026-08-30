@@ -5,6 +5,7 @@ import './dashboard/index';
 import './bookings/index';
 import './bookings/show';
 import './technicians/index';
+import './technicians/show';
 import './contracts/index';
 import './contracts/show';
 import './payments/index';

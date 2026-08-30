@@ -1,11 +1,10 @@
 /**
- * Admin Technicians list (BLUE V1 Phase B3). Reuses the centralized Admin
- * API client against the existing GET /v1/admin/technicians endpoint
- * (App\Actions\Admin\Technician\AdminListTechniciansAction / App\Support\
- * Admin\AdminTechnicianPresenter). Only the two filters the backend
- * actually supports (status, specialization) are exposed; pagination
- * reflects exactly what the API returns. Mirrors resources/js/admin/
- * bookings/index.js's structure exactly.
+ * Admin Technicians list (BLUE V1 Phase B3, extended by BLUE V1 Technician
+ * Admin Management). Reuses the centralized Admin API client against the
+ * existing GET /v1/admin/technicians endpoint (App\Actions\Admin\
+ * Technician\AdminListTechniciansAction / App\Support\Admin\
+ * AdminTechnicianPresenter). Mirrors resources/js/admin/services/index.js's
+ * list + "Add" modal structure exactly.
  */
 
 import { request, ApiError } from '../lib/api-client.js';
@@ -27,7 +26,13 @@ if (page) {
     const prevPageButton = page.querySelector('[data-technicians-prev-page]');
     const nextPageButton = page.querySelector('[data-technicians-next-page]');
 
-    const FILTER_FIELDS = ['status', 'specialization'];
+    const addModal = document.querySelector('[data-add-technician-modal]');
+    const addOpenButton = page.querySelector('[data-add-technician-open]');
+    const addForm = addModal.querySelector('[data-add-technician-form]');
+    const addSubmit = addModal.querySelector('[data-add-technician-submit]');
+    const addError = addModal.querySelector('[data-add-technician-error]');
+
+    const FILTER_FIELDS = ['q', 'status', 'assignable', 'specialization', 'sort'];
 
     function currentParams() {
         return new URLSearchParams(window.location.search);
@@ -70,9 +75,20 @@ if (page) {
         setState('error');
     }
 
+    function formatRating(performance) {
+        if (performance.average_rating === null) {
+            return 'No ratings yet';
+        }
+
+        return `${performance.average_rating.toFixed(1)} / 5 (${performance.rating_count})`;
+    }
+
     function renderRow(technician) {
         const row = document.createElement('tr');
-        row.className = 'hover:bg-slate-50';
+        row.className = 'cursor-pointer hover:bg-slate-50';
+        row.addEventListener('click', () => {
+            window.location.assign(`/admin/technicians/${technician.uuid}`);
+        });
 
         const nameCell = document.createElement('td');
         nameCell.className = 'px-5 py-3.5';
@@ -104,15 +120,30 @@ if (page) {
         badge.textContent = statusLabel(technician.status);
         statusCell.appendChild(badge);
 
+        if (!technician.is_assignable) {
+            const note = document.createElement('div');
+            note.className = 'mt-1 text-xs text-slate-400';
+            note.textContent = 'Not assignable';
+            statusCell.appendChild(note);
+        }
+
+        const ratingCell = document.createElement('td');
+        ratingCell.className = 'px-5 py-3.5 text-slate-700';
+        ratingCell.textContent = formatRating(technician.performance);
+
+        const completedCell = document.createElement('td');
+        completedCell.className = 'px-5 py-3.5 text-slate-700';
+        completedCell.textContent = String(technician.performance.completed_jobs);
+
         const activeCell = document.createElement('td');
         activeCell.className = 'px-5 py-3.5 text-slate-700';
-        activeCell.textContent = String(technician.active_assignments_count);
+        activeCell.textContent = String(technician.performance.active_jobs);
 
         const sinceCell = document.createElement('td');
         sinceCell.className = 'px-5 py-3.5 text-slate-500';
         sinceCell.textContent = formatDateTime(technician.created_at);
 
-        row.append(nameCell, contactCell, specializationsCell, statusCell, activeCell, sinceCell);
+        row.append(nameCell, contactCell, specializationsCell, statusCell, ratingCell, completedCell, activeCell, sinceCell);
 
         return row;
     }
@@ -177,6 +208,46 @@ if (page) {
     clearButton.addEventListener('click', () => {
         filterForm.reset();
         navigate(new URLSearchParams());
+    });
+
+    function closeAddModal() {
+        addModal.style.display = 'none';
+        addForm.reset();
+        addError.classList.add('hidden');
+    }
+
+    addOpenButton.addEventListener('click', () => {
+        addError.classList.add('hidden');
+        addModal.style.display = 'flex';
+    });
+
+    addModal.querySelector('[data-add-technician-cancel]').addEventListener('click', closeAddModal);
+
+    addForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addError.classList.add('hidden');
+        addSubmit.disabled = true;
+
+        try {
+            const response = await request('/api/v1/admin/technicians', {
+                method: 'POST',
+                body: {
+                    employee_code: addForm.elements.namedItem('employee_code').value.trim(),
+                    full_name: addForm.elements.namedItem('full_name').value.trim(),
+                    phone_number: addForm.elements.namedItem('phone_number').value.trim(),
+                    email: addForm.elements.namedItem('email').value.trim() || null,
+                    is_phone_visible_to_customer: addForm.elements.namedItem('is_phone_visible_to_customer').checked,
+                    internal_note: addForm.elements.namedItem('internal_note').value.trim() || null,
+                },
+            });
+
+            window.location.assign(`/admin/technicians/${response.data.technician.uuid}`);
+        } catch (error) {
+            addError.textContent = error instanceof ApiError ? error.message : 'Unable to create this technician.';
+            addError.classList.remove('hidden');
+        } finally {
+            addSubmit.disabled = false;
+        }
     });
 
     window.addEventListener('popstate', () => {

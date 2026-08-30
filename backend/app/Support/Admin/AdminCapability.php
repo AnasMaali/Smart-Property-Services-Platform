@@ -75,6 +75,16 @@ enum AdminCapability: string
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 
+    /**
+     * BLUE V1 Technician Admin Management. Covers Technician roster
+     * mutations that are distinct from Booking-Item-level assignment
+     * (`technicians.assign`): creating/editing a Technician record,
+     * changing its `technician_statuses` (AVAILABLE/BUSY/ON_LEAVE/
+     * INACTIVE), and managing its `technician_specializations` rows.
+     * Mirrors the `services.view`/`services.manage` split exactly.
+     */
+    case TECHNICIANS_MANAGE = 'technicians.manage';
+
     case CONTRACTS_VIEW = 'contracts.view';
     case CONTRACTS_MANAGE = 'contracts.manage';
     case CONTRACTS_CANCEL = 'contracts.cancel';
