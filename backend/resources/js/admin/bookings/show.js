@@ -289,8 +289,144 @@ if (page) {
         }
 
         renderWhatsappActions(root, item);
+        renderInspectionQuote(root, item, currency);
 
         return fragment;
+    }
+
+    // -----------------------------------------------------------------
+    // Inspection follow-up quote (BLUE V1 Phase B25). Every amount shown
+    // here comes verbatim from item.inspection_quote (App\Support\Admin\
+    // AdminBookingPresenter's own server-computed payload) - never
+    // recomputed client-side. Actions call the existing repair-quote
+    // Admin endpoints and simply reload the Booking afterwards.
+    // -----------------------------------------------------------------
+
+    function renderInspectionQuote(root, item, currency) {
+        const box = root.querySelector('[data-inspection-quote-box]');
+        const info = item.inspection_quote;
+
+        if (!box || !info || (!info.eligible && !info.quote)) {
+            return;
+        }
+
+        box.style.display = 'block';
+
+        const amountsRow = root.querySelector('[data-quote-amounts-row]');
+        const actions = root.querySelector('[data-inspection-quote-actions]');
+        const quote = info.quote;
+
+        if (!quote) {
+            root.querySelector('[data-field="quote_status"]').textContent = 'No quote yet';
+            amountsRow.style.display = 'none';
+            actions.replaceChildren(makeActionButton('Create Quote', () => promptForQuoteAmount({
+                title: 'Create repair quote',
+                message: 'Enter the final repair amount (AED). The eligible inspection credit will be applied automatically.',
+                confirmLabel: 'Create Draft Quote',
+                onConfirm: async (amount) => {
+                    await request(`/api/v1/admin/booking-items/${encodeURIComponent(item.uuid)}/repair-quotes`, {
+                        method: 'POST',
+                        body: { quoted_amount: amount },
+                    });
+                    await loadBooking();
+                },
+            })));
+            return;
+        }
+
+        root.querySelector('[data-field="quote_status"]').textContent = statusLabel(quote.status);
+        amountsRow.style.display = 'block';
+        root.querySelector('[data-field="quote_quoted_amount"]').textContent = formatMoney(quote.quoted_amount, currency);
+        root.querySelector('[data-field="quote_credit_amount"]').textContent = `- ${formatMoney(quote.credit_amount, currency)}`;
+        root.querySelector('[data-field="quote_balance_due"]').textContent = formatMoney(quote.balance_due_amount, currency);
+        root.querySelector('[data-field="quote_funding_status"]').textContent = statusLabel(quote.funding_status);
+
+        const buttons = [];
+
+        if (quote.status === 'DRAFT') {
+            buttons.push(makeActionButton('Edit Draft', () => promptForQuoteAmount({
+                title: 'Edit draft quote',
+                message: 'Enter the new final repair amount (AED).',
+                confirmLabel: 'Save',
+                onConfirm: async (amount) => {
+                    await request(`/api/v1/admin/repair-quotes/${encodeURIComponent(quote.uuid)}`, {
+                        method: 'PATCH',
+                        body: { quoted_amount: amount },
+                    });
+                    await loadBooking();
+                },
+            })));
+            buttons.push(makeActionButton('Send Quote', () => {
+                openConfirmAction({
+                    title: 'Send quote to customer',
+                    message: 'Once sent, this quote\'s amount becomes immutable. Continue?',
+                    confirmLabel: 'Send Quote',
+                    onConfirm: async () => {
+                        await request(`/api/v1/admin/repair-quotes/${encodeURIComponent(quote.uuid)}/send`, { method: 'POST' });
+                        await loadBooking();
+                    },
+                });
+            }));
+            buttons.push(makeActionButton('Cancel Draft', () => {
+                openConfirmAction({
+                    title: 'Cancel draft quote',
+                    message: 'This draft quote will be withdrawn. Continue?',
+                    confirmLabel: 'Cancel Draft',
+                    onConfirm: async () => {
+                        await request(`/api/v1/admin/repair-quotes/${encodeURIComponent(quote.uuid)}/cancel`, { method: 'POST' });
+                        await loadBooking();
+                    },
+                });
+            }));
+        } else if ((quote.status === 'SENT' || quote.status === 'ACCEPTED') && quote.funding_status !== 'FULLY_FUNDED') {
+            buttons.push(makeActionButton('Create Revision', () => promptForQuoteAmount({
+                title: 'Revise quote',
+                message: 'Enter the corrected final repair amount (AED). This quote will be superseded by a new draft.',
+                confirmLabel: 'Create Revision',
+                onConfirm: async (amount) => {
+                    await request(`/api/v1/admin/repair-quotes/${encodeURIComponent(quote.uuid)}/revise`, {
+                        method: 'POST',
+                        body: { quoted_amount: amount },
+                    });
+                    await loadBooking();
+                },
+            })));
+        }
+
+        actions.replaceChildren(...buttons);
+    }
+
+    function makeActionButton(label, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800';
+        button.textContent = label;
+        button.addEventListener('click', onClick);
+        return button;
+    }
+
+    /**
+     * Reuses the shared confirm-action modal (technicians/booking-item-
+     * actions.js) as a single-amount-field prompt: its free-text "reason"
+     * input doubles as the amount field here, labelled via $message. The
+     * server is always the sole authority on whether the entered value is
+     * valid (numeric, above the eligible credit, etc.) - this never
+     * validates the amount itself beyond requiring it be non-empty.
+     */
+    function promptForQuoteAmount({ title, message, confirmLabel, onConfirm }) {
+        openConfirmAction({
+            title,
+            message,
+            confirmLabel,
+            reasonLabel: 'Final repair amount (AED)',
+            onConfirm: async (value) => {
+                if (!value) {
+                    throw new Error('Enter an amount.');
+                }
+
+                await onConfirm(value);
+            },
+        });
     }
 
     function renderLocation(location) {

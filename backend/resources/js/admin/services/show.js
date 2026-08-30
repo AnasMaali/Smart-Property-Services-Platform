@@ -71,6 +71,9 @@ if (page) {
     const paymentPolicyError = paymentPolicyForm.querySelector('[data-payment-policy-error]');
     const paymentMethodsCheckboxes = paymentPolicyForm.querySelector('[data-payment-methods-checkboxes]');
     const paymentPolicyRequiresPrepaymentEl = paymentPolicyForm.querySelector('[data-payment-policy-requires-prepayment]');
+    const inspectionQuotePolicyForm = page.querySelector('[data-inspection-quote-policy-form]');
+    const inspectionQuotePolicyError = inspectionQuotePolicyForm.querySelector('[data-inspection-quote-policy-error]');
+    const inspectionQuotePolicyCheckbox = inspectionQuotePolicyForm.querySelector('[data-inspection-quote-policy-checkbox]');
 
     const capabilitiesForm = page.querySelector('[data-capabilities-form]');
     const capabilitiesError = capabilitiesForm.querySelector('[data-capabilities-error]');
@@ -824,6 +827,7 @@ if (page) {
         renderCheckpointGroups(service.checkpoint_groups);
         populateCheckpointGroupSelect(service.checkpoint_groups);
         renderPaymentPolicy(service.payment_policy);
+        inspectionQuotePolicyCheckbox.checked = Boolean(service.inspection_quote_policy?.enabled);
     }
 
     function onToggleActive(isCurrentlyActive) {
@@ -1323,6 +1327,23 @@ if (page) {
         } catch (error) {
             capabilitiesError.textContent = messageOf(error, 'Unable to save capabilities.');
             capabilitiesError.classList.remove('hidden');
+        }
+    });
+
+    inspectionQuotePolicyForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        inspectionQuotePolicyError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/inspection-quote-policy`, {
+                method: 'PATCH',
+                body: { enabled: inspectionQuotePolicyCheckbox.checked },
+            });
+
+            await loadService();
+        } catch (error) {
+            inspectionQuotePolicyError.textContent = messageOf(error, 'Unable to save the inspection quote policy.');
+            inspectionQuotePolicyError.classList.remove('hidden');
         }
     });
 

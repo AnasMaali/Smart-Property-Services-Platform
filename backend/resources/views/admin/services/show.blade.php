@@ -388,6 +388,29 @@
         </div>
 
         <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <h3 class="text-sm font-semibold text-slate-900">Inspection quote policy</h3>
+            <p class="mt-1 text-xs text-slate-400">
+                When enabled, an inspection Booking Item's paid amount may later be credited toward a
+                follow-up repair quote (BLUE V1 Phase B25). Changing this affects future quote
+                eligibility only - it never alters an existing quote.
+            </p>
+
+            <form data-inspection-quote-policy-form class="mt-4 space-y-3">
+                <label class="flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" name="enabled" data-inspection-quote-policy-checkbox
+                           class="rounded border-slate-300">
+                    Enabled
+                </label>
+                <div class="flex items-center gap-4">
+                    <button type="submit" class="rounded-lg bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                        Save inspection quote policy
+                    </button>
+                    <p data-inspection-quote-policy-error class="hidden text-sm text-red-600"></p>
+                </div>
+            </form>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-6">
             <div class="flex items-center justify-between">
                 <div>
                     <h3 class="text-sm font-semibold text-slate-900">Content sections</h3>
