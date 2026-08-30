@@ -66,6 +66,193 @@ LOCK TABLES `admin_audit_logs` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `admin_permissions`
+--
+
+DROP TABLE IF EXISTS `admin_permissions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_permissions` (
+  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_permissions_code` (`code`),
+  KEY `idx_admin_permissions_active` (`is_active`),
+  CONSTRAINT `chk_admin_permissions_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_admin_permissions_code` CHECK (((char_length(trim(`code`)) between 3 and 80) and regexp_like(`code`,_utf8mb4'^[a-z][a-z0-9_]*([.][a-z][a-z0-9_]*)+$'))),
+  CONSTRAINT `chk_admin_permissions_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_admin_permissions_name` CHECK ((char_length(trim(`name`)) between 2 and 150))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_permissions`
+--
+
+LOCK TABLES `admin_permissions` WRITE;
+/*!40000 ALTER TABLE `admin_permissions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_permissions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_role_permissions`
+--
+
+DROP TABLE IF EXISTS `admin_role_permissions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_role_permissions` (
+  `role_id` smallint unsigned NOT NULL,
+  `permission_id` smallint unsigned NOT NULL,
+  `granted_by_user_id` binary(16) DEFAULT NULL,
+  `granted_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`role_id`,`permission_id`),
+  KEY `idx_admin_role_permissions_permission_id` (`permission_id`),
+  KEY `idx_admin_role_permissions_granted_by` (`granted_by_user_id`),
+  CONSTRAINT `fk_admin_role_permissions_granted_by` FOREIGN KEY (`granted_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_role_permissions_permission` FOREIGN KEY (`permission_id`) REFERENCES `admin_permissions` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_role_permissions_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_role_permissions`
+--
+
+LOCK TABLES `admin_role_permissions` WRITE;
+/*!40000 ALTER TABLE `admin_role_permissions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_role_permissions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_webauthn_challenge_purposes`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_challenge_purposes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_challenge_purposes` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_challenge_purposes_code` (`code`),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_code` CHECK ((char_length(trim(`code`)) between 2 and 50)),
+  CONSTRAINT `chk_admin_webauthn_challenge_purposes_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_challenge_purposes`
+--
+
+LOCK TABLES `admin_webauthn_challenge_purposes` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_challenge_purposes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_challenge_purposes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_webauthn_challenges`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_challenges`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_challenges` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `user_id` binary(16) NOT NULL,
+  `auth_session_id` binary(16) DEFAULT NULL,
+  `purpose_id` tinyint unsigned NOT NULL,
+  `challenge_hash` binary(32) NOT NULL,
+  `expires_at` datetime(6) NOT NULL,
+  `consumed_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_challenges_challenge_hash` (`challenge_hash`),
+  KEY `idx_admin_webauthn_challenges_user_purpose` (`user_id`,`purpose_id`,`created_at`),
+  KEY `idx_admin_webauthn_challenges_purpose` (`purpose_id`),
+  KEY `idx_admin_webauthn_challenges_expires_at` (`expires_at`),
+  KEY `idx_admin_webauthn_challenges_active` (`consumed_at`,`expires_at`),
+  KEY `idx_admin_webauthn_challenges_session` (`auth_session_id`),
+  CONSTRAINT `fk_admin_webauthn_challenges_purpose` FOREIGN KEY (`purpose_id`) REFERENCES `admin_webauthn_challenge_purposes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_challenges_session` FOREIGN KEY (`auth_session_id`) REFERENCES `auth_sessions` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_challenges_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_admin_webauthn_challenges_consumed` CHECK (((`consumed_at` is null) or (`consumed_at` >= `created_at`))),
+  CONSTRAINT `chk_admin_webauthn_challenges_expiration` CHECK ((`expires_at` > `created_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_challenges`
+--
+
+LOCK TABLES `admin_webauthn_challenges` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_challenges` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_challenges` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `admin_webauthn_credentials`
+--
+
+DROP TABLE IF EXISTS `admin_webauthn_credentials`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `admin_webauthn_credentials` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `user_id` binary(16) NOT NULL,
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `credential_id` varbinary(1024) NOT NULL,
+  `public_key` blob NOT NULL,
+  `sign_count` int unsigned NOT NULL DEFAULT '0',
+  `transports` json DEFAULT NULL,
+  `aaguid` binary(16) DEFAULT NULL,
+  `backup_eligible` tinyint(1) DEFAULT NULL,
+  `backup_state` tinyint(1) DEFAULT NULL,
+  `revoked_at` datetime(6) DEFAULT NULL,
+  `revoked_by_user_id` binary(16) DEFAULT NULL,
+  `revoke_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `last_used_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_webauthn_credentials_credential_id` (`credential_id`),
+  KEY `idx_admin_webauthn_credentials_user` (`user_id`),
+  KEY `idx_admin_webauthn_credentials_user_active` (`user_id`,`revoked_at`),
+  KEY `idx_admin_webauthn_credentials_revoked_by` (`revoked_by_user_id`),
+  CONSTRAINT `fk_admin_webauthn_credentials_revoked_by` FOREIGN KEY (`revoked_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT,
+  CONSTRAINT `fk_admin_webauthn_credentials_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_admin_webauthn_credentials_backup_eligible` CHECK (((`backup_eligible` is null) or (`backup_eligible` in (0,1)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_backup_state` CHECK (((`backup_state` is null) or (`backup_state` in (0,1)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_label` CHECK (((`label` is null) or (char_length(trim(`label`)) between 2 and 120))),
+  CONSTRAINT `chk_admin_webauthn_credentials_last_used` CHECK (((`last_used_at` is null) or (`last_used_at` >= `created_at`))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoke_consistency` CHECK ((((`revoked_at` is null) and (`revoke_reason` is null)) or ((`revoked_at` is not null) and (`revoke_reason` is not null)))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoke_reason` CHECK (((`revoke_reason` is null) or (char_length(trim(`revoke_reason`)) between 2 and 500))),
+  CONSTRAINT `chk_admin_webauthn_credentials_revoked_at` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `admin_webauthn_credentials`
+--
+
+LOCK TABLES `admin_webauthn_credentials` WRITE;
+/*!40000 ALTER TABLE `admin_webauthn_credentials` DISABLE KEYS */;
+/*!40000 ALTER TABLE `admin_webauthn_credentials` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `appointment_time_windows`
 --
 
@@ -154,6 +341,7 @@ CREATE TABLE `appointment_holds` (
   `expires_at` datetime(6) NOT NULL,
   `released_at` datetime(6) DEFAULT NULL,
   `converted_at` datetime(6) DEFAULT NULL,
+  `superseded_at` datetime(6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
@@ -167,7 +355,8 @@ CREATE TABLE `appointment_holds` (
   CONSTRAINT `chk_appointment_holds_converted_at` CHECK (((`converted_at` is null) or (`converted_at` >= `held_at`))),
   CONSTRAINT `chk_appointment_holds_expiration` CHECK ((`expires_at` > `held_at`)),
   CONSTRAINT `chk_appointment_holds_final_state` CHECK (((`released_at` is null) or (`converted_at` is null))),
-  CONSTRAINT `chk_appointment_holds_released_at` CHECK (((`released_at` is null) or (`released_at` >= `held_at`)))
+  CONSTRAINT `chk_appointment_holds_released_at` CHECK (((`released_at` is null) or (`released_at` >= `held_at`))),
+  CONSTRAINT `chk_appointment_holds_superseded_at` CHECK (((`superseded_at` is null) or ((`converted_at` is not null) and (`superseded_at` >= `converted_at`))))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -266,6 +455,7 @@ CREATE TABLE `auth_sessions` (
   `ip_address` varbinary(16) DEFAULT NULL,
   `user_agent` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `last_used_at` datetime(6) DEFAULT NULL,
+  `step_up_verified_at` datetime(6) DEFAULT NULL,
   `expires_at` datetime(6) NOT NULL,
   `revoked_at` datetime(6) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -280,7 +470,8 @@ CREATE TABLE `auth_sessions` (
   CONSTRAINT `fk_auth_sessions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
   CONSTRAINT `chk_auth_sessions_expiration` CHECK ((`expires_at` > `created_at`)),
   CONSTRAINT `chk_auth_sessions_last_used` CHECK (((`last_used_at` is null) or (`last_used_at` >= `created_at`))),
-  CONSTRAINT `chk_auth_sessions_revoked` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`)))
+  CONSTRAINT `chk_auth_sessions_revoked` CHECK (((`revoked_at` is null) or (`revoked_at` >= `created_at`))),
+  CONSTRAINT `chk_auth_sessions_step_up_verified` CHECK (((`step_up_verified_at` is null) or (`step_up_verified_at` >= `created_at`)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -576,6 +767,111 @@ CREATE TABLE `booking_locations` (
 LOCK TABLES `booking_locations` WRITE;
 /*!40000 ALTER TABLE `booking_locations` DISABLE KEYS */;
 /*!40000 ALTER TABLE `booking_locations` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `booking_refund_statuses`
+--
+-- BLUE V1 Phase B20 - lifecycle of one Stripe refund EXECUTION (distinct
+-- from `bookings.cancellation_refund_percentage`/`_amount`, the frozen
+-- POLICY snapshot). See database/phase19_booking_refund_automation_migration.sql.
+--
+
+DROP TABLE IF EXISTS `booking_refund_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_refund_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_refund_statuses_code` (`code`),
+  KEY `idx_booking_refund_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_booking_refund_statuses_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_booking_refund_statuses_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_booking_refund_statuses_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_booking_refund_statuses_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_refund_statuses`
+--
+
+LOCK TABLES `booking_refund_statuses` WRITE;
+/*!40000 ALTER TABLE `booking_refund_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_refund_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `booking_refunds`
+--
+
+DROP TABLE IF EXISTS `booking_refunds`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_refunds` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `booking_id` binary(16) NOT NULL,
+  `payment_attempt_id` binary(16) NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `policy_percentage` tinyint unsigned NOT NULL,
+  `requested_amount` decimal(19,6) NOT NULL,
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_refund_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `provider_status_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `idempotency_key` varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `initiated_by_user_id` binary(16) NOT NULL,
+  `initiated_as` varchar(20) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `failure_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `failure_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `requested_at` datetime(6) NOT NULL,
+  `submitted_at` datetime(6) DEFAULT NULL,
+  `succeeded_at` datetime(6) DEFAULT NULL,
+  `failed_at` datetime(6) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_refunds_booking` (`booking_id`),
+  UNIQUE KEY `uq_booking_refunds_idempotency_key` (`idempotency_key`),
+  UNIQUE KEY `uq_booking_refunds_provider_reference` (`provider_code`,`provider_refund_reference`),
+  KEY `idx_booking_refunds_status_created` (`status_id`,`created_at`),
+  KEY `idx_booking_refunds_payment_attempt` (`payment_attempt_id`),
+  CONSTRAINT `fk_booking_refunds_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_payment_attempt` FOREIGN KEY (`payment_attempt_id`) REFERENCES `payment_attempts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_status` FOREIGN KEY (`status_id`) REFERENCES `booking_refund_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_booking_refunds_initiated_by` FOREIGN KEY (`initiated_by_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_booking_refunds_policy_percentage` CHECK ((`policy_percentage` between 0 and 100)),
+  CONSTRAINT `chk_booking_refunds_requested_amount` CHECK ((`requested_amount` >= 0)),
+  CONSTRAINT `chk_booking_refunds_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_booking_refunds_idempotency_key` CHECK ((char_length(trim(`idempotency_key`)) between 8 and 191)),
+  CONSTRAINT `chk_booking_refunds_initiated_as` CHECK ((`initiated_as` in (_utf8mb4'CUSTOMER',_utf8mb4'ADMIN'))),
+  CONSTRAINT `chk_booking_refunds_reason` CHECK (((`reason` is null) or (char_length(trim(`reason`)) between 2 and 500))),
+  CONSTRAINT `chk_booking_refunds_failure_code` CHECK (((`failure_code` is null) or (char_length(trim(`failure_code`)) between 1 and 100))),
+  CONSTRAINT `chk_booking_refunds_failure_message` CHECK (((`failure_message` is null) or (char_length(trim(`failure_message`)) between 2 and 500))),
+  CONSTRAINT `chk_booking_refunds_submitted_at` CHECK (((`submitted_at` is null) or (`submitted_at` >= `requested_at`))),
+  CONSTRAINT `chk_booking_refunds_succeeded_at` CHECK (((`succeeded_at` is null) or ((`succeeded_at` >= `requested_at`) and (`provider_refund_reference` is not null)))),
+  CONSTRAINT `chk_booking_refunds_failed_at` CHECK (((`failed_at` is null) or (`failed_at` >= `requested_at`))),
+  CONSTRAINT `chk_booking_refunds_single_final_state` CHECK (((`succeeded_at` is null) or (`failed_at` is null))),
+  CONSTRAINT `chk_booking_refunds_failure_data` CHECK (((`failed_at` is null) and (`failure_code` is null) and (`failure_message` is null)) or ((`failed_at` is not null) and (`failure_code` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_refunds`
+--
+
+LOCK TABLES `booking_refunds` WRITE;
+/*!40000 ALTER TABLE `booking_refunds` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_refunds` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

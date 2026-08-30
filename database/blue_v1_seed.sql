@@ -100,6 +100,263 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 2A. ADMIN CAPABILITIES (PERMISSIONS) — BLUE V1 Phase A1
+--
+-- Stable capability codes, `family.action` naming convention. Each code
+-- here MUST have a matching case in App\Support\Admin\AdminCapability.
+-- Only capabilities enforced by an already-shipped /v1/admin/* route are
+-- seeded here — a future Admin module adds its own row(s) in lockstep with
+-- the route(s) that need them, never speculatively ahead of that route.
+-- =============================================================
+
+INSERT INTO admin_permissions (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'bookings.view',
+    'View Bookings',
+    'View paid Bookings and Booking Items across every customer, including payment summary, technician assignment history, and cancellation/refund snapshot.',
+    TRUE
+),
+(
+    'bookings.manage',
+    'Manage Bookings',
+    'Update authorized operational Booking details without changing financial snapshots, services, ownership, or appointment capacity.',
+    TRUE
+),
+(
+    'bookings.cancel',
+    'Cancel Bookings',
+    'Cancel a Booking on behalf of a customer, reusing the same cascade and manual refund-eligibility policy as customer self-service cancellation.',
+    TRUE
+),
+(
+    'bookings.force_complete',
+    'Force Complete Bookings',
+    'Break-glass operational recovery: force-complete a Booking through its Booking Items when the normal technician lifecycle cannot finish it. Requires WebAuthn Step-Up, like contracts.cancel.',
+    TRUE
+),
+(
+    'bookings.reschedule',
+    'Reschedule Bookings',
+    'Move a non-terminal Booking to a different appointment slot, re-validating capacity and any assigned Technician for overlap. Never touches payment, pricing, or Contract entitlement.',
+    TRUE
+),
+(
+    'technicians.view',
+    'View Technicians',
+    'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
+    TRUE
+),
+(
+    'technicians.assign',
+    'Assign Technicians',
+    'Assign, reassign, start, and complete Technician work on a Booking Item.',
+    TRUE
+),
+(
+    'contracts.view',
+    'View Service Contracts',
+    'View Service Contracts and their items, status history, and acceptance/billing summary.',
+    TRUE
+),
+(
+    'contracts.manage',
+    'Manage Service Contracts',
+    'Approve, send for customer acceptance, and suspend a Service Contract.',
+    TRUE
+),
+(
+    'contracts.cancel',
+    'Cancel Service Contracts',
+    'Cancel a Service Contract, permanently stopping it from authorizing further Contract Bookings.',
+    TRUE
+),
+(
+    'payments.view',
+    'View Payments',
+    'View one-off Payment Attempts across every customer - status, amount, provider reference, linked Booking, and recent webhook processing history. Read-only: no refund, retry, or status-override capability exists.',
+    TRUE
+),
+(
+    'billing.view',
+    'View Contract Billing',
+    'View recurring Service Contract Billing state across every customer - subscription status, billing period, past-due/cancellation state, and recent webhook processing history. Read-only.',
+    TRUE
+),
+(
+    'customers.view',
+    'View Customers',
+    'View Customer profiles and their Properties across the platform - contact info, account status, location/relationship profile, account-deletion state, and small operational activity counts. Read-only: no account/property mutation capability exists.',
+    TRUE
+),
+(
+    'support.view',
+    'View Support Requests',
+    'View Support Requests across every customer, including linked Booking, assignment, and the full message conversation.',
+    TRUE
+),
+(
+    'support.manage',
+    'Manage Support Requests',
+    'Post an Admin reply message on a Support Request. Status-transition and assignment mutations are not yet implemented.',
+    TRUE
+),
+(
+    'services.view',
+    'View Service Catalog',
+    'View Service Categories and Services shown in the mobile app, including each Service''s capabilities, required specializations, options, media, and pricing-scheme-version summary. Read-only.',
+    TRUE
+),
+(
+    'services.manage',
+    'Manage Service Catalog',
+    'Edit Service Category/Service display metadata (name, description, display order) and activate/deactivate Categories and Services. Options, capabilities, specializations, media, and pricing rules are not mutable through this capability.',
+    TRUE
+),
+(
+    'pricing.view',
+    'View Pricing',
+    'View Pricing Scheme Versions and their rules/conditions/tiers for every Service. Read-only.',
+    TRUE
+),
+(
+    'pricing.manage',
+    'Manage Pricing (Draft)',
+    'Create a DRAFT Pricing Scheme Version and author/delete its DRAFT rules (with conditions and tiers). PUBLISHED/RETIRED versions and rules are never mutable through this capability.',
+    TRUE
+),
+(
+    'pricing.publish',
+    'Publish Pricing',
+    'Publish a DRAFT Pricing Scheme Version, making it live for real customer price calculations. Requires WebAuthn Step-Up, like contracts.cancel.',
+    TRUE
+),
+(
+    'dashboard.view',
+    'View Admin Dashboard',
+    'View the Admin operational dashboard: read-only summary counts, attention lists, and recent activity aggregated across Bookings, Contracts, Payments, Contract Billing, Support, Technicians, and Customers.',
+    TRUE
+),
+(
+    'ratings.view',
+    'View Ratings',
+    'View customer ratings and feedback comments left on completed Bookings, and which Customer/Booking each rating belongs to. Read-only: no rating-creation flow exists yet, and editing/deleting a submitted rating is not yet policy-defined.',
+    TRUE
+),
+(
+    'audit.view',
+    'View Audit Log',
+    'Search and inspect the Admin audit log (admin_audit_logs): who did what, when, and whether it succeeded. Read-only - an audit ledger is append-only, so there is no mutation capability.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 2B. ADMIN ROLE -> CAPABILITY GRANTS — BLUE V1 Phase A1
+--
+-- ADMIN receives every capability an existing Admin Operations route
+-- enforces today, preserving BLUE V1 Phase 9B's current behavior exactly
+-- (ADMIN and SUPER_ADMIN had identical operational access before this
+-- phase). SUPER_ADMIN needs no rows here at all: it is authorized for
+-- every capability - present and future - through the centralized,
+-- explicit override in App\Support\Admin\AdminAuthorizationService, never
+-- through a row in this table. Re-running this block is a no-op (the
+-- ON DUPLICATE KEY UPDATE clause only ever refreshes granted_at on an
+-- already-existing grant).
+-- =============================================================
+
+INSERT INTO admin_role_permissions (
+    role_id,
+    permission_id,
+    granted_by_user_id,
+    granted_at
+)
+SELECT
+    r.id,
+    p.id,
+    NULL,
+    CURRENT_TIMESTAMP(6)
+FROM roles r
+CROSS JOIN admin_permissions p
+WHERE r.code = 'ADMIN'
+  AND p.code IN (
+    'bookings.view',
+    'bookings.manage',
+    'bookings.cancel',
+    'bookings.force_complete',
+    'bookings.reschedule',
+    'technicians.view',
+    'technicians.assign',
+    'contracts.view',
+    'contracts.manage',
+    'contracts.cancel',
+    'payments.view',
+    'billing.view',
+    'customers.view',
+    'support.view',
+    'support.manage',
+    'services.view',
+    'services.manage',
+    'pricing.view',
+    'pricing.manage',
+    'pricing.publish',
+    'dashboard.view',
+    'ratings.view',
+    'audit.view'
+  )
+ON DUPLICATE KEY UPDATE
+    granted_at = granted_at;
+
+
+-- =============================================================
+-- 2C. ADMIN WEBAUTHN CHALLENGE PURPOSES — BLUE V1 Phase A2.1
+--
+-- Reference codes for admin_webauthn_challenges.purpose_id, mirroring the
+-- otp_verification_purposes convention. Schema foundation only - no
+-- registration/login/step-up ceremony logic exists yet (Phase A2.2+).
+-- =============================================================
+
+INSERT INTO admin_webauthn_challenge_purposes (
+    code,
+    name,
+    description,
+    is_active
+)
+VALUES
+(
+    'REGISTRATION',
+    'Registration',
+    'A challenge issued while an Admin registers a new WebAuthn credential.',
+    TRUE
+),
+(
+    'LOGIN_ASSERTION',
+    'Login Assertion',
+    'A challenge issued during Admin login, to be proven by an existing WebAuthn credential.',
+    TRUE
+),
+(
+    'STEP_UP',
+    'Step-Up',
+    'A challenge issued to re-verify an already-authenticated Admin before a sensitive operation.',
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 3. PROPERTY RELATIONSHIP TYPES
 -- =============================================================
 
@@ -1373,6 +1630,57 @@ VALUES
     'FAILED',
     'Failed',
     'The webhook delivery could not be processed and may be retried by the provider.',
+    4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
+-- 23B. BOOKING REFUND STATUSES
+-- BLUE V1 Phase B20 - lifecycle of a Stripe refund EXECUTION
+-- (booking_refunds.status_id), distinct from the frozen policy
+-- snapshot on `bookings`. See
+-- phase19_booking_refund_automation_migration.sql.
+-- =============================================================
+
+INSERT INTO booking_refund_statuses (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'PENDING',
+    'Pending',
+    'The refund obligation exists but Stripe has not yet confirmed it succeeded - safe and required to retry.',
+    1,
+    TRUE
+),
+(
+    'SUCCEEDED',
+    'Succeeded',
+    'Stripe confirmed the refund was returned to the original payment method.',
+    2,
+    TRUE
+),
+(
+    'FAILED',
+    'Failed',
+    'Stripe definitively rejected the refund request - not retryable without operator intervention.',
+    3,
+    TRUE
+),
+(
+    'RECONCILIATION_REQUIRED',
+    'Reconciliation required',
+    'An authoritative Stripe refund webhook reported an amount or currency that did not match the persisted obligation (BLUE V1 is AED-only) - not automatically retryable, requires operator investigation.',
     4,
     TRUE
 ) AS new

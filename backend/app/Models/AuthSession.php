@@ -27,6 +27,7 @@ class AuthSession extends Model
         'ip_address',
         'user_agent',
         'last_used_at',
+        'step_up_verified_at',
         'expires_at',
         'revoked_at',
     ];
@@ -42,6 +43,7 @@ class AuthSession extends Model
             'user_id' => UuidBinaryCast::class,
             'client_type_id' => 'integer',
             'last_used_at' => 'datetime',
+            'step_up_verified_at' => 'datetime',
             'expires_at' => 'datetime',
             'revoked_at' => 'datetime',
         ];

@@ -75,16 +75,32 @@ class AdminFinancialIsolationTest extends TestCase
     }
 
     // 49. No arbitrary/generic status-setter endpoint exists.
+    //
+    // BLUE V1 Phase B15 added a scoped PATCH /v1/admin/bookings/{booking}
+    // route (Edit Booking - App\Actions\Admin\Booking\
+    // AdminUpdateBookingAction), so this URI now legitimately answers to
+    // PATCH. It is not a generic status-setter: `status` is not one of the
+    // eight operational visit/location fields UpdateAdminBookingRequest
+    // validates, so `$request->validated()` drops it before the Action ever
+    // sees it - a `status` key in the body can never change
+    // `bookings.status_id`. There is still no booking-item-level PATCH
+    // route at all.
     public function test_no_generic_admin_status_endpoint_exists(): void
     {
         $admin = $this->createAndLoginAdmin(['ADMIN']);
         $fixture = $this->bookingWithAssignableItem();
 
-        // The URI itself only ever answers to GET (Booking detail) - PATCH
-        // correctly 405s rather than being routed to any status-setter.
+        $statusBefore = DB::table('bookings')->where('id', $fixture['booking']->id)->value('status_id');
+
         $this->patchJson('/api/v1/admin/bookings/'.UuidBinary::toString($fixture['booking']->id), [
             'status' => 'COMPLETED',
-        ], $this->bearer($admin['access_token']))->assertStatus(405);
+        ], $this->bearer($admin['access_token']))->assertStatus(200);
+
+        $this->assertSame(
+            $statusBefore,
+            DB::table('bookings')->where('id', $fixture['booking']->id)->value('status_id'),
+            'A status field in the Edit Booking request body must never change bookings.status_id.'
+        );
 
         $this->patchJson('/api/v1/admin/booking-items/'.UuidBinary::toString($fixture['item']->id), [
             'status' => 'COMPLETED',

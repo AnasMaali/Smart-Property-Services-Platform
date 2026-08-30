@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Contract;
 
+use App\Support\Contract\ContractStatuses;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Carbon;
@@ -190,6 +191,12 @@ class ContractLifecycleTest extends TestCase
     {
         $ctx = $this->requestedContract();
 
+        // BLUE V1 Phase A2.5 - contracts.cancel now also requires a fresh
+        // WebAuthn step-up; grant it directly rather than driving the real
+        // ceremony, exactly like requestedContract() itself mints the
+        // Admin session directly instead of via HTTP.
+        $this->markStepUpVerified($ctx['admin']['session_uuid']);
+
         $response = $this->adminCancelContract($ctx['admin']['access_token'], $ctx['contract_uuid'], ['reason' => 'Customer withdrew request.']);
 
         $response->assertStatus(200);
@@ -200,6 +207,10 @@ class ContractLifecycleTest extends TestCase
     {
         $built = $this->activeContractWithItem();
 
+        // BLUE V1 Phase A2.5 - see identical note in
+        // test_admin_can_cancel_a_requested_contract.
+        $this->markStepUpVerified($built['admin']['session_uuid']);
+
         $response = $this->adminCancelContract($built['admin']['access_token'], UuidBinary::toString($built['contract']->id));
 
         $response->assertStatus(200);
@@ -209,6 +220,10 @@ class ContractLifecycleTest extends TestCase
     public function test_cancel_is_idempotent(): void
     {
         $ctx = $this->requestedContract();
+
+        // BLUE V1 Phase A2.5 - one grant covers both cancel calls below;
+        // step-up is a reusable freshness window, not consumed per action.
+        $this->markStepUpVerified($ctx['admin']['session_uuid']);
 
         $this->adminCancelContract($ctx['admin']['access_token'], $ctx['contract_uuid'])->assertStatus(200);
         $second = $this->adminCancelContract($ctx['admin']['access_token'], $ctx['contract_uuid']);
@@ -251,6 +266,6 @@ class ContractLifecycleTest extends TestCase
         $response->assertStatus(409);
 
         $row = DB::table('service_contracts')->where('id', $contractIdBinary)->first();
-        $this->assertSame('EXPIRED', \App\Support\Contract\ContractStatuses::code((int) $row->status_id));
+        $this->assertSame('EXPIRED', ContractStatuses::code((int) $row->status_id));
     }
 }

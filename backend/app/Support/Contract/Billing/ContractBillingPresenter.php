@@ -51,10 +51,21 @@ final class ContractBillingPresenter
     {
         $billing = self::row($contractIdBinary);
 
-        if ($billing === null) {
-            return null;
-        }
+        return $billing === null ? null : self::presentRow($billing);
+    }
 
+    /**
+     * The full admin-safe field set for one already-fetched
+     * `service_contract_billings` row - factored out of adminView() (BLUE
+     * V1 Phase B5) so App\Support\Admin\AdminContractBillingPresenter can
+     * reuse the exact same field mapping for a row looked up by its own
+     * billing uuid, instead of only ever by `service_contract_id`. Never
+     * exposes `id`/foreign keys as raw binary - only through UuidBinary.
+     *
+     * @return array<string, mixed>
+     */
+    public static function presentRow(object $billing): array
+    {
         $currency = DB::table('currencies')->where('id', $billing->currency_id)->first(['code', 'symbol', 'minor_unit']);
 
         return [
@@ -71,8 +82,12 @@ final class ContractBillingPresenter
             'current_period_start' => $billing->current_period_start === null ? null : Carbon::parse($billing->current_period_start)->toIso8601String(),
             'current_period_end' => $billing->current_period_end === null ? null : Carbon::parse($billing->current_period_end)->toIso8601String(),
             'past_due_since' => $billing->past_due_since === null ? null : Carbon::parse($billing->past_due_since)->toIso8601String(),
+            'billing_suspended_at' => $billing->billing_suspended_at === null ? null : Carbon::parse($billing->billing_suspended_at)->toIso8601String(),
             'cancel_at' => $billing->cancel_at === null ? null : Carbon::parse($billing->cancel_at)->toIso8601String(),
             'cancelled_at' => $billing->cancelled_at === null ? null : Carbon::parse($billing->cancelled_at)->toIso8601String(),
+            'provider_cancellation_requested_at' => $billing->provider_cancellation_requested_at === null ? null : Carbon::parse($billing->provider_cancellation_requested_at)->toIso8601String(),
+            'provider_cancellation_last_attempt_at' => $billing->provider_cancellation_last_attempt_at === null ? null : Carbon::parse($billing->provider_cancellation_last_attempt_at)->toIso8601String(),
+            'provider_cancellation_attempt_count' => (int) $billing->provider_cancellation_attempt_count,
             'created_at' => Carbon::parse($billing->created_at)->toIso8601String(),
             'updated_at' => Carbon::parse($billing->updated_at)->toIso8601String(),
         ];

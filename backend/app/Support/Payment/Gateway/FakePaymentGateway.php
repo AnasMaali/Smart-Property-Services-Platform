@@ -37,11 +37,19 @@ final class FakePaymentGateway implements PaymentGateway
 
     private ?ProviderPaymentState $stickyFetch = null;
 
+    /** @var array<int, RefundCreationResult> */
+    private array $queuedRefunds = [];
+
+    private ?RefundCreationResult $stickyRefund = null;
+
     /** @var array<int, PaymentCreationData> */
     public array $createPaymentCalls = [];
 
     /** @var array<int, string> */
     public array $fetchPaymentCalls = [];
+
+    /** @var array<int, RefundCreationData> */
+    public array $refundPaymentCalls = [];
 
     public function providerCode(): string
     {
@@ -91,6 +99,41 @@ final class FakePaymentGateway implements PaymentGateway
         );
     }
 
+    public function queueNextRefund(RefundCreationResult $result): void
+    {
+        $this->queuedRefunds[] = $result;
+    }
+
+    public function alwaysReturnRefund(RefundCreationResult $result): void
+    {
+        $this->stickyRefund = $result;
+    }
+
+    /**
+     * Deterministic, idempotency-key-derived default identical in spirit
+     * to createPayment()'s default: the same providerIdempotencyKey always
+     * yields the same fake refund reference, so a test can assert a
+     * retried refund call converges on one reference without needing to
+     * queue results at all.
+     */
+    public function refundPayment(RefundCreationData $data): RefundCreationResult
+    {
+        $this->refundPaymentCalls[] = $data;
+
+        if ($this->queuedRefunds !== []) {
+            return array_shift($this->queuedRefunds);
+        }
+
+        if ($this->stickyRefund !== null) {
+            return $this->stickyRefund;
+        }
+
+        return RefundCreationResult::created(
+            providerRefundReference: 'fake_re_'.$data->providerIdempotencyKey,
+            providerStatusCode: 'succeeded',
+        );
+    }
+
     public function verifyWebhook(string $rawBody, array $signatureHeaders): VerifiedWebhookResult
     {
         $signature = $signatureHeaders['X-Fake-Signature'] ?? $signatureHeaders['x-fake-signature'] ?? null;
@@ -108,13 +151,35 @@ final class FakePaymentGateway implements PaymentGateway
         return VerifiedWebhookResult::valid($decoded);
     }
 
-    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent
+    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent|NormalizedRefundEvent
     {
         if (! is_array($verifiedProviderEvent)) {
             throw new UnexpectedValueException('Expected a decoded fake webhook payload array.');
         }
 
         $event = $verifiedProviderEvent;
+
+        /*
+         * Discriminated by an explicit 'kind' key rather than by trying to
+         * infer it from other fields - test fixtures build one of two
+         * distinct payload shapes (fakeWebhookPayload() for a payment
+         * event, fakeRefundWebhookPayload() for a refund event), mirroring
+         * how the real StripePaymentGateway discriminates on the verified
+         * Stripe SDK object's own class.
+         */
+        if (($event['kind'] ?? null) === 'refund') {
+            return new NormalizedRefundEvent(
+                providerEventId: (string) $event['event_id'],
+                eventType: (string) $event['event_type'],
+                providerRefundReference: $event['provider_refund_reference'] ?? null,
+                providerPaymentReference: $event['provider_payment_reference'] ?? null,
+                status: (string) $event['refund_status'],
+                amount: $event['amount'] ?? null,
+                currencyCode: $event['currency'] ?? null,
+                failureCode: $event['failure_code'] ?? null,
+                failureMessage: $event['failure_message'] ?? null,
+            );
+        }
 
         return new NormalizedPaymentEvent(
             providerEventId: (string) $event['event_id'],

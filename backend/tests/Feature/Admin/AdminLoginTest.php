@@ -3,13 +3,18 @@
 namespace Tests\Feature\Admin;
 
 use App\Support\Uuid\UuidBinary;
-use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
+/**
+ * BLUE V1 Phase A2.3: this now covers ONLY Stage 1 (password) of the
+ * two-stage Admin login. It never returns a session/token - see
+ * AdminMfaLoginTest for the full password -> WebAuthn -> session flow with
+ * real cryptography (MFA_REQUIRED / MFA_ENROLLMENT_REQUIRED, first-credential
+ * bootstrap, MFA verify, session issuance, and every rejection path).
+ */
 class AdminLoginTest extends TestCase
 {
     use DatabaseTransactions;
@@ -84,35 +89,30 @@ class AdminLoginTest extends TestCase
         ], $overrides);
     }
 
-    public function test_admin_can_log_in(): void
+    public function test_admin_with_no_credentials_receives_mfa_enrollment_required(): void
     {
         $admin = $this->createUser(['ADMIN']);
 
         $response = $this->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin));
 
-        $response->assertStatus(200)
-            ->assertJson([
-                'success' => true,
-                'data' => [
-                    'user_uuid' => $admin['user_uuid'],
-                    'full_name' => $admin['full_name'],
-                    'phone_number' => $admin['phone_number'],
-                    'role' => 'ADMIN',
-                    'roles' => ['ADMIN'],
+        $response->assertStatus(200)->assertJson([
+            'success' => true,
+            'data' => ['state' => 'MFA_ENROLLMENT_REQUIRED'],
+        ])->assertJsonStructure([
+            'success', 'message',
+            'data' => [
+                'state', 'login_ticket',
+                'webauthn' => [
+                    'rp' => ['id', 'name'],
+                    'user' => ['id', 'name', 'display_name'],
+                    'challenge', 'pub_key_cred_params', 'authenticator_selection', 'attestation',
+                    'exclude_credentials', 'timeout',
                 ],
-            ])
-            ->assertJsonStructure([
-                'success',
-                'message',
-                'data' => [
-                    'user_uuid', 'full_name', 'phone_number', 'email', 'role', 'roles',
-                    'session_uuid', 'access_token', 'access_token_expires_at',
-                    'refresh_token', 'session_expires_at',
-                ],
-            ]);
+            ],
+        ]);
     }
 
-    public function test_super_admin_can_log_in(): void
+    public function test_super_admin_with_no_credentials_receives_mfa_enrollment_required(): void
     {
         $superAdmin = $this->createUser(['SUPER_ADMIN']);
 
@@ -120,27 +120,8 @@ class AdminLoginTest extends TestCase
 
         $response->assertStatus(200)->assertJson([
             'success' => true,
-            'data' => [
-                'role' => 'SUPER_ADMIN',
-                'roles' => ['SUPER_ADMIN'],
-            ],
+            'data' => ['state' => 'MFA_ENROLLMENT_REQUIRED'],
         ]);
-    }
-
-    public function test_user_holding_both_admin_and_super_admin_roles_gets_super_admin_as_primary_role(): void
-    {
-        $user = $this->createUser(['ADMIN', 'SUPER_ADMIN']);
-
-        $response = $this->postJson('/api/v1/admin/auth/login', $this->loginPayload($user));
-
-        $response->assertStatus(200)->assertJson([
-            'success' => true,
-            'data' => ['role' => 'SUPER_ADMIN'],
-        ]);
-
-        $roles = $response->json('data.roles');
-        sort($roles);
-        $this->assertSame(['ADMIN', 'SUPER_ADMIN'], $roles);
     }
 
     public function test_customer_cannot_log_into_admin_auth(): void
@@ -241,34 +222,29 @@ class AdminLoginTest extends TestCase
         $response->assertStatus(200)->assertJson(['success' => true]);
     }
 
-    public function test_successful_login_creates_admin_web_auth_sessions_row(): void
+    public function test_stage_one_never_creates_an_auth_sessions_row(): void
     {
         $admin = $this->createUser(['ADMIN']);
 
-        $response = $this->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin));
+        $this->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin))->assertStatus(200);
 
-        $sessionUuid = $response->json('data.session_uuid');
-        $session = DB::table('auth_sessions')->where('id', UuidBinary::toBinary($sessionUuid))->first();
+        $sessions = DB::table('auth_sessions')
+            ->where('user_id', UuidBinary::toBinary($admin['user_uuid']))
+            ->count();
 
-        $this->assertNotNull($session);
-        $this->assertNull($session->revoked_at);
-
-        $expectedClientTypeId = (int) DB::table('auth_client_types')->where('code', 'ADMIN_WEB')->value('id');
-        $this->assertSame($expectedClientTypeId, (int) $session->client_type_id);
+        $this->assertSame(0, $sessions);
     }
 
-    public function test_access_token_claims_use_admin_web_client_and_resolved_role(): void
+    public function test_stage_one_response_never_contains_a_token(): void
     {
         $admin = $this->createUser(['ADMIN']);
 
         $response = $this->postJson('/api/v1/admin/auth/login', $this->loginPayload($admin));
 
-        $accessToken = $response->json('data.access_token');
-        $decoded = JWT::decode($accessToken, new Key(config('jwt.secret'), 'HS256'));
-
-        $this->assertSame('ADMIN', $decoded->role);
-        $this->assertSame('ADMIN_WEB', $decoded->client);
-        $this->assertSame($admin['user_uuid'], $decoded->sub);
+        $data = $response->json('data');
+        $this->assertArrayNotHasKey('access_token', $data);
+        $this->assertArrayNotHasKey('refresh_token', $data);
+        $this->assertArrayNotHasKey('session_uuid', $data);
     }
 
     public function test_response_never_exposes_password_hash_or_refresh_token_hash_or_role_ids(): void
@@ -328,7 +304,7 @@ class AdminLoginTest extends TestCase
             ->assertStatus(429);
     }
 
-    public function test_successful_login_is_not_broken_by_rate_limiting(): void
+    public function test_successful_password_stage_is_not_broken_by_rate_limiting(): void
     {
         $admin = $this->createUser(['ADMIN']);
 

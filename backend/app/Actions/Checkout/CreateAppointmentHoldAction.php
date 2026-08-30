@@ -85,6 +85,7 @@ class CreateAppointmentHoldAction
                 ->where('appointment_slot_id', $slotIdBinary)
                 ->where('cart_id', '!=', $cartIdBinary)
                 ->whereNull('released_at')
+                ->whereNull('superseded_at')
                 ->where(function ($query) use ($now) {
                     $query->whereNotNull('converted_at')->orWhere('expires_at', '>', $now);
                 })

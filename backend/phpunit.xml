@@ -25,6 +25,14 @@
         <env name="AUTH_JWT_SECRET" value="testing-only-auth-jwt-secret-not-a-real-secret"/>
         <env name="AUTH_ACCESS_TOKEN_TTL_MINUTES" value="15"/>
         <env name="AUTH_SESSION_TTL_DAYS" value="30"/>
+        <env name="ADMIN_WEBAUTHN_RP_NAME" value="BLUE Admin (Testing)"/>
+        <env name="ADMIN_WEBAUTHN_RP_ID" value="admin.blue.test"/>
+        <env name="ADMIN_WEBAUTHN_ORIGINS" value="https://admin.blue.test"/>
+        <env name="ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS" value="300"/>
+        <env name="AUTH_ADMIN_SESSION_TTL_HOURS" value="12"/>
+        <env name="AUTH_ADMIN_IDLE_TIMEOUT_MINUTES" value="20"/>
+        <env name="AUTH_ADMIN_ACTIVITY_TOUCH_MINUTES" value="5"/>
+        <env name="AUTH_ADMIN_STEP_UP_TTL_MINUTES" value="5"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>

@@ -5,6 +5,7 @@ namespace App\Actions\Auth;
 use App\Models\AuthSession;
 use App\Models\User;
 use App\Services\Auth\JwtTokenService;
+use App\Support\Admin\AdminSessionPolicy;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -18,21 +19,36 @@ class AdminRefreshTokenAction
     /** Priority order used only to pick the single `role` JWT claim when a user holds more than one Admin role. */
     private const ADMIN_ROLE_PRIORITY = ['SUPER_ADMIN', 'ADMIN'];
 
-    public function __construct(private readonly JwtTokenService $jwtTokenService) {}
+    public function __construct(
+        private readonly JwtTokenService $jwtTokenService,
+        private readonly AdminSessionPolicy $sessionPolicy,
+    ) {}
 
     /**
      * Validate a raw Admin refresh token, rotate it, and issue a new access
      * token. Mirrors RefreshTokenAction's locking/rotation strategy exactly
-     * (see that class for the concurrency notes); the only differences are
-     * the role requirement (ADMIN/SUPER_ADMIN instead of CUSTOMER, re-read
+     * (see that class for the concurrency notes); the differences are the
+     * role requirement (ADMIN/SUPER_ADMIN instead of CUSTOMER, re-read
      * fresh from the database on every refresh so a role revoked after
-     * login stops working on the very next refresh) and the client type
-     * requirement (ADMIN_WEB instead of the mobile client types).
+     * login stops working on the very next refresh), the client type
+     * requirement (ADMIN_WEB instead of the mobile client types), and (BLUE
+     * V1 Phase A2.4) the Admin idle-timeout check below.
      *
-     * Every rejection reason - unknown token, revoked/expired session,
-     * non-ACTIVE user, missing/inactive ADMIN/SUPER_ADMIN role, or an
-     * inactive/non-ADMIN_WEB client type - returns the exact same generic
-     * message.
+     * CRITICAL (Phase A2.4): a silent refresh is deliberately NEVER treated
+     * as Admin activity. This method enforces the idle timeout (via the
+     * same App\Support\Admin\AdminSessionPolicy App\Http\Middleware\AuthenticateAdmin
+     * uses, so the two can never drift) but never calls
+     * AdminSessionPolicy::touchIfDue() - unlike the Customer RefreshTokenAction,
+     * which does update `last_used_at` on every successful refresh (that
+     * Customer-only behavior is deliberately unchanged - see that class).
+     * An Admin session already idle-expired at the moment of a refresh
+     * attempt is rejected and revoked here exactly as it would be on a
+     * Bearer request - refresh can never resurrect it.
+     *
+     * Every rejection reason - unknown token, revoked/expired/idle-expired
+     * session, non-ACTIVE user, missing/inactive ADMIN/SUPER_ADMIN role, or
+     * an inactive/non-ADMIN_WEB client type - returns the exact same
+     * generic message.
      *
      * @param  array{refresh_token: string}  $data
      * @return array{success: bool, message: string, data: array|null}
@@ -59,6 +75,10 @@ class AdminRefreshTokenAction
             $now = now();
 
             if ($session->revoked_at !== null || $session->expires_at->lessThanOrEqualTo($now)) {
+                return $this->failure();
+            }
+
+            if ($this->sessionPolicy->enforceIdleTimeout($session, $now)) {
                 return $this->failure();
             }
 
@@ -99,8 +119,14 @@ class AdminRefreshTokenAction
 
             $newRawRefreshToken = random_bytes(32);
 
+            // Deliberately does NOT set last_used_at here - see class
+            // docblock. A silent refresh must never count as Admin activity.
+            // Also deliberately never touches step_up_verified_at (BLUE V1
+            // Phase A2.5) - a refresh must never create, reset, or extend a
+            // sensitive-operation step-up window; whatever value the row
+            // already has (fresh, stale, or NULL) is left completely
+            // untouched by rotating the refresh token.
             $session->refresh_token_hash = hash('sha256', $newRawRefreshToken, true);
-            $session->last_used_at = $now;
             $session->save();
 
             $primaryRole = $this->resolvePrimaryRole($activeAdminRoleCodes);

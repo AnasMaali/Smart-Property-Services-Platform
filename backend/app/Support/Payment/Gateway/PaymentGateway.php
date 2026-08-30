@@ -36,6 +36,22 @@ interface PaymentGateway
     public function createPayment(PaymentCreationData $data): PaymentCreationResult;
 
     /**
+     * Starts (or safely resumes) one provider-side refund for a
+     * `booking_refunds` obligation, against the original successful
+     * payment identified by $data->providerPaymentReference. Must be
+     * called with a stable, obligation-derived provider idempotency key
+     * (booking_refunds.idempotency_key) so a retry after a timeout/crash
+     * can never create a second provider-side refund - see
+     * RefundCreationData's docblock.
+     *
+     * Must never throw for an ordinary provider-side rejection that still
+     * proves no duplicate refund risk exists - that is still
+     * RefundCreationOutcome::DEFINITIVE_FAILURE. Only a genuinely ambiguous
+     * network/timeout outcome escapes as RefundCreationOutcome::UNKNOWN.
+     */
+    public function refundPayment(RefundCreationData $data): RefundCreationResult;
+
+    /**
      * Authenticity check ONLY - must be called with the raw, unmodified
      * request body (never a re-encoded/normalized JSON string) and the
      * provider's signature header(s). Must fail safely (return an invalid
@@ -49,10 +65,12 @@ interface PaymentGateway
     /**
      * Normalizes an already-verified provider event
      * (VerifiedWebhookResult::$providerEvent) into the one safe,
-     * provider-neutral shape the webhook Action consumes. Must never be
-     * called with an unverified payload.
+     * provider-neutral shape the webhook Action consumes - a
+     * NormalizedPaymentEvent for a PaymentIntent-lifecycle event, or a
+     * NormalizedRefundEvent for a refund-lifecycle event (e.g. Stripe's
+     * `charge.refunded`). Must never be called with an unverified payload.
      */
-    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent;
+    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent|NormalizedRefundEvent;
 
     /**
      * Reconciliation/recovery path: fetches the provider's current view of

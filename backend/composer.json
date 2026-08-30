@@ -10,7 +10,8 @@
         "firebase/php-jwt": "^7.1",
         "laravel/framework": "^13.8",
         "laravel/tinker": "^3.0",
-        "stripe/stripe-php": "^21.1"
+        "stripe/stripe-php": "^21.1",
+        "web-auth/webauthn-lib": "^5.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

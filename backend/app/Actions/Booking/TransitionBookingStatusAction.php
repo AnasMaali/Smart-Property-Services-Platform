@@ -53,19 +53,22 @@ class TransitionBookingStatusAction
         private readonly BookingStatusMachine $machine = new BookingStatusMachine,
     ) {}
 
-    public function assign(string $bookingUuid, ?string $reason = null): BookingLifecycleTransitionResult
+    public function assign(string $bookingUuid, ?string $reason = null, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
-        return $this->run($bookingUuid, 'ASSIGNED', fn ($booking, $at) => $this->machine->transitionToAssigned($booking, $at), $reason);
+        return $this->run($bookingUuid, 'ASSIGNED', fn ($booking, $at) => $this->machine->transitionToAssigned($booking, $at), $reason, $actorUserUuid);
     }
 
-    public function start(string $bookingUuid, ?string $reason = null): BookingLifecycleTransitionResult
+    public function start(string $bookingUuid, ?string $reason = null, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
-        return $this->run($bookingUuid, 'IN_PROGRESS', fn ($booking, $at) => $this->machine->transitionToInProgress($booking, $at), $reason);
+        return $this->run($bookingUuid, 'IN_PROGRESS', fn ($booking, $at) => $this->machine->transitionToInProgress($booking, $at), $reason, $actorUserUuid);
     }
 
-    public function complete(string $bookingUuid, ?string $reason = null): BookingLifecycleTransitionResult
+    /**
+     * @param  string|null  $actorUserUuid  Recorded as booking_status_history.changed_by_user_id. SyncBookingStatusFromItemsAction (the only other caller of any method here) omits this and keeps the pre-existing null; only App\Actions\Admin\Booking\AdminForceCompleteBookingAction passes the acting Admin.
+     */
+    public function complete(string $bookingUuid, ?string $reason = null, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
-        return $this->run($bookingUuid, 'COMPLETED', fn ($booking, $at) => $this->machine->transitionToCompleted($booking, $at), $reason);
+        return $this->run($bookingUuid, 'COMPLETED', fn ($booking, $at) => $this->machine->transitionToCompleted($booking, $at), $reason, $actorUserUuid);
     }
 
     /**
@@ -80,11 +83,12 @@ class TransitionBookingStatusAction
         return $this->run($bookingUuid, 'CANCELLED', fn ($booking, $at) => $this->machine->transitionToCancelled($booking, $at), $reason);
     }
 
-    private function run(string $bookingUuid, string $targetCode, callable $attempt, ?string $reason): BookingLifecycleTransitionResult
+    private function run(string $bookingUuid, string $targetCode, callable $attempt, ?string $reason, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
         $bookingIdBinary = UuidBinary::toBinary($bookingUuid);
+        $actorIdBinary = $actorUserUuid === null ? null : UuidBinary::toBinary($actorUserUuid);
 
-        return DB::transaction(function () use ($bookingIdBinary, $targetCode, $attempt, $reason): BookingLifecycleTransitionResult {
+        return DB::transaction(function () use ($bookingIdBinary, $targetCode, $attempt, $reason, $actorIdBinary): BookingLifecycleTransitionResult {
             $booking = DB::table('bookings')->where('id', $bookingIdBinary)->lockForUpdate()->first();
 
             if ($booking === null) {
@@ -108,7 +112,7 @@ class TransitionBookingStatusAction
                 'booking_id' => $bookingIdBinary,
                 'from_status_id' => (int) $booking->status_id,
                 'to_status_id' => BookingStatuses::id($targetCode),
-                'changed_by_user_id' => null,
+                'changed_by_user_id' => $actorIdBinary,
                 'reason' => $reason,
                 'changed_at' => $now->format('Y-m-d H:i:s.u'),
             ]);

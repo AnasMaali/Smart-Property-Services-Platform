@@ -28,6 +28,8 @@ use RuntimeException;
  */
 trait IssuesAuthSession
 {
+    use PacksIpAddress;
+
     /**
      * @return array{
      *     user_uuid: string,
@@ -115,16 +117,5 @@ trait IssuesAuthSession
             'refresh_token' => bin2hex($rawRefreshToken),
             'session_expires_at' => $sessionExpiresAt->toIso8601String(),
         ];
-    }
-
-    private function packIp(?string $ip): ?string
-    {
-        if ($ip === null || $ip === '') {
-            return null;
-        }
-
-        $packed = inet_pton($ip);
-
-        return $packed === false ? null : $packed;
     }
 }

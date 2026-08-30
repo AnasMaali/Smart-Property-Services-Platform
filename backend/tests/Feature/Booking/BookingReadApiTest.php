@@ -210,7 +210,7 @@ class BookingReadApiTest extends TestCase
 
         $this->assertSame(100, $data['refund_due']['percentage']);
         $this->assertSame($expectedRefund, $data['refund_due']['amount']);
-        $this->assertSame('MANUAL', $data['refund_due']['execution']);
+        $this->assertSame('AUTOMATIC', $data['refund_due']['execution']);
     }
 
     // 26. Refund calculation on read uses the ORIGINAL cancelled_at, and
@@ -242,9 +242,19 @@ class BookingReadApiTest extends TestCase
         $getResponse = $this->getBooking($customer['access_token'], UuidBinary::toString($booking->id));
         $getResponse->assertStatus(200);
 
+        // The cancel response's refund_due is the immediate policy result
+        // {percentage, amount, execution}; the GET response's refund_due
+        // (App\Support\Booking\BookingPresenter) additionally carries the
+        // later-resolved execution status - so only the shared
+        // percentage/amount, both read from the same frozen
+        // bookings.cancellation_refund_* snapshot, must agree exactly.
         $this->assertSame(
-            $cancelResponse->json('data.refund_due'),
-            $getResponse->json('data.booking.refund_due')
+            $cancelResponse->json('data.refund_due.percentage'),
+            $getResponse->json('data.booking.refund_due.percentage')
+        );
+        $this->assertSame(
+            $cancelResponse->json('data.refund_due.amount'),
+            $getResponse->json('data.booking.refund_due.amount')
         );
 
         $this->assertTrue(
@@ -279,8 +289,9 @@ class BookingReadApiTest extends TestCase
         $this->assertSame(75, $row['refund_due']['percentage']);
     }
 
-    // 28. refund_due on a CANCELLED Booking is strictly
-    // {percentage, amount, execution} - no payment/provider internals.
+    // 28. refund_due on a CANCELLED Booking never leaks payment/provider
+    // internals beyond the explicit, safe execution-status fields BLUE V1
+    // Phase B20 added - never a raw Stripe object or client_secret.
     public function test_cancelled_booking_refund_due_never_leaks_payment_or_provider_internals(): void
     {
         ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
@@ -295,9 +306,17 @@ class BookingReadApiTest extends TestCase
         $response->assertStatus(200);
 
         $refundDue = $response->json('data.booking.refund_due');
-        $this->assertSame(['percentage', 'amount', 'execution'], array_keys($refundDue));
+        $this->assertSame(
+            ['percentage', 'amount', 'execution', 'status', 'method', 'requested_at', 'succeeded_at', 'failed_at'],
+            array_keys($refundDue)
+        );
 
+        // The customer-facing API never names the provider, unlike the
+        // Admin equivalent (App\Support\Admin\AdminBookingPresenter) -
+        // 'method' => 'ORIGINAL_PAYMENT_METHOD' is the one safe, fixed
+        // fact exposed here.
         $this->assertStringNotContainsString('client_secret', strtolower($response->getContent()));
+        $this->assertStringNotContainsString('stripe', strtolower($response->getContent()));
     }
 
     // 29. Customer GET on a CANCELLED Booking keeps showing the ORIGINAL
@@ -331,7 +350,7 @@ class BookingReadApiTest extends TestCase
 
         $this->assertSame(100, $response->json('data.booking.refund_due.percentage'));
         $this->assertSame($expectedAmount, $response->json('data.booking.refund_due.amount'));
-        $this->assertSame('MANUAL', $response->json('data.booking.refund_due.execution'));
+        $this->assertSame('AUTOMATIC', $response->json('data.booking.refund_due.execution'));
     }
 
     // 30. Customer Booking detail response never exposes raw relational FK

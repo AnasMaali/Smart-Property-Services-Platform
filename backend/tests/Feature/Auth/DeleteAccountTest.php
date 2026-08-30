@@ -6,6 +6,7 @@ use App\Actions\Auth\DeleteAccountAction;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
@@ -119,7 +120,7 @@ class DeleteAccountTest extends TestCase
 
     public function test_delete_route_is_protected_by_auth_customer_and_has_a_rate_limiter(): void
     {
-        $route = collect(\Illuminate\Support\Facades\Route::getRoutes())
+        $route = collect(Route::getRoutes())
             ->first(fn ($r) => $r->uri() === 'api/v1/auth/account' && in_array('DELETE', $r->methods(), true));
 
         $this->assertNotNull($route, 'Expected DELETE api/v1/auth/account to be registered.');
@@ -376,6 +377,9 @@ class DeleteAccountTest extends TestCase
         $contractUuid = $fixture['contract']->id;
 
         // Move the Contract to a terminal state so deletion becomes eligible.
+        // BLUE V1 Phase A2.5 - grant a fresh step-up directly (see
+        // AccountDeletionProcessorTest for the identical note).
+        $this->markStepUpVerified($fixture['admin']['session_uuid']);
         $this->adminCancelContract($fixture['admin']['access_token'], UuidBinary::toString($contractUuid))->assertStatus(200);
 
         $this->deleteAccount($customer['access_token'])->assertStatus(200);
@@ -631,7 +635,6 @@ class DeleteAccountTest extends TestCase
         $this->assertNotNull($request->completed_at);
     }
 
-
     // ================================================================
     // HISTORICAL RETENTION
     // ================================================================
@@ -693,6 +696,9 @@ class DeleteAccountTest extends TestCase
         $fixture = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($fixture['contract']->id);
 
+        // BLUE V1 Phase A2.5 - grant a fresh step-up directly (see
+        // AccountDeletionProcessorTest for the identical note).
+        $this->markStepUpVerified($fixture['admin']['session_uuid']);
         $this->adminCancelContract($fixture['admin']['access_token'], $contractUuid)->assertStatus(200);
 
         $billingBefore = $this->billingRow($contractUuid);

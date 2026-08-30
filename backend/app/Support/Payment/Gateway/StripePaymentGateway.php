@@ -11,6 +11,7 @@ use Stripe\Exception\InvalidRequestException;
 use Stripe\Exception\RateLimitException;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\PaymentIntent;
+use Stripe\Refund as StripeRefund;
 use Stripe\StripeClient;
 use Stripe\Webhook as StripeWebhook;
 use UnexpectedValueException;
@@ -108,6 +109,61 @@ final class StripePaymentGateway implements PaymentGateway
         };
     }
 
+    /**
+     * Issues (or safely resumes) exactly one Stripe refund against the
+     * original PaymentIntent - see RefundCreationData's docblock for why
+     * `payment_intent` (never a Charge id) is the identifier used. The
+     * `$data->providerIdempotencyKey` is booking_refunds.idempotency_key,
+     * generated once and persisted at obligation-creation time - a retry
+     * (network timeout, process crash, or the recovery Artisan command)
+     * always passes the SAME key, so Stripe returns the SAME refund object
+     * instead of creating a second one.
+     */
+    public function refundPayment(RefundCreationData $data): RefundCreationResult
+    {
+        $client = $this->client();
+        $minorUnits = MinorUnitConverter::toMinorUnits($data->amount, $data->currencyMinorUnit);
+
+        try {
+            $refund = $client->refunds->create(
+                [
+                    'payment_intent' => $data->providerPaymentReference,
+                    'amount' => $minorUnits,
+                    'metadata' => [
+                        'booking_refund_uuid' => $data->bookingRefundUuid,
+                    ],
+                ],
+                ['idempotency_key' => $data->providerIdempotencyKey],
+            );
+
+            return RefundCreationResult::created(
+                providerRefundReference: $refund->id,
+                providerStatusCode: $refund->status,
+            );
+        } catch (ApiErrorException $e) {
+            return self::classifyRefundFailure($e);
+        }
+    }
+
+    /**
+     * The refund-side counterpart to classifyCreationFailure() - identical
+     * classification rules (see that method's docblock for the RateLimit/
+     * ApiConnection-before-InvalidRequest ordering rationale), just
+     * returning a RefundCreationResult instead. Kept as a separate method
+     * (not a shared generic) because the two call sites return distinct
+     * typed DTOs the rest of the codebase depends on never seeing a
+     * mismatched shape.
+     */
+    public static function classifyRefundFailure(ApiErrorException $e): RefundCreationResult
+    {
+        return match (true) {
+            $e instanceof RateLimitException, $e instanceof ApiConnectionException => RefundCreationResult::unknown($e->getMessage()),
+            $e instanceof InvalidRequestException, $e instanceof AuthenticationException => RefundCreationResult::definitiveFailure('STRIPE_REQUEST_REJECTED', $e->getMessage()),
+            ($e->getHttpStatus() ?? 0) >= 500 => RefundCreationResult::unknown($e->getMessage()),
+            default => RefundCreationResult::definitiveFailure('STRIPE_API_ERROR', $e->getMessage()),
+        };
+    }
+
     public function verifyWebhook(string $rawBody, array $signatureHeaders): VerifiedWebhookResult
     {
         if (empty($this->webhookSecret)) {
@@ -129,7 +185,7 @@ final class StripePaymentGateway implements PaymentGateway
         }
     }
 
-    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent
+    public function parseWebhook(mixed $verifiedProviderEvent): NormalizedPaymentEvent|NormalizedRefundEvent
     {
         if (! $verifiedProviderEvent instanceof StripeEvent) {
             throw new UnexpectedValueException('Expected a verified Stripe\\Event instance.');
@@ -137,6 +193,29 @@ final class StripePaymentGateway implements PaymentGateway
 
         $event = $verifiedProviderEvent;
         $object = $event->data->object ?? null;
+
+        /*
+         * A refund-lifecycle event (refund.created / refund.updated /
+         * refund.failed) always carries a \Stripe\Refund object regardless
+         * of exact event type - checking the object's own class, not the
+         * event type string, is the same "trust the typed SDK object"
+         * principle the PaymentIntent branch below already uses, and keeps
+         * this gateway correct even if Stripe adds another refund event
+         * type later.
+         */
+        if ($object instanceof StripeRefund) {
+            return new NormalizedRefundEvent(
+                providerEventId: $event->id,
+                eventType: $event->type,
+                providerRefundReference: $object->id,
+                providerPaymentReference: is_string($object->payment_intent ?? null) ? $object->payment_intent : null,
+                status: (string) $object->status,
+                amount: $object->amount === null ? null : MinorUnitConverter::toDecimalString((int) $object->amount, $this->minorUnitFor(strtoupper($object->currency))),
+                currencyCode: $object->currency === null ? null : strtoupper($object->currency),
+                failureCode: is_string($object->failure_reason ?? null) ? $object->failure_reason : null,
+                failureMessage: null,
+            );
+        }
 
         if (! $object instanceof PaymentIntent) {
             return new NormalizedPaymentEvent(

@@ -94,6 +94,32 @@ trait CreatesPaymentFixtures
     }
 
     /**
+     * BLUE V1 Phase B20 - the refund-lifecycle counterpart to
+     * fakeWebhookPayload(). The 'kind' => 'refund' key is what
+     * FakePaymentGateway::parseWebhook() uses to build a
+     * NormalizedRefundEvent instead of a NormalizedPaymentEvent - see that
+     * method's docblock.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function fakeRefundWebhookPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'event_id' => 'evt_'.UuidBinary::generate(),
+            'event_type' => 'refund.updated',
+            'kind' => 'refund',
+            'provider_refund_reference' => null,
+            'provider_payment_reference' => null,
+            'refund_status' => 'succeeded',
+            'amount' => null,
+            'currency' => null,
+            'failure_code' => null,
+            'failure_message' => null,
+        ], $overrides);
+    }
+
+    /**
      * @param  array<string, mixed>  $payload
      */
     private function postWebhook(array $payload, ?string $signatureOverride = null): TestResponse

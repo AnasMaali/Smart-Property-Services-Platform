@@ -11,7 +11,7 @@ class LogoutController extends Controller
 {
     public function __invoke(Request $request, LogoutAction $action): JsonResponse
     {
-        $result = $action->handle($request->bearerToken());
+        $result = $action->handle($request, $request->bearerToken());
 
         return response()->json([
             'success' => $result['success'],

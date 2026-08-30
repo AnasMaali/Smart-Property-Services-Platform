@@ -3,11 +3,13 @@
 namespace App\Actions\Payment;
 
 use App\Actions\Booking\CreateBookingFromSuccessfulPaymentAction;
+use App\Support\Booking\BookingRefundStatuses;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use App\Support\Payment\CanonicalJson;
 use App\Support\Payment\Gateway\NormalizedPaymentEvent;
 use App\Support\Payment\Gateway\NormalizedPaymentOutcome;
+use App\Support\Payment\Gateway\NormalizedRefundEvent;
 use App\Support\Payment\Gateway\PaymentGateway;
 use App\Support\Payment\PaymentAttemptStateMachine;
 use App\Support\Uuid\UuidBinary;
@@ -41,6 +43,14 @@ use Throwable;
  * runs. An invalid/unverified payload never reaches the ledger and never
  * mutates a payment attempt (docs/api-contracts/payments-v1.md "Webhook
  * trust boundary").
+ *
+ * BLUE V1 Phase B20 extends this SAME processor (never a second webhook
+ * endpoint) to also finalize refund-lifecycle events
+ * (NormalizedRefundEvent, e.g. Stripe's `refund.updated`) against
+ * `booking_refunds` - reusing the exact same event-ledger dedup
+ * (`payment_webhook_events`, keyed on provider_code+provider_event_id) a
+ * payment-lifecycle event already gets, so duplicate/out-of-order refund
+ * webhook delivery is exactly as safe as it already is for payments.
  */
 class ProcessPaymentWebhookAction
 {
@@ -73,6 +83,15 @@ class ProcessPaymentWebhookAction
             if ($ledger['alreadyProcessed']) {
                 return [
                     'alreadyProcessed' => true,
+                    'resolvedAttemptId' => null,
+                ];
+            }
+
+            if ($event instanceof NormalizedRefundEvent) {
+                $this->processRefundEvent($event, $ledger['id']);
+
+                return [
+                    'alreadyProcessed' => false,
                     'resolvedAttemptId' => null,
                 ];
             }
@@ -122,7 +141,7 @@ class ProcessPaymentWebhookAction
      *
      * @return array{id: string, alreadyProcessed: bool}
      */
-    private function ledgerEntry(NormalizedPaymentEvent $event, string $payloadHash): array
+    private function ledgerEntry(NormalizedPaymentEvent|NormalizedRefundEvent $event, string $payloadHash): array
     {
         $now = now();
         $timestamp = $now->format('Y-m-d H:i:s.u');
@@ -168,7 +187,7 @@ class ProcessPaymentWebhookAction
                 'provider_event_id' => $event->providerEventId,
                 'payment_attempt_id' => null,
                 'event_type' => $event->eventType,
-                'provider_transaction_reference' => $event->providerTransactionReference,
+                'provider_transaction_reference' => $event instanceof NormalizedRefundEvent ? $event->providerRefundReference : $event->providerTransactionReference,
                 'payload_hash' => $payloadHash,
                 'status_id' => $this->webhookStatusId('RECEIVED'),
                 'processing_attempt_count' => 1,
@@ -434,6 +453,218 @@ class ProcessPaymentWebhookAction
 
         if (! hash_equals((string) $locked->checkout_snapshot_hash, $recomputedHash)) {
             return 'SNAPSHOT_INTEGRITY_FAILURE';
+        }
+
+        return null;
+    }
+
+    /**
+     * BLUE V1 Phase B20 - finalizes one refund-lifecycle event against
+     * `booking_refunds`. Mirrors process()'s own resolve -> lock -> branch
+     * -> finalizeLedger shape, but against a different target table (never
+     * `payment_attempts` - the original successful payment record is never
+     * rewritten). $ledgerId's `payment_webhook_events.payment_attempt_id`
+     * is populated with the obligation's own `payment_attempt_id` when one
+     * resolves, purely for operator traceability - the FK target
+     * (`payment_attempts`) is unaffected by this event either way.
+     */
+    private function processRefundEvent(NormalizedRefundEvent $event, string $ledgerId): void
+    {
+        $obligation = $this->resolveRefundObligation($event);
+
+        if ($obligation === null) {
+            $this->finalizeLedger($ledgerId, 'FAILED', null, 'REFUND_OBLIGATION_NOT_FOUND', 'No local booking_refunds row matched this event.');
+
+            return;
+        }
+
+        $locked = DB::table('booking_refunds')->where('id', $obligation->id)->lockForUpdate()->first();
+
+        if ($locked === null) {
+            $this->finalizeLedger($ledgerId, 'FAILED', null, 'REFUND_OBLIGATION_NOT_FOUND', 'No local booking_refunds row matched this event.');
+
+            return;
+        }
+
+        if ((int) $locked->status_id !== BookingRefundStatuses::id('PENDING')) {
+            // Already SUCCEEDED/FAILED (a synchronous Stripe response or an
+            // earlier delivery of this same lifecycle already resolved it)
+            // - a stale/duplicate/out-of-order refund event can never
+            // regress a terminal state.
+            $this->finalizeLedger($ledgerId, 'IGNORED', $locked->payment_attempt_id, null, null);
+
+            return;
+        }
+
+        // BLUE V1 Phase B20 fix 2 (financial safety) - a 'succeeded' event
+        // is an authentic Stripe delivery, but it must never be trusted to
+        // finalize an obligation whose amount/currency it does not match
+        // (BLUE V1 is AED-only, single currency - see
+        // refundReconciliationMismatch()) - e.g. a refund adjusted
+        // directly in the Stripe Dashboard, or a future gateway bug.
+        // Unlike the payment side's determineReconciliationReason() (which
+        // still finalizes SUCCESSFUL and only flags it), a mismatched
+        // refund obligation is:
+        //   1. never marked SUCCEEDED,
+        //   2. never left PENDING (App\Console\Commands\
+        //      ExecutePendingBookingRefunds - and App\Actions\Payment\
+        //      ExecuteBookingRefundAction's own PENDING-only guard - would
+        //      otherwise treat it as safe to retry, risking a SECOND real
+        //      Stripe refund against an obligation Stripe may already have
+        //      acted on unexpectedly),
+        //   3. transitioned instead to the terminal RECONCILIATION_REQUIRED
+        //      status - never regressed back to PENDING by anything.
+        // The event's own provider_refund_reference/provider_status_code
+        // ARE persisted (safe - it is an authentic, signature-verified
+        // delivery, and the reference is exactly what an operator needs to
+        // look the real Stripe object up) but requested_amount/currency_id
+        // (the obligation's own expected values) are never rewritten to
+        // match what Stripe reported. The actual Stripe-reported
+        // amount/currency is preserved in failure_message for
+        // investigation, since booking_refunds has no separate column for
+        // it and this does not warrant one.
+        if ($event->status === 'succeeded') {
+            $mismatchCode = $this->refundReconciliationMismatch($event, $locked);
+
+            if ($mismatchCode !== null) {
+                $timestamp = now()->format('Y-m-d H:i:s.u');
+                $failureMessage = $this->refundMismatchEvidence($mismatchCode, $event, $locked);
+
+                DB::table('booking_refunds')->where('id', $locked->id)->update([
+                    'provider_refund_reference' => $event->providerRefundReference ?? $locked->provider_refund_reference,
+                    'provider_status_code' => $event->status,
+                    'status_id' => BookingRefundStatuses::id('RECONCILIATION_REQUIRED'),
+                    'failed_at' => $timestamp,
+                    'failure_code' => $mismatchCode,
+                    'failure_message' => $failureMessage,
+                    'updated_at' => $timestamp,
+                ]);
+
+                // PROCESSED, not FAILED - this webhook delivery WAS
+                // correctly acted on (the mismatch was detected and the
+                // obligation was safely quarantined); last_error_code/
+                // _message still carry the reason for operator
+                // traceability on the ledger too.
+                $this->finalizeLedger($ledgerId, 'PROCESSED', $locked->payment_attempt_id, $mismatchCode, $failureMessage);
+
+                return;
+            }
+        }
+
+        $now = now();
+        $timestamp = $now->format('Y-m-d H:i:s.u');
+
+        match ($event->status) {
+            'succeeded' => DB::table('booking_refunds')->where('id', $locked->id)->update([
+                'provider_refund_reference' => $event->providerRefundReference ?? $locked->provider_refund_reference,
+                'provider_status_code' => $event->status,
+                'submitted_at' => $locked->submitted_at ?? $timestamp,
+                'status_id' => BookingRefundStatuses::id('SUCCEEDED'),
+                'succeeded_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]),
+            'failed' => DB::table('booking_refunds')->where('id', $locked->id)->update([
+                'provider_refund_reference' => $event->providerRefundReference ?? $locked->provider_refund_reference,
+                'provider_status_code' => $event->status,
+                'status_id' => BookingRefundStatuses::id('FAILED'),
+                'failed_at' => $timestamp,
+                'failure_code' => $event->failureCode ?? 'STRIPE_REFUND_FAILED',
+                'failure_message' => $event->failureMessage ?? 'Stripe reported the refund failed.',
+                'updated_at' => $timestamp,
+            ]),
+            // 'pending' / 'requires_action' / 'canceled' / anything else:
+            // stays PENDING - only refresh observability fields so a later
+            // execution attempt/webhook has the latest known reference.
+            default => DB::table('booking_refunds')->where('id', $locked->id)->update([
+                'provider_refund_reference' => $event->providerRefundReference ?? $locked->provider_refund_reference,
+                'provider_status_code' => $event->status,
+                'submitted_at' => $locked->submitted_at ?? $timestamp,
+                'updated_at' => $timestamp,
+            ]),
+        };
+
+        $this->finalizeLedger($ledgerId, 'PROCESSED', $locked->payment_attempt_id, null, null);
+    }
+
+    /**
+     * BLUE V1 Phase B20 fix - returns a machine-readable mismatch code when
+     * a 'succeeded' refund event's own claimed amount/currency does not
+     * match the obligation it resolved to, or null when it agrees (or the
+     * event simply does not carry that field - a real Stripe Refund object
+     * always does, but this stays defensive rather than assuming). Amount
+     * is compared with bccomp (never floats); currency is compared by its
+     * ISO code, resolved from `booking_refunds.currency_id` - the same
+     * pattern process()'s own determineReconciliationReason() already uses
+     * for the payment side.
+     */
+    private function refundReconciliationMismatch(NormalizedRefundEvent $event, object $locked): ?string
+    {
+        if ($event->amount !== null && bccomp($event->amount, (string) $locked->requested_amount, 6) !== 0) {
+            return 'REFUND_AMOUNT_MISMATCH';
+        }
+
+        // BLUE V1 supports exactly one business/payment currency (AED) -
+        // every `booking_refunds` row's currency_id is expected to resolve
+        // to AED, so an event reporting anything else is never a
+        // multi-currency edge case to accommodate, only an abnormal
+        // financial condition to quarantine.
+        if ($event->currencyCode !== null) {
+            $currencyCode = DB::table('currencies')->where('id', $locked->currency_id)->value('code');
+
+            if ($event->currencyCode !== $currencyCode) {
+                return 'REFUND_CURRENCY_MISMATCH';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Preserves the actual Stripe-reported amount/currency for operator
+     * investigation, in the one existing evidence field this table
+     * already has (`failure_message`) rather than expanding the schema
+     * for it - `booking_refunds.requested_amount`/`currency_id` (the
+     * obligation's own expected values) are never overwritten with what
+     * Stripe reported.
+     */
+    private function refundMismatchEvidence(string $mismatchCode, NormalizedRefundEvent $event, object $locked): string
+    {
+        if ($mismatchCode === 'REFUND_AMOUNT_MISMATCH') {
+            return sprintf(
+                'Stripe reported refund amount %s but the obligation expected %s.',
+                $event->amount,
+                (string) $locked->requested_amount
+            );
+        }
+
+        $expectedCurrencyCode = DB::table('currencies')->where('id', $locked->currency_id)->value('code');
+
+        return sprintf(
+            'Stripe reported refund currency %s but the obligation expected %s.',
+            $event->currencyCode,
+            $expectedCurrencyCode
+        );
+    }
+
+    private function resolveRefundObligation(NormalizedRefundEvent $event): ?object
+    {
+        if ($event->providerRefundReference !== null) {
+            $row = DB::table('booking_refunds')
+                ->where('provider_code', $this->gateway->providerCode())
+                ->where('provider_refund_reference', $event->providerRefundReference)
+                ->first();
+
+            if ($row !== null) {
+                return $row;
+            }
+        }
+
+        if ($event->providerPaymentReference !== null) {
+            return DB::table('booking_refunds')
+                ->join('payment_attempts', 'payment_attempts.id', '=', 'booking_refunds.payment_attempt_id')
+                ->where('booking_refunds.provider_code', $this->gateway->providerCode())
+                ->where('payment_attempts.provider_session_reference', $event->providerPaymentReference)
+                ->first(['booking_refunds.*']);
         }
 
         return null;

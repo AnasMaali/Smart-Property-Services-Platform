@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Actions\Technician;
+
 use App\Actions\Booking\SyncBookingStatusFromItemsAction;
 use App\Actions\Booking\TransitionBookingItemStatusAction;
 use App\Support\Admin\AdminMutationAuthorizationOutcome;
@@ -8,11 +9,13 @@ use App\Support\Admin\AdminMutationAuthorizer;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Technician\TechnicianAssignmentOutcome;
 use App\Support\Technician\TechnicianAssignmentResult;
+use App\Support\Technician\TechnicianOverlapChecker;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+
 /**
  * The one canonical, server/internal-only entry point for assigning a
  * Technician to a Booking Item (BLUE V1 Phase 8A). Never reachable from any
@@ -83,6 +86,7 @@ class AssignTechnicianToBookingItemAction
         private readonly TransitionBookingItemStatusAction $itemLifecycle = new TransitionBookingItemStatusAction,
         private readonly SyncBookingStatusFromItemsAction $bookingLifecycleSync = new SyncBookingStatusFromItemsAction,
         private readonly AdminMutationAuthorizer $mutationAuthorizer = new AdminMutationAuthorizer,
+        private readonly TechnicianOverlapChecker $overlapChecker = new TechnicianOverlapChecker,
     ) {}
 
     public function assign(
@@ -96,147 +100,147 @@ class AssignTechnicianToBookingItemAction
         $technicianIdBinary = UuidBinary::toBinary($technicianUuid);
         $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
 
-    try {
-        $result = DB::transaction(function () use (
-            $itemIdBinary,
-            $technicianIdBinary,
-            $actorIdBinary,
-            $internalNote,
-            $afterMutation
-        ): TechnicianAssignmentResult {
-            $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
-
-            if ($authorization === AdminMutationAuthorizationOutcome::ACTOR_NOT_FOUND) {
-                return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ACTOR_NOT_FOUND
-                );
-            }
-
-            if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
-                return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED
-                );
-            }
-
-            $item = DB::table('booking_items')
-                ->where('id', $itemIdBinary)
-                ->lockForUpdate()
-                ->first();
-
-            if ($item === null) {
-                return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ITEM_NOT_FOUND
-                );
-            }
-
-            $itemStatusCode = BookingItemStatuses::code((int) $item->status_id);
-
-            if (in_array(
-                $itemStatusCode,
-                ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
-                true
-            )) {
-                return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ITEM_NOT_ELIGIBLE,
-                    itemStatusFrom: $itemStatusCode
-                );
-            }
-
-            if ($itemStatusCode === 'ASSIGNED') {
-                $active = $this->activePrimaryAssignment($itemIdBinary);
-
-                if (
-                    $active !== null &&
-                    $active->technician_id === $technicianIdBinary
-                ) {
-                    return new TechnicianAssignmentResult(
-                        TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
-                        UuidBinary::toString($active->id),
-                        UuidBinary::toString($itemIdBinary),
-                        UuidBinary::toString($technicianIdBinary),
-                    );
-                }
-
-                return new TechnicianAssignmentResult(
-                    TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN,
-                    previousTechnicianUuid: $active === null
-                        ? null
-                        : UuidBinary::toString($active->technician_id),
-                );
-            }
-
-            $eligibility = $this->validateEligibility(
-                $item,
-                $technicianIdBinary
-            );
-
-            if ($eligibility instanceof TechnicianAssignmentResult) {
-                return $eligibility;
-            }
-
-            [$specializationId] = $eligibility;
-
-            $assignmentUuid = $this->writeAssignment(
+        try {
+            $result = DB::transaction(function () use (
                 $itemIdBinary,
                 $technicianIdBinary,
                 $actorIdBinary,
-                $specializationId,
-                $internalNote
-            );
+                $internalNote,
+                $afterMutation
+            ): TechnicianAssignmentResult {
+                $authorization = $this->mutationAuthorizer->checkBinary($actorIdBinary);
 
-            $this->itemLifecycle->assign(
-                UuidBinary::toString($itemIdBinary)
-            );
-
-            $result = new TechnicianAssignmentResult(
-                TechnicianAssignmentOutcome::ASSIGNED,
-                $assignmentUuid,
-                UuidBinary::toString($itemIdBinary),
-                UuidBinary::toString($technicianIdBinary),
-                itemStatusFrom: 'PENDING_ASSIGNMENT',
-                itemStatusTo: 'ASSIGNED',
-            );
-
-            if ($afterMutation !== null) {
-                try {
-                    $afterMutation($result);
-                } catch (UniqueConstraintViolationException $exception) {
-                    throw new RuntimeException(
-                        'The after-mutation callback failed.',
-                        previous: $exception,
+                if ($authorization === AdminMutationAuthorizationOutcome::ACTOR_NOT_FOUND) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ACTOR_NOT_FOUND
                     );
                 }
-            }
 
-            return $result;
-        });
-    } catch (UniqueConstraintViolationException) {
-        $result = $this->resolveAssignmentRace(
-            $itemIdBinary,
-            $technicianIdBinary
-        );
+                if ($authorization !== AdminMutationAuthorizationOutcome::AUTHORIZED) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ACTOR_NOT_AUTHORIZED
+                    );
+                }
+
+                $item = DB::table('booking_items')
+                    ->where('id', $itemIdBinary)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($item === null) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ITEM_NOT_FOUND
+                    );
+                }
+
+                $itemStatusCode = BookingItemStatuses::code((int) $item->status_id);
+
+                if (in_array(
+                    $itemStatusCode,
+                    ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+                    true
+                )) {
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ITEM_NOT_ELIGIBLE,
+                        itemStatusFrom: $itemStatusCode
+                    );
+                }
+
+                if ($itemStatusCode === 'ASSIGNED') {
+                    $active = $this->activePrimaryAssignment($itemIdBinary);
+
+                    if (
+                        $active !== null &&
+                        $active->technician_id === $technicianIdBinary
+                    ) {
+                        return new TechnicianAssignmentResult(
+                            TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
+                            UuidBinary::toString($active->id),
+                            UuidBinary::toString($itemIdBinary),
+                            UuidBinary::toString($technicianIdBinary),
+                        );
+                    }
+
+                    return new TechnicianAssignmentResult(
+                        TechnicianAssignmentOutcome::ASSIGNED_TO_ANOTHER_TECHNICIAN,
+                        previousTechnicianUuid: $active === null
+                            ? null
+                            : UuidBinary::toString($active->technician_id),
+                    );
+                }
+
+                $eligibility = $this->validateEligibility(
+                    $item,
+                    $technicianIdBinary
+                );
+
+                if ($eligibility instanceof TechnicianAssignmentResult) {
+                    return $eligibility;
+                }
+
+                [$specializationId] = $eligibility;
+
+                $assignmentUuid = $this->writeAssignment(
+                    $itemIdBinary,
+                    $technicianIdBinary,
+                    $actorIdBinary,
+                    $specializationId,
+                    $internalNote
+                );
+
+                $this->itemLifecycle->assign(
+                    UuidBinary::toString($itemIdBinary)
+                );
+
+                $result = new TechnicianAssignmentResult(
+                    TechnicianAssignmentOutcome::ASSIGNED,
+                    $assignmentUuid,
+                    UuidBinary::toString($itemIdBinary),
+                    UuidBinary::toString($technicianIdBinary),
+                    itemStatusFrom: 'PENDING_ASSIGNMENT',
+                    itemStatusTo: 'ASSIGNED',
+                );
+
+                if ($afterMutation !== null) {
+                    try {
+                        $afterMutation($result);
+                    } catch (UniqueConstraintViolationException $exception) {
+                        throw new RuntimeException(
+                            'The after-mutation callback failed.',
+                            previous: $exception,
+                        );
+                    }
+                }
+
+                return $result;
+            });
+        } catch (UniqueConstraintViolationException) {
+            $result = $this->resolveAssignmentRace(
+                $itemIdBinary,
+                $technicianIdBinary
+            );
+        }
+
+        /*
+         * بعد انتهاء transaction الخاصة بالـ Booking Item،
+         * نحدّث حالة الـ Booking الأب تلقائيًا.
+         *
+         * مثال:
+         * Booking = PAID
+         * Item = ASSIGNED
+         *
+         * يصبح:
+         * Booking = ASSIGNED
+         */
+        if (in_array($result->outcome, [
+            TechnicianAssignmentOutcome::ASSIGNED,
+            TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
+        ], true)) {
+            $this->bookingLifecycleSync->syncForItem($bookingItemUuid);
+        }
+
+        return $result;
     }
-
-    /*
-     * بعد انتهاء transaction الخاصة بالـ Booking Item،
-     * نحدّث حالة الـ Booking الأب تلقائيًا.
-     *
-     * مثال:
-     * Booking = PAID
-     * Item = ASSIGNED
-     *
-     * يصبح:
-     * Booking = ASSIGNED
-     */
-    if (in_array($result->outcome, [
-        TechnicianAssignmentOutcome::ASSIGNED,
-        TechnicianAssignmentOutcome::ALREADY_ASSIGNED,
-    ], true)) {
-        $this->bookingLifecycleSync->syncForItem($bookingItemUuid);
-    }
-
-    return $result;
-}
 
     /**
      * Replaces the current active primary Technician on a Booking Item that
@@ -257,8 +261,7 @@ class AssignTechnicianToBookingItemAction
         string $releaseReason,
         ?string $internalNote = null,
         ?callable $afterMutation = null,
-    ): TechnicianAssignmentResult
-    {
+    ): TechnicianAssignmentResult {
         $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
         $technicianIdBinary = UuidBinary::toBinary($newTechnicianUuid);
         $actorIdBinary = UuidBinary::toBinary($assignedByUserUuid);
@@ -466,20 +469,7 @@ class AssignTechnicianToBookingItemAction
             return false;
         }
 
-        return DB::table('technician_assignments')
-            ->join('booking_items', 'booking_items.id', '=', 'technician_assignments.booking_item_id')
-            ->join('bookings', 'bookings.id', '=', 'booking_items.booking_id')
-            ->join('appointment_slots', 'appointment_slots.id', '=', 'bookings.appointment_slot_id')
-            ->join('booking_item_statuses', 'booking_item_statuses.id', '=', 'booking_items.status_id')
-            ->join('booking_statuses', 'booking_statuses.id', '=', 'bookings.status_id')
-            ->where('technician_assignments.technician_id', $technicianIdBinary)
-            ->whereNull('technician_assignments.released_at')
-            ->where('bookings.id', '!=', $bookingIdBinary)
-            ->where('booking_item_statuses.code', '!=', 'CANCELLED')
-            ->where('booking_statuses.code', '!=', 'CANCELLED')
-            ->where('appointment_slots.starts_at', '<', $slot->ends_at)
-            ->where('appointment_slots.ends_at', '>', $slot->starts_at)
-            ->exists();
+        return $this->overlapChecker->hasOverlap($technicianIdBinary, $bookingIdBinary, $slot->starts_at, $slot->ends_at);
     }
 
     private function activePrimaryAssignment(string $itemIdBinary): ?object

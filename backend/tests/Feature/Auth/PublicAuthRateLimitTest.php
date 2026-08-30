@@ -22,6 +22,8 @@ class PublicAuthRateLimitTest extends TestCase
             'api/v1/auth/verify-password-reset-otp' => 'throttle:auth-otp-verify',
             'api/v1/auth/reset-password' => 'throttle:auth-reset',
             'api/v1/admin/auth/login' => 'throttle:admin-auth-login',
+            'api/v1/admin/auth/mfa/enroll' => 'throttle:admin-auth-mfa-enroll',
+            'api/v1/admin/auth/mfa/verify' => 'throttle:admin-auth-mfa-verify',
             'api/v1/admin/auth/refresh' => 'throttle:auth-refresh',
         ];
 

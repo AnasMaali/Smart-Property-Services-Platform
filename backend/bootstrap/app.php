@@ -2,6 +2,8 @@
 
 use App\Http\Middleware\AuthenticateAdmin;
 use App\Http\Middleware\AuthenticateCustomer;
+use App\Http\Middleware\EnsureAdminHasCapability;
+use App\Http\Middleware\EnsureAdminStepUpIsFresh;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +20,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth.customer' => AuthenticateCustomer::class,
             'auth.admin' => AuthenticateAdmin::class,
+            // BLUE V1 Phase A1 - Admin capability authorization gate. Must
+            // always run AFTER auth.admin on a route (it only reads the
+            // auth_admin_roles attribute auth.admin attaches) - see
+            // EnsureAdminHasCapability's own docblock.
+            'admin.capability' => EnsureAdminHasCapability::class,
+            // BLUE V1 Phase A2.5 - WebAuthn step-up freshness gate. Must
+            // always run AFTER auth.admin (reads the auth_session attribute
+            // it attaches) and, on any given route, AFTER admin.capability
+            // (step-up proves identity freshness, not authorization) - see
+            // EnsureAdminStepUpIsFresh's own docblock.
+            'admin.stepup' => EnsureAdminStepUpIsFresh::class,
         ]);
 
         // Left unset (the safe default), Laravel trusts no proxy at all, so

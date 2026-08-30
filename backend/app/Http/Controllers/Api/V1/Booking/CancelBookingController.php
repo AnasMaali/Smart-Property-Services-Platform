@@ -19,8 +19,9 @@ final class CancelBookingController extends Controller
         $authUser = $request->attributes->get('auth_user');
 
         $result = $action->handle(
-            $authUser->id,
-            $booking
+            actorUserUuid: $authUser->id,
+            bookingUuid: $booking,
+            requireOwnerUuid: $authUser->id
         );
 
         return response()->json([

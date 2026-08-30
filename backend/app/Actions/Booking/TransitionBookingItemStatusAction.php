@@ -49,9 +49,12 @@ class TransitionBookingItemStatusAction
         return $this->run($bookingItemUuid, 'IN_PROGRESS', fn ($item, $at) => $this->machine->transitionToInProgress($item, $at), $reason);
     }
 
-    public function complete(string $bookingItemUuid, ?string $reason = null): BookingLifecycleTransitionResult
+    /**
+     * @param  string|null  $actorUserUuid  Recorded as booking_item_status_history.changed_by_user_id. Every existing caller (technician job Actions, SyncBookingStatusFromItemsAction) omits this and keeps the pre-existing null - only App\Actions\Admin\Booking\AdminForceCompleteBookingAction passes the acting Admin.
+     */
+    public function complete(string $bookingItemUuid, ?string $reason = null, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
-        return $this->run($bookingItemUuid, 'COMPLETED', fn ($item, $at) => $this->machine->transitionToCompleted($item, $at), $reason);
+        return $this->run($bookingItemUuid, 'COMPLETED', fn ($item, $at) => $this->machine->transitionToCompleted($item, $at), $reason, $actorUserUuid);
     }
 
     public function cancel(string $bookingItemUuid, ?string $reason = null): BookingLifecycleTransitionResult
@@ -59,11 +62,12 @@ class TransitionBookingItemStatusAction
         return $this->run($bookingItemUuid, 'CANCELLED', fn ($item, $at) => $this->machine->transitionToCancelled($item, $at), $reason);
     }
 
-    private function run(string $bookingItemUuid, string $targetCode, callable $attempt, ?string $reason): BookingLifecycleTransitionResult
+    private function run(string $bookingItemUuid, string $targetCode, callable $attempt, ?string $reason, ?string $actorUserUuid = null): BookingLifecycleTransitionResult
     {
         $itemIdBinary = UuidBinary::toBinary($bookingItemUuid);
+        $actorIdBinary = $actorUserUuid === null ? null : UuidBinary::toBinary($actorUserUuid);
 
-        return DB::transaction(function () use ($itemIdBinary, $targetCode, $attempt, $reason): BookingLifecycleTransitionResult {
+        return DB::transaction(function () use ($itemIdBinary, $targetCode, $attempt, $reason, $actorIdBinary): BookingLifecycleTransitionResult {
             $item = DB::table('booking_items')->where('id', $itemIdBinary)->lockForUpdate()->first();
 
             if ($item === null) {
@@ -87,7 +91,7 @@ class TransitionBookingItemStatusAction
                 'booking_item_id' => $itemIdBinary,
                 'from_status_id' => (int) $item->status_id,
                 'to_status_id' => BookingItemStatuses::id($targetCode),
-                'changed_by_user_id' => null,
+                'changed_by_user_id' => $actorIdBinary,
                 'reason' => $reason,
                 'changed_at' => $now->format('Y-m-d H:i:s.u'),
             ]);

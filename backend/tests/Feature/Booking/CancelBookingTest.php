@@ -3,7 +3,11 @@
 namespace Tests\Feature\Booking;
 
 use App\Actions\Booking\TransitionBookingStatusAction;
+use App\Actions\Payment\ExecuteBookingRefundAction;
 use App\Actions\Technician\AssignTechnicianToBookingItemAction;
+use App\Support\Booking\BookingRefundStatuses;
+use App\Support\Payment\Gateway\MinorUnitConverter;
+use App\Support\Payment\Gateway\RefundCreationResult;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Carbon;
@@ -95,7 +99,7 @@ class CancelBookingTest extends TestCase
                     ],
                     'refund_due' => [
                         'percentage' => 100,
-                        'execution' => 'MANUAL',
+                        'execution' => 'AUTOMATIC',
                     ],
                 ],
             ]);
@@ -106,7 +110,8 @@ class CancelBookingTest extends TestCase
         );
 
         /*
-         * Cancellation must not execute a Stripe refund.
+         * The original payment_attempts row is never rewritten by the
+         * refund - it stays exactly SUCCESSFUL forever.
          */
         $this->assertSame(
             'SUCCESSFUL',
@@ -127,6 +132,22 @@ class CancelBookingTest extends TestCase
             $expectedRefund,
             $response->json('data.refund_due.amount')
         );
+
+        /*
+         * Exactly one booking_refunds obligation is created, for the
+         * correct amount, and (via FakePaymentGateway's synchronous
+         * "succeeded" default) resolves automatically.
+         */
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertNotNull($refundRow);
+        $this->assertSame($expectedRefund, (string) $refundRow->requested_amount);
+        $this->assertSame(100, (int) $refundRow->policy_percentage);
+        $this->assertSame('SUCCEEDED', $this->bookingRefundStatusCode($refundRow));
+        $this->assertNotNull($refundRow->provider_refund_reference);
+        $this->assertSame('CUSTOMER', $refundRow->initiated_as);
+
+        $this->assertCount(1, $this->fakeGateway()->refundPaymentCalls);
+        $this->assertSame($expectedRefund, $this->fakeGateway()->refundPaymentCalls[0]->amount);
     }
 
     public function test_cancellation_from_start_of_appointment_day_returns_75_percent_refund_due(): void
@@ -157,7 +178,7 @@ class CancelBookingTest extends TestCase
                     ],
                     'refund_due' => [
                         'percentage' => 75,
-                        'execution' => 'MANUAL',
+                        'execution' => 'AUTOMATIC',
                     ],
                 ],
             ]);
@@ -203,7 +224,6 @@ class CancelBookingTest extends TestCase
             $this->bookingStatus($booking)
         );
     }
-
 
     public function test_malformed_booking_uuid_returns_clean_404_on_cancel(): void
     {
@@ -360,6 +380,19 @@ class CancelBookingTest extends TestCase
                 ->where('booking_id', $booking->id)
                 ->count()
         );
+
+        /*
+         * Exactly one booking_refunds obligation ever exists for this
+         * Booking, and Stripe is only ever called once - the retry, once
+         * the obligation already resolved SUCCEEDED, must not call Stripe
+         * again.
+         */
+        $this->assertSame(
+            1,
+            DB::table('booking_refunds')->where('booking_id', $booking->id)->count()
+        );
+
+        $this->assertCount(1, $this->fakeGateway()->refundPaymentCalls);
     }
 
     public function test_completed_booking_cannot_be_cancelled(): void
@@ -766,12 +799,274 @@ class CancelBookingTest extends TestCase
         );
 
         /*
-         * Payment is still SUCCESSFUL.
-         * Refund execution remains manual in Stripe.
+         * The original payment_attempts row is never rewritten.
          */
         $this->assertSame(
             'SUCCESSFUL',
             $this->paymentStatus($fixture['payment'])
         );
+    }
+
+    // -----------------------------------------------------------------
+    // BLUE V1 Phase B20 - appointment-started cancellation restriction
+    // -----------------------------------------------------------------
+
+    public function test_cancellation_at_appointment_start_time_is_rejected_with_no_mutation(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 09:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-15 09:00:00');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response->assertStatus(409);
+
+        $this->assertSame('PAID', $this->bookingStatus($booking));
+        $this->assertNull($this->bookingRefundRow($booking));
+        $this->assertCount(0, $this->fakeGateway()->refundPaymentCalls);
+
+        $fresh = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertNull($fresh->cancellation_refund_percentage);
+        $this->assertNull($fresh->cancellation_refund_amount);
+    }
+
+    public function test_cancellation_after_appointment_start_time_is_rejected(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 09:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-15 09:30:00');
+
+        $this->cancelBooking($customer['access_token'], $booking)->assertStatus(409);
+
+        $this->assertSame('PAID', $this->bookingStatus($booking));
+    }
+
+    public function test_cancellation_one_second_before_appointment_start_is_allowed(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 09:00:00'),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        Carbon::setTestNow('2026-09-15 08:59:59');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response
+            ->assertStatus(200)
+            ->assertJsonPath('data.booking.status', 'CANCELLED')
+            ->assertJsonPath('data.refund_due.percentage', 75);
+    }
+
+    // -----------------------------------------------------------------
+    // BLUE V1 Phase B20 - Stripe execution, idempotency, recovery
+    // -----------------------------------------------------------------
+
+    public function test_refund_uses_the_payment_intent_reference_and_a_deterministic_idempotency_key(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->cancelBooking($customer['access_token'], $booking)->assertStatus(200);
+
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertNotNull($refundRow);
+
+        $call = $this->fakeGateway()->refundPaymentCalls[0];
+        $this->assertSame($payment->provider_session_reference, $call->providerPaymentReference);
+        $this->assertSame($refundRow->idempotency_key, $call->providerIdempotencyKey);
+        // 'FAKE' under the test environment (FakePaymentGateway) - the
+        // real Stripe adapter writes 'STRIPE' in every other environment,
+        // resolved the same way payment_attempts.provider_code already is.
+        $this->assertSame($this->fakeGateway()->providerCode(), $refundRow->provider_code);
+    }
+
+    public function test_transient_stripe_failure_leaves_the_refund_pending_and_retryable(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->fakeGateway()->queueNextRefund(
+            RefundCreationResult::unknown('simulated network timeout')
+        );
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+        $response->assertStatus(200);
+
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertSame('PENDING', $this->bookingRefundStatusCode($refundRow));
+        $this->assertNull($refundRow->provider_refund_reference);
+
+        /*
+         * Recovery command retries with the SAME idempotency key and
+         * succeeds - never a second, different key.
+         */
+        $firstIdempotencyKey = $refundRow->idempotency_key;
+
+        app(ExecuteBookingRefundAction::class)
+            ->handle(UuidBinary::toString($refundRow->id));
+
+        $resolved = $this->bookingRefundRow($booking);
+        $this->assertSame('SUCCEEDED', $this->bookingRefundStatusCode($resolved));
+        $this->assertNotNull($resolved->provider_refund_reference);
+
+        $this->assertCount(2, $this->fakeGateway()->refundPaymentCalls);
+        $this->assertSame($firstIdempotencyKey, $this->fakeGateway()->refundPaymentCalls[1]->providerIdempotencyKey);
+    }
+
+    public function test_definitive_stripe_rejection_marks_the_refund_failed_and_never_retries_automatically(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->fakeGateway()->queueNextRefund(
+            RefundCreationResult::definitiveFailure('STRIPE_REQUEST_REJECTED', 'already refunded')
+        );
+
+        $this->cancelBooking($customer['access_token'], $booking)->assertStatus(200);
+
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertSame('FAILED', $this->bookingRefundStatusCode($refundRow));
+        $this->assertSame('STRIPE_REQUEST_REJECTED', $refundRow->failure_code);
+        $this->assertNotNull($refundRow->failed_at);
+
+        // The recovery command's own query only ever selects PENDING rows,
+        // so a FAILED obligation is never retried automatically.
+        $this->assertSame(
+            0,
+            DB::table('booking_refunds')->where('status_id', BookingRefundStatuses::id('PENDING'))->count()
+        );
+    }
+
+    public function test_cancellation_never_mutates_the_captured_payment_amount(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        $booking = $this->bookingRowForPayment($payment);
+        $before = DB::table('payment_attempts')->where('id', $payment->id)->first();
+
+        $this->cancelBooking($customer['access_token'], $booking)->assertStatus(200);
+
+        $after = DB::table('payment_attempts')->where('id', $payment->id)->first();
+
+        $this->assertSame((string) $before->confirmed_amount, (string) $after->confirmed_amount);
+        $this->assertSame($before->status_id, $after->status_id);
+        $this->assertSame($before->provider_transaction_reference, $after->provider_transaction_reference);
+    }
+
+    // -----------------------------------------------------------------
+    // FIX PHASE item 7 - confirmed_amount is the ONLY financial source
+    // of truth for an automated refund; never silently substitute
+    // requested_amount.
+    // -----------------------------------------------------------------
+
+    public function test_cancellation_rejects_when_confirmed_amount_is_missing_no_mutation(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+        $booking = $this->bookingRowForPayment($payment);
+
+        // chk_payment_attempts_successful_at requires successful_at to be
+        // null whenever confirmed_amount is null - both are cleared
+        // together to keep this an otherwise-valid reconciliation-failure
+        // row.
+        DB::table('payment_attempts')->where('id', $payment->id)->update([
+            'confirmed_amount' => null,
+            'successful_at' => null,
+        ]);
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response->assertStatus(409);
+        $this->assertStringContainsString('confirmed amount', strtolower($response->json('message')));
+
+        $this->assertSame('PAID', $this->bookingStatus($booking));
+        $this->assertNull($this->bookingRefundRow($booking));
+        $this->assertCount(0, $this->fakeGateway()->refundPaymentCalls);
+
+        $fresh = DB::table('bookings')->where('id', $booking->id)->first();
+        $this->assertNull($fresh->cancellation_refund_percentage);
+        $this->assertNull($fresh->cancellation_refund_amount);
+    }
+
+    // -----------------------------------------------------------------
+    // FIX PHASE item 6 - the amount persisted as the refund obligation
+    // and the integer amount sent to Stripe must represent the SAME
+    // final monetary amount, and a sub-minor-unit remainder must never
+    // silently truncate to a zero-value Stripe refund.
+    // -----------------------------------------------------------------
+
+    public function test_refund_amount_persisted_matches_the_normalized_amount_sent_to_stripe(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => Carbon::parse('2026-09-15 10:00:00'),
+        ]);
+        DB::table('payment_attempts')->where('id', $payment->id)->update(['confirmed_amount' => '99.99']);
+
+        $booking = $this->bookingRowForPayment($payment);
+        Carbon::setTestNow('2026-09-15 05:00:00');
+
+        $response = $this->cancelBooking($customer['access_token'], $booking);
+
+        $response->assertStatus(200)->assertJsonPath('data.refund_due.percentage', 75);
+
+        // 99.99 x 75% = 74.9925 -> normalized (half-up at AED's 2 decimal
+        // places) to 74.99 BEFORE persistence - never the raw 74.992500
+        // figure. Formatted at decimal(19,6), matching every other money
+        // field this API returns (e.g. payment_attempts.confirmed_amount).
+        $this->assertSame('74.990000', $response->json('data.refund_due.amount'));
+
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertSame('74.990000', (string) $refundRow->requested_amount);
+
+        // What is actually sent to the gateway/Stripe represents the exact
+        // same 74.99 - never a different figure than what was persisted.
+        $call = $this->fakeGateway()->refundPaymentCalls[0];
+        $this->assertSame(0, bccomp($call->amount, '74.99', 2));
+        $this->assertSame(7499, MinorUnitConverter::toMinorUnits($call->amount, 2));
+    }
+
+    public function test_refund_below_the_smallest_currency_unit_is_marked_failed_without_calling_stripe(): void
+    {
+        ['customer' => $customer, 'payment' => $payment] = $this->successfulPayment([
+            'starts_at' => now()->addDays(2),
+        ]);
+
+        // An amount so small that, even after correct half-up rounding,
+        // 75% of it rounds to zero AED - the pathological case
+        // roundToMinorUnit() cannot rescue (< half a minor unit).
+        DB::table('payment_attempts')->where('id', $payment->id)->update(['confirmed_amount' => '0.001']);
+
+        $booking = $this->bookingRowForPayment($payment);
+
+        $this->cancelBooking($customer['access_token'], $booking)->assertStatus(200);
+
+        $refundRow = $this->bookingRefundRow($booking);
+        $this->assertSame('FAILED', $this->bookingRefundStatusCode($refundRow));
+        $this->assertSame('REFUND_AMOUNT_BELOW_MINIMUM_UNIT', $refundRow->failure_code);
+
+        // Stripe must never be called with a zero-value refund.
+        $this->assertCount(0, $this->fakeGateway()->refundPaymentCalls);
     }
 }

@@ -112,6 +112,39 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // BLUE V1 Phase A2.3 - Stage 2 (WebAuthn assertion) flooding
+        // protection. Keyed on login_ticket rather than phone_number - this
+        // request never carries a phone number - so concurrent forged
+        // assertion attempts against one pending login attempt are bounded
+        // independently of the broader per-IP bucket below. The ticket is
+        // already short-lived and single-use; this is an additional HTTP
+        // abuse boundary on top of that domain guarantee, not a replacement
+        // for it.
+        RateLimiter::for('admin-auth-mfa-verify', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-mfa-verify-identity:'.$identityKey($request, ['login_ticket'])),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-mfa-verify-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // BLUE V1 Phase A2.3 - first-credential bootstrap flooding
+        // protection. Same shape as admin-auth-mfa-verify above, kept as a
+        // separate bucket since this is a materially more sensitive
+        // operation (it can persist a new credential) than a normal login
+        // assertion.
+        RateLimiter::for('admin-auth-mfa-enroll', function (Request $request) use ($identityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-mfa-enroll-identity:'.$identityKey($request, ['login_ticket'])),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-mfa-enroll-ip:'.$ipKey($request)),
+            ];
+        });
+
         // Account-creation flooding protection.
         RateLimiter::for('auth-register', function (Request $request) use ($identityKey, $ipKey): array {
             return [
@@ -208,6 +241,38 @@ class AppServiceProvider extends ServiceProvider
 
                 Limit::perMinute(20)
                     ->by('auth-account-delete-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // BLUE V1 Phase A2.5 - Step-Up request (challenge issuance)
+        // flooding protection. Keyed on the authenticated Admin's own
+        // identity (auth.admin already ran and attached auth_user before
+        // throttle evaluates this route) rather than a request body field -
+        // this endpoint takes no input at all. Tighter than the login
+        // limiters above since a legitimate caller has no reason to request
+        // step-up challenges rapidly.
+        RateLimiter::for('admin-auth-step-up-request', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-step-up-request-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-step-up-request-ip:'.$ipKey($request)),
+            ];
+        });
+
+        // BLUE V1 Phase A2.5 - Step-Up verify (WebAuthn assertion) flooding
+        // protection - brute-force assertion attempts against a genuine
+        // pending step-up ticket. Same shape as admin-auth-mfa-verify above,
+        // keyed on the authenticated Admin's identity instead of a ticket
+        // field, since this route is always behind auth.admin.
+        RateLimiter::for('admin-auth-step-up-verify', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(10)
+                    ->by('admin-auth-step-up-verify-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(30)
+                    ->by('admin-auth-step-up-verify-ip:'.$ipKey($request)),
             ];
         });
 

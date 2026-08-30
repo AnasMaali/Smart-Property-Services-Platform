@@ -161,6 +161,12 @@ class AdminContractTest extends TestCase
         $ctx = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($ctx['contract']->id);
 
+        // BLUE V1 Phase A2.5 - contracts.cancel now also requires a fresh
+        // WebAuthn step-up; grant it directly for this session rather than
+        // driving the real ceremony, exactly like activeContractWithItem()
+        // itself mints the Admin session directly instead of via HTTP.
+        $this->markStepUpVerified($ctx['admin']['session_uuid']);
+
         $this->adminCancelContract($ctx['admin']['access_token'], $contractUuid, ['reason' => 'QA cancel.'])->assertStatus(200);
 
         $logs = $this->auditLogsFor($contractUuid);
@@ -197,6 +203,10 @@ class AdminContractTest extends TestCase
     public function test_malformed_admin_contract_mutation_uuids_return_clean_404(): void
     {
         $admin = $this->createAndLoginAdmin();
+        // BLUE V1 Phase A2.5 - the cancel case below is admin.stepup-
+        // protected; grant it up front so all four operations reach their
+        // own (identical) 404 behavior rather than a 428 for cancel alone.
+        $this->markStepUpVerified($admin['session_uuid']);
         $service = $this->createSubscriptionEligibleService();
 
         $cases = [
@@ -222,6 +232,9 @@ class AdminContractTest extends TestCase
     public function test_unknown_admin_contract_mutation_uuids_return_clean_404(): void
     {
         $admin = $this->createAndLoginAdmin();
+        // BLUE V1 Phase A2.5 - see identical note in
+        // test_malformed_admin_contract_mutation_uuids_return_clean_404.
+        $this->markStepUpVerified($admin['session_uuid']);
         $service = $this->createSubscriptionEligibleService();
 
         $cases = [
@@ -359,6 +372,10 @@ class AdminContractTest extends TestCase
         $ctx = $this->activeContractWithItem();
         $contractUuid = UuidBinary::toString($ctx['contract']->id);
 
+        // BLUE V1 Phase A2.5 - one grant covers both cancel calls below;
+        // step-up is a reusable freshness window, not consumed per action.
+        $this->markStepUpVerified($ctx['admin']['session_uuid']);
+
         $this->adminCancelContract(
             $ctx['admin']['access_token'],
             $contractUuid,
@@ -408,6 +425,4 @@ class AdminContractTest extends TestCase
 
         $this->assertSame(0, $count);
     }
-
-
 }

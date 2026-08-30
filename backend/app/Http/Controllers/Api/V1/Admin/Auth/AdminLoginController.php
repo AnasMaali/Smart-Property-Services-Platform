@@ -11,11 +11,7 @@ class AdminLoginController extends Controller
 {
     public function __invoke(AdminLoginRequest $request, AdminLoginAction $action): JsonResponse
     {
-        $result = $action->handle([
-            ...$request->validated(),
-            'ip_address' => $request->ip(),
-            'user_agent' => $request->userAgent(),
-        ]);
+        $result = $action->handle($request->validated());
 
         return response()->json([
             'success' => $result['success'],
