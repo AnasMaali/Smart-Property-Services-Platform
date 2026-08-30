@@ -35,35 +35,56 @@ use App\Http\Controllers\Api\V1\Admin\Pricing\CreateAdminPricingSchemeDraftContr
 use App\Http\Controllers\Api\V1\Admin\Pricing\DeleteAdminPricingRuleController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\GetAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\ListAdminPricingSchemesController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\PreviewAdminServicePricingController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\PublishAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\SetAdminServiceCurrentPriceController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Rating\GetAdminRatingController;
 use App\Http\Controllers\Api\V1\Admin\Rating\ListAdminRatingsController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCheckpointController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCheckpointGroupController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceContentSectionController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceMediaController;
+use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceOptionChoiceAttributeController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceOptionChoiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\ChangeAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceCheckpointController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceCheckpointGroupController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceContentSectionController;
 use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceOptionChoiceAttributeController;
 use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceOptionChoiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\CreateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCheckpointController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceCheckpointGroupController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceContentSectionController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceMediaController;
+use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionChoiceAttributeController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionChoiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCategoriesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCheckpointActionTypesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceContentSectionTypesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceOptionChoiceAttributeTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminSpecializationsController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceCatalogPolicyController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceOriginalPriceController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceSpecializationController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCategoryController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCheckpointController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceCheckpointGroupController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceContentSectionController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceController;
+use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionChoiceAttributeController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionChoiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\UploadAdminServiceMediaController;
@@ -420,6 +441,16 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/pricing-schemes/{pricingScheme}/publish', PublishAdminPricingSchemeController::class)
         ->middleware([AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
 
+    // BLUE V1 Phase B23-ext - pricing preview/tester. A pure READ: it never
+    // writes a Cart, Cart Item, or any pricing row, so it needs only
+    // `pricing.view` (no `admin.stepup`) even though it evaluates a
+    // hypothetical selection through the exact same App\Support\Cart\
+    // CartSelectionValidator/App\Support\Pricing\PricingEngine the real
+    // Cart flow uses - see App\Actions\Admin\Pricing\
+    // AdminPreviewServicePricingAction's docblock.
+    Route::post('/v1/admin/services/{service}/pricing-preview', PreviewAdminServicePricingController::class)
+        ->middleware(AdminCapability::PRICING_VIEW->middleware());
+
     // BLUE V1 Phase B23 - the simplified "Current Price" convenience on top
     // of the Pricing management endpoints just above - it authors a DRAFT
     // and publishes it through the exact same canonical flow, so it
@@ -519,6 +550,56 @@ Route::middleware('auth.admin')->group(function () {
     Route::post('/v1/admin/service-media/{media}/activate', ActivateAdminServiceMediaController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
     Route::post('/v1/admin/service-media/{media}/deactivate', DeactivateAdminServiceMediaController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    // BLUE V1 Phase B23-ext - Catalog Model Extension. Same `services.
+    // manage` bar as every other Service mutation above - none of this is
+    // a lesser-authority "just metadata" bypass. Lookup-type list routes
+    // (content-section-types / checkpoint-action-types / choice-attribute
+    // -types) sit under `services.view` since they are read-only dropdown
+    // vocabulary, exactly like `/v1/admin/specializations` above.
+    Route::post('/v1/admin/services/{service}/catalog-policy', SetAdminServiceCatalogPolicyController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    Route::get('/v1/admin/service-content-section-types', ListAdminServiceContentSectionTypesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/services/{service}/content-sections', CreateAdminServiceContentSectionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-content-sections/{section}', UpdateAdminServiceContentSectionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-content-sections/{section}/activate', ActivateAdminServiceContentSectionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-content-sections/{section}/deactivate', DeactivateAdminServiceContentSectionController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    Route::get('/v1/admin/service-checkpoint-action-types', ListAdminServiceCheckpointActionTypesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/services/{service}/checkpoint-groups', CreateAdminServiceCheckpointGroupController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-checkpoint-groups/{group}', UpdateAdminServiceCheckpointGroupController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-checkpoint-groups/{group}/activate', ActivateAdminServiceCheckpointGroupController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-checkpoint-groups/{group}/deactivate', DeactivateAdminServiceCheckpointGroupController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-checkpoint-groups/{group}/checkpoints', CreateAdminServiceCheckpointController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-checkpoints/{checkpoint}', UpdateAdminServiceCheckpointController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-checkpoints/{checkpoint}/activate', ActivateAdminServiceCheckpointController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-checkpoints/{checkpoint}/deactivate', DeactivateAdminServiceCheckpointController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    Route::get('/v1/admin/service-option-choice-attribute-types', ListAdminServiceOptionChoiceAttributeTypesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/service-option-choices/{choice}/attributes', CreateAdminServiceOptionChoiceAttributeController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::patch('/v1/admin/service-option-choice-attributes/{attribute}', UpdateAdminServiceOptionChoiceAttributeController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-option-choice-attributes/{attribute}/activate', ActivateAdminServiceOptionChoiceAttributeController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+    Route::post('/v1/admin/service-option-choice-attributes/{attribute}/deactivate', DeactivateAdminServiceOptionChoiceAttributeController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     // BLUE V1 Phase B7 - Support Requests/Messages. `support.view` covers

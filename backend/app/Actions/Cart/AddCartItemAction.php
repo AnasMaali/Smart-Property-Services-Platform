@@ -10,6 +10,7 @@ use App\Support\Cart\CartPresenter;
 use App\Support\Cart\CartSelectionValidator;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Catalog\ServiceQuantityPolicy;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingStatus;
@@ -65,7 +66,7 @@ class AddCartItemAction
             $serviceUuid = $data['service_uuid'];
             $serviceIdBinary = UuidBinary::toBinary($serviceUuid);
 
-            $service = DB::table('services')->where('id', $serviceIdBinary)->where('is_active', 1)->first(['id']);
+            $service = DB::table('services')->where('id', $serviceIdBinary)->where('is_active', 1)->first(['id', 'min_quantity', 'max_quantity']);
 
             if ($service === null) {
                 return $this->notFound('Service not found.');
@@ -76,6 +77,12 @@ class AddCartItemAction
             }
 
             $quantity = $data['quantity'] ?? 1;
+
+            $quantityError = ServiceQuantityPolicy::violation($quantity, (int) $service->min_quantity, (int) $service->max_quantity);
+
+            if ($quantityError !== null) {
+                return $this->unprocessable($quantityError, ['quantity' => [$quantityError]]);
+            }
 
             $validation = $this->selectionValidator->validate($serviceUuid, $data['options'] ?? []);
 

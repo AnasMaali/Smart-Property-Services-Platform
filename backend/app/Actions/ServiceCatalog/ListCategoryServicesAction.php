@@ -41,7 +41,7 @@ class ListCategoryServicesAction
             ->where('category_id', $categoryId)
             ->where('is_active', 1)
             ->orderBy('display_order')
-            ->get(['id', 'code', 'slug', 'name', 'short_description', 'original_price']);
+            ->get(['id', 'code', 'slug', 'name', 'short_description', 'original_price', 'is_featured', 'estimated_duration_minutes', 'min_quantity', 'max_quantity']);
 
         if ($services->isEmpty()) {
             return [
@@ -78,6 +78,9 @@ class ListCategoryServicesAction
                     'slug' => $service->slug,
                     'name' => $service->name,
                     'short_description' => $service->short_description,
+                    'is_featured' => (bool) $service->is_featured,
+                    'estimated_duration_minutes' => $service->estimated_duration_minutes === null ? null : (int) $service->estimated_duration_minutes,
+                    'quantity' => ['min' => (int) $service->min_quantity, 'max' => (int) $service->max_quantity],
                     // BLUE V1 Phase B23 - additive two-price display block,
                     // computed from the SAME batched previewMany() call
                     // already made above for `pricing_preview` - never a

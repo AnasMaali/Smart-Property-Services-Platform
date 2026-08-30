@@ -2360,6 +2360,160 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- BLUE V1 Phase B23-ext (Catalog Model Extension) - lookup
+-- vocabulary only. Real BLUE catalog business data (services,
+-- choices, content, checkpoints) is NOT seeded here - that
+-- belongs to a later Catalog Data phase.
+-- =============================================================
+
+INSERT INTO service_option_choice_attribute_types (
+    code,
+    name,
+    description,
+    data_type,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'DURATION_MINUTES',
+    'Duration (minutes)',
+    'This package choice''s own estimated duration, when it differs from the Service-level default.',
+    'NUMBER',
+    1,
+    TRUE
+),
+(
+    'OIL_BRAND',
+    'Oil brand',
+    'The oil brand this package choice supplies, e.g. Castrol.',
+    'STRING',
+    2,
+    TRUE
+),
+(
+    'OIL_GRADE',
+    'Oil grade',
+    'The oil grade this package choice supplies, e.g. 5W-40.',
+    'STRING',
+    3,
+    TRUE
+),
+(
+    'RECOMMENDED_ODOMETER_KM',
+    'Recommended odometer (km)',
+    'The recommended odometer interval, in kilometres, for this package choice.',
+    'NUMBER',
+    4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    data_type = new.data_type,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+INSERT INTO service_content_section_types (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'OVERVIEW',
+    'Overview',
+    'A general introductory description of the service.',
+    1,
+    TRUE
+),
+(
+    'RECOMMENDED_FOR',
+    'Recommended for',
+    'Who/when this service is recommended for.',
+    2,
+    TRUE
+),
+(
+    'WHATS_INCLUDED',
+    'What''s included',
+    'What the service includes.',
+    3,
+    TRUE
+),
+(
+    'OTHER',
+    'Other',
+    'A free-form informational section with a custom heading.',
+    4,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+INSERT INTO service_checkpoint_action_types (
+    code,
+    name,
+    description,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'REPLACE',
+    'Replace',
+    'The item is replaced.',
+    1,
+    TRUE
+),
+(
+    'INSPECT',
+    'Inspect',
+    'The item is visually/functionally inspected.',
+    2,
+    TRUE
+),
+(
+    'INSPECT_AND_CLEAN',
+    'Inspect & clean',
+    'The item is inspected and cleaned.',
+    3,
+    TRUE
+),
+(
+    'TOP_UP',
+    'Top up',
+    'The item''s level/fluid is topped up.',
+    4,
+    TRUE
+),
+(
+    'INSPECT_AND_ADJUST',
+    'Inspect & adjust',
+    'The item is inspected and adjusted.',
+    5,
+    TRUE
+),
+(
+    'UPDATE',
+    'Update',
+    'The item is updated (e.g. firmware/software).',
+    6,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- COMPLETE SEED TRANSACTION
 -- =============================================================
 

@@ -323,8 +323,221 @@
             </div>
         </div>
 
+        <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <h3 class="text-sm font-semibold text-slate-900">Catalog &amp; promotion</h3>
+            <p class="mt-1 text-xs text-slate-400">
+                Display/policy metadata only - never read by the pricing calculation.
+            </p>
+
+            <form data-catalog-policy-form class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <label class="flex items-center gap-2 text-sm sm:col-span-2 lg:col-span-4">
+                    <input type="checkbox" name="is_featured" class="h-4 w-4 rounded border-slate-300">
+                    Featured / Best Seller
+                </label>
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Estimated duration (minutes)</label>
+                    <input type="number" name="estimated_duration_minutes" min="1" max="32767"
+                           class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
+                </div>
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Min quantity</label>
+                    <input type="number" name="min_quantity" min="1" max="1000" required
+                           class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
+                </div>
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Max quantity</label>
+                    <input type="number" name="max_quantity" min="1" max="1000" required
+                           class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
+                </div>
+                <div class="flex items-end sm:col-span-2 lg:col-span-4">
+                    <button type="submit" class="rounded-lg bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                        Save catalog policy
+                    </button>
+                    <p data-catalog-policy-error class="ml-4 hidden text-sm text-red-600"></p>
+                </div>
+            </form>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-900">Content sections</h3>
+                    <p class="mt-1 text-xs text-slate-400">Overview, Recommended For, What's Included, or a custom heading.</p>
+                </div>
+            </div>
+            <div data-content-sections-empty class="hidden mt-3 text-sm text-slate-500">No content sections yet.</div>
+            <div data-content-sections class="mt-3 divide-y divide-slate-100"></div>
+
+            <form data-add-content-section-form class="mt-4 space-y-3 border-t border-slate-100 pt-4">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <select name="section_type_code" data-content-section-type-select required
+                            class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"></select>
+                    <input type="text" name="title" required maxlength="160" placeholder="Title"
+                           class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 sm:col-span-2">
+                </div>
+                <textarea name="body" required rows="2" placeholder="Body"
+                          class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"></textarea>
+                <div class="flex items-center gap-4">
+                    <button type="submit" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                        Add content section
+                    </button>
+                    <p data-add-content-section-error class="hidden text-sm text-red-600"></p>
+                </div>
+            </form>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-900">Checkpoints</h3>
+                    <p class="mt-1 text-xs text-slate-400">Workshop checklist groups - checkpoint counts are always derived from active checkpoints.</p>
+                </div>
+                <button type="button" data-add-checkpoint-group-open
+                        class="shrink-0 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    + Add group
+                </button>
+            </div>
+            <div data-checkpoint-groups-empty class="hidden mt-3 text-sm text-slate-500">No checkpoint groups yet.</div>
+            <div data-checkpoint-groups class="mt-3 space-y-4"></div>
+        </div>
+
     </div>
 
+</div>
+
+<template data-content-section-row-template>
+    <div data-content-section-row class="py-3 first:pt-0 last:pb-0">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+                <span data-field="section_type_code" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"></span>
+                <p data-field="title" class="mt-1 font-medium text-slate-900"></p>
+                <p data-field="body" class="mt-0.5 text-xs text-slate-500"></p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+                <span data-field="is_active" class="rounded-full px-2.5 py-1 text-xs font-semibold"></span>
+                <button type="button" data-edit-content-section class="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
+                <button type="button" data-toggle-content-section-active class="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"></button>
+            </div>
+        </div>
+    </div>
+</template>
+
+<template data-checkpoint-group-card-template>
+    <div data-checkpoint-group-card class="rounded-xl border border-slate-100 p-4">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+                <p data-field="name" class="font-medium text-slate-900"></p>
+                <p data-field="description" class="mt-0.5 text-xs text-slate-500"></p>
+                <p class="mt-0.5 text-xs text-slate-400">
+                    <span data-field="active_checkpoint_count"></span>/<span data-field="checkpoint_count"></span> active checkpoints
+                </p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+                <span data-field="is_active" class="rounded-full px-2.5 py-1 text-xs font-semibold"></span>
+                <button type="button" data-edit-checkpoint-group class="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
+                <button type="button" data-toggle-checkpoint-group-active class="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"></button>
+                <button type="button" data-add-checkpoint-open class="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">+ Checkpoint</button>
+            </div>
+        </div>
+        <ul data-checkpoints class="mt-3 space-y-1.5 text-xs text-slate-600"></ul>
+    </div>
+</template>
+
+<template data-checkpoint-row-template>
+    <li data-checkpoint-row class="flex items-center justify-between gap-2">
+        <span>
+            <span data-field="name" class="text-slate-700"></span>
+            <span data-field="action_type_name" class="ml-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"></span>
+        </span>
+        <span class="flex items-center gap-1.5">
+            <span data-field="is_active" class="rounded-full px-2 py-0.5 text-[11px] font-semibold"></span>
+            <button type="button" data-edit-checkpoint class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
+            <button type="button" data-toggle-checkpoint-active class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"></button>
+        </span>
+    </li>
+</template>
+
+<div data-add-checkpoint-group-modal style="display: none;" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h2 data-add-checkpoint-group-title class="text-lg font-semibold text-slate-950">Add checkpoint group</h2>
+        <form data-add-checkpoint-group-form class="mt-4 space-y-3">
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+                <input type="text" name="name" required minlength="2" maxlength="160" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Description</label>
+                <input type="text" name="description" maxlength="500" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Display order</label>
+                <input type="number" name="display_order" min="0" max="65535" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <p data-add-checkpoint-group-error class="hidden text-sm text-red-600"></p>
+            <div class="mt-2 flex justify-end gap-3">
+                <button type="button" data-add-checkpoint-group-cancel class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" data-add-checkpoint-group-submit class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div data-add-checkpoint-modal style="display: none;" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h2 data-add-checkpoint-title class="text-lg font-semibold text-slate-950">Add checkpoint</h2>
+        <form data-add-checkpoint-form class="mt-4 space-y-3">
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Name</label>
+                <input type="text" name="name" required minlength="2" maxlength="160" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Description</label>
+                <input type="text" name="description" maxlength="500" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Action</label>
+                <select name="action_type_code" data-checkpoint-action-type-select required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div data-checkpoint-move-field class="hidden">
+                <label class="mb-1 block text-xs font-medium text-slate-600">Group</label>
+                <select name="group_uuid" data-checkpoint-group-select class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Display order</label>
+                <input type="number" name="display_order" min="0" max="65535" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <p data-add-checkpoint-error class="hidden text-sm text-red-600"></p>
+            <div class="mt-2 flex justify-end gap-3">
+                <button type="button" data-add-checkpoint-cancel class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" data-add-checkpoint-submit class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div data-edit-content-section-modal style="display: none;" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+    <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h2 class="text-lg font-semibold text-slate-950">Edit content section</h2>
+        <form data-edit-content-section-form class="mt-4 space-y-3">
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Title</label>
+                <input type="text" name="title" required minlength="2" maxlength="160" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Body</label>
+                <textarea name="body" required rows="3" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea>
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Display order</label>
+                <input type="number" name="display_order" min="0" max="65535" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <p data-edit-content-section-error class="hidden text-sm text-red-600"></p>
+            <div class="mt-2 flex justify-end gap-3">
+                <button type="button" data-edit-content-section-cancel class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" data-edit-content-section-submit class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <template data-option-row-template>
@@ -348,14 +561,46 @@
 </template>
 
 <template data-choice-row-template>
-    <li data-choice-row class="flex items-center justify-between gap-2">
-        <span data-field="name"></span>
-        <span class="flex items-center gap-1.5">
-            <button type="button" data-choice-edit class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
-            <button type="button" data-choice-toggle-active class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"></button>
-        </span>
+    <li data-choice-row class="space-y-1.5 py-1">
+        <div class="flex items-center justify-between gap-2">
+            <span data-field="name"></span>
+            <span class="flex items-center gap-1.5">
+                <button type="button" data-choice-add-attribute class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">+ Attribute</button>
+                <button type="button" data-choice-edit class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
+                <button type="button" data-choice-toggle-active class="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"></button>
+            </span>
+        </div>
+        <div data-choice-attributes class="flex flex-wrap gap-1"></div>
     </li>
 </template>
+
+<template data-choice-attribute-pill-template>
+    <span data-choice-attribute-pill class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+        <span data-field="label"></span>
+        <button type="button" data-choice-attribute-toggle title="Activate/deactivate" class="text-blue-400 hover:text-blue-700">●</button>
+    </span>
+</template>
+
+<div data-add-choice-attribute-modal style="display: none;" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/60 p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h2 class="text-lg font-semibold text-slate-950">Add attribute</h2>
+        <form data-add-choice-attribute-form class="mt-4 space-y-3">
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Attribute</label>
+                <select name="attribute_type_code" data-choice-attribute-type-select required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select>
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Value</label>
+                <input type="text" name="value" required maxlength="255" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <p data-add-choice-attribute-error class="hidden text-sm text-red-600"></p>
+            <div class="mt-2 flex justify-end gap-3">
+                <button type="button" data-add-choice-attribute-cancel class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" data-add-choice-attribute-submit class="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <template data-media-row-template>
     <div data-media-row class="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">

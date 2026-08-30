@@ -329,7 +329,8 @@ class ListCategoryServicesTest extends TestCase
         $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
 
         $entry = collect($data['services'])->firstWhere('uuid', $serviceUuid);
-        $this->assertSame(['uuid', 'code', 'slug', 'name', 'short_description', 'pricing', 'primary_image', 'pricing_preview'], array_keys($entry));
+        $this->assertSame(['uuid', 'code', 'slug', 'name', 'short_description', 'is_featured', 'estimated_duration_minutes', 'quantity', 'pricing', 'primary_image', 'pricing_preview'], array_keys($entry));
+        $this->assertSame(['min', 'max'], array_keys($entry['quantity']));
         $this->assertSame(
             ['storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels'],
             array_keys($entry['primary_image'])

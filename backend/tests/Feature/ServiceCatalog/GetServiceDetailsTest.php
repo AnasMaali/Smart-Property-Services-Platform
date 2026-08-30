@@ -325,9 +325,10 @@ class GetServiceDetailsTest extends TestCase
 
         $data = $response->json('data');
         $this->assertSame(
-            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'category', 'media', 'pricing_preview', 'pricing', 'options'],
+            ['uuid', 'code', 'slug', 'name', 'short_description', 'description', 'is_featured', 'estimated_duration_minutes', 'quantity', 'category', 'media', 'pricing_preview', 'pricing', 'options', 'content_sections', 'checkpoint_groups'],
             array_keys($data)
         );
+        $this->assertSame(['min', 'max'], array_keys($data['quantity']));
         $this->assertSame(['id', 'code', 'name', 'description'], array_keys($data['category']));
         $this->assertSame(
             ['uuid', 'storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels', 'is_primary'],
@@ -347,7 +348,7 @@ class GetServiceDetailsTest extends TestCase
         $selectPayload = collect($data['options'])->firstWhere('uuid', $selectOption);
         $this->assertSame(['uuid', 'code', 'name', 'description', 'type', 'is_required', 'selection_rule', 'choices'], array_keys($selectPayload));
         $this->assertSame(['minimum_selections', 'maximum_selections'], array_keys($selectPayload['selection_rule']));
-        $this->assertSame(['uuid', 'code', 'name', 'description'], array_keys($selectPayload['choices'][0]));
+        $this->assertSame(['uuid', 'code', 'name', 'description', 'attributes'], array_keys($selectPayload['choices'][0]));
 
         $raw = $response->getContent();
         foreach ([
@@ -364,6 +365,12 @@ class GetServiceDetailsTest extends TestCase
             'admin_note',
             'created_by_user_id',
             'updated_by_user_id',
+            'attribute_type_id',
+            'section_type_id',
+            'group_id',
+            'action_type_id',
+            'value_string',
+            'value_number',
         ] as $forbiddenString) {
             $this->assertStringNotContainsString($forbiddenString, $raw, "Service detail JSON leaked forbidden field name: {$forbiddenString}");
         }

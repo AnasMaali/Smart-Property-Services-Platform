@@ -10,6 +10,7 @@ use App\Support\Cart\CartPresenter;
 use App\Support\Cart\CartSelectionValidator;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Catalog\ServiceQuantityPolicy;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingStatus;
 use App\Support\Pricing\ServiceCapabilities;
@@ -77,7 +78,7 @@ class UpdateCartItemAction
             }
 
             $serviceUuid = $item->service_id;
-            $service = DB::table('services')->where('id', UuidBinary::toBinary($serviceUuid))->where('is_active', 1)->first(['id']);
+            $service = DB::table('services')->where('id', UuidBinary::toBinary($serviceUuid))->where('is_active', 1)->first(['id', 'min_quantity', 'max_quantity']);
 
             if ($service === null) {
                 return $this->unprocessable('This service is no longer available.');
@@ -88,6 +89,12 @@ class UpdateCartItemAction
             }
 
             $quantity = $data['quantity'] ?? $item->quantity;
+
+            $quantityError = ServiceQuantityPolicy::violation($quantity, (int) $service->min_quantity, (int) $service->max_quantity);
+
+            if ($quantityError !== null) {
+                return $this->unprocessable($quantityError, ['quantity' => [$quantityError]]);
+            }
 
             $optionsInput = array_key_exists('options', $data)
                 ? $data['options']

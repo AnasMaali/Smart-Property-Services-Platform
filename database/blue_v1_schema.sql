@@ -2414,6 +2414,114 @@ LOCK TABLES `service_categories` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `service_checkpoint_action_types`
+--
+
+DROP TABLE IF EXISTS `service_checkpoint_action_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_checkpoint_action_types` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_checkpoint_action_types_code` (`code`),
+  KEY `idx_service_checkpoint_action_types_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_checkpoint_action_types_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_checkpoint_action_types_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_checkpoint_action_types_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_checkpoint_action_types_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_checkpoint_action_types`
+--
+
+LOCK TABLES `service_checkpoint_action_types` WRITE;
+/*!40000 ALTER TABLE `service_checkpoint_action_types` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_checkpoint_action_types` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_checkpoint_groups`
+--
+
+DROP TABLE IF EXISTS `service_checkpoint_groups`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_checkpoint_groups` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_id` binary(16) NOT NULL,
+  `name` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_checkpoint_groups_service_name` (`service_id`,`name`),
+  KEY `idx_checkpoint_groups_service_active_order` (`service_id`,`is_active`,`display_order`),
+  CONSTRAINT `fk_checkpoint_groups_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_checkpoint_groups_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_checkpoint_groups_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_checkpoint_groups_name` CHECK ((char_length(trim(`name`)) between 2 and 160))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_checkpoint_groups`
+--
+
+LOCK TABLES `service_checkpoint_groups` WRITE;
+/*!40000 ALTER TABLE `service_checkpoint_groups` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_checkpoint_groups` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_checkpoints`
+--
+
+DROP TABLE IF EXISTS `service_checkpoints`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_checkpoints` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `group_id` binary(16) NOT NULL,
+  `name` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `action_type_id` tinyint unsigned NOT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_checkpoints_group_name` (`group_id`,`name`),
+  KEY `idx_checkpoints_group_active_order` (`group_id`,`is_active`,`display_order`),
+  KEY `idx_checkpoints_action_type` (`action_type_id`),
+  CONSTRAINT `fk_checkpoints_action_type` FOREIGN KEY (`action_type_id`) REFERENCES `service_checkpoint_action_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_checkpoints_group` FOREIGN KEY (`group_id`) REFERENCES `service_checkpoint_groups` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_checkpoints_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_checkpoints_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_checkpoints_name` CHECK ((char_length(trim(`name`)) between 2 and 160))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_checkpoints`
+--
+
+LOCK TABLES `service_checkpoints` WRITE;
+/*!40000 ALTER TABLE `service_checkpoints` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_checkpoints` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `service_contract_statuses`
 --
 
@@ -2832,6 +2940,78 @@ LOCK TABLES `service_contract_billing_webhook_events` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `service_content_section_types`
+--
+
+DROP TABLE IF EXISTS `service_content_section_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_content_section_types` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_content_section_types_code` (`code`),
+  KEY `idx_service_content_section_types_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_content_section_types_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_content_section_types_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_content_section_types_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_content_section_types_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_content_section_types`
+--
+
+LOCK TABLES `service_content_section_types` WRITE;
+/*!40000 ALTER TABLE `service_content_section_types` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_content_section_types` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_content_sections`
+--
+
+DROP TABLE IF EXISTS `service_content_sections`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_content_sections` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `service_id` binary(16) NOT NULL,
+  `section_type_id` tinyint unsigned NOT NULL,
+  `title` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `idx_content_sections_service_active_order` (`service_id`,`is_active`,`display_order`),
+  KEY `idx_content_sections_type` (`section_type_id`),
+  CONSTRAINT `fk_content_sections_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_content_sections_type` FOREIGN KEY (`section_type_id`) REFERENCES `service_content_section_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_content_sections_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_content_sections_body` CHECK ((char_length(trim(`body`)) > 0)),
+  CONSTRAINT `chk_content_sections_title` CHECK ((char_length(trim(`title`)) between 2 and 160))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_content_sections`
+--
+
+LOCK TABLES `service_content_sections` WRITE;
+/*!40000 ALTER TABLE `service_content_sections` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_content_sections` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `service_media`
 --
 
@@ -2880,6 +3060,79 @@ CREATE TABLE `service_media` (
 LOCK TABLES `service_media` WRITE;
 /*!40000 ALTER TABLE `service_media` DISABLE KEYS */;
 /*!40000 ALTER TABLE `service_media` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_option_choice_attribute_types`
+--
+
+DROP TABLE IF EXISTS `service_option_choice_attribute_types`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_option_choice_attribute_types` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `data_type` varchar(10) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_service_option_choice_attribute_types_code` (`code`),
+  KEY `idx_service_option_choice_attribute_types_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_soc_attribute_types_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_soc_attribute_types_code` CHECK ((char_length(trim(`code`)) between 2 and 40)),
+  CONSTRAINT `chk_soc_attribute_types_data_type` CHECK ((`data_type` in (_utf8mb4'STRING',_utf8mb4'NUMBER'))),
+  CONSTRAINT `chk_soc_attribute_types_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_soc_attribute_types_name` CHECK ((char_length(trim(`name`)) between 2 and 100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_option_choice_attribute_types`
+--
+
+LOCK TABLES `service_option_choice_attribute_types` WRITE;
+/*!40000 ALTER TABLE `service_option_choice_attribute_types` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_option_choice_attribute_types` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `service_option_choice_attributes`
+--
+
+DROP TABLE IF EXISTS `service_option_choice_attributes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `service_option_choice_attributes` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `choice_id` binary(16) NOT NULL,
+  `attribute_type_id` tinyint unsigned NOT NULL,
+  `value_string` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `value_number` decimal(19,6) DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_soc_attributes_choice_type` (`choice_id`,`attribute_type_id`),
+  KEY `idx_soc_attributes_type` (`attribute_type_id`),
+  CONSTRAINT `fk_soc_attributes_choice` FOREIGN KEY (`choice_id`) REFERENCES `service_option_choices` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_soc_attributes_type` FOREIGN KEY (`attribute_type_id`) REFERENCES `service_option_choice_attribute_types` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_soc_attributes_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_soc_attributes_exactly_one_value` CHECK (((`value_string` is null) <> (`value_number` is null))),
+  CONSTRAINT `chk_soc_attributes_value_string` CHECK (((`value_string` is null) or (char_length(trim(`value_string`)) > 0)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `service_option_choice_attributes`
+--
+
+LOCK TABLES `service_option_choice_attributes` WRITE;
+/*!40000 ALTER TABLE `service_option_choice_attributes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `service_option_choice_attributes` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -3186,6 +3439,10 @@ CREATE TABLE `services` (
   `display_order` smallint unsigned NOT NULL DEFAULT '0',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `original_price` decimal(19,6) DEFAULT NULL,
+  `is_featured` tinyint(1) NOT NULL DEFAULT '0',
+  `estimated_duration_minutes` smallint unsigned DEFAULT NULL,
+  `min_quantity` int unsigned NOT NULL DEFAULT '1',
+  `max_quantity` int unsigned NOT NULL DEFAULT '1000',
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
@@ -3197,7 +3454,11 @@ CREATE TABLE `services` (
   CONSTRAINT `fk_services_category` FOREIGN KEY (`category_id`) REFERENCES `service_categories` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `chk_services_code` CHECK ((char_length(trim(`code`)) between 2 and 80)),
   CONSTRAINT `chk_services_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
+  CONSTRAINT `chk_services_estimated_duration_minutes` CHECK (((`estimated_duration_minutes` is null) or (`estimated_duration_minutes` > 0))),
   CONSTRAINT `chk_services_is_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_services_is_featured` CHECK ((`is_featured` in (0,1))),
+  CONSTRAINT `chk_services_max_quantity` CHECK ((`max_quantity` between `min_quantity` and 1000)),
+  CONSTRAINT `chk_services_min_quantity` CHECK ((`min_quantity` between 1 and 1000)),
   CONSTRAINT `chk_services_name` CHECK ((char_length(trim(`name`)) between 2 and 160)),
   CONSTRAINT `chk_services_original_price` CHECK (((`original_price` is null) or (`original_price` >= 0))),
   CONSTRAINT `chk_services_short_description` CHECK (((`short_description` is null) or (char_length(trim(`short_description`)) > 0))),

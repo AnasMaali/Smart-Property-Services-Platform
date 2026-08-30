@@ -11,18 +11,20 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * BLUE V1 Phase B8. Unlike the customer-facing App\Actions\ServiceCatalog\
- * GetServiceDetailsAction (which only ever shows active options/choices to
- * a shopper), this presenter deliberately shows Admin every row regardless
- * of its own `is_active` flag - an operator needs to see what is currently
- * hidden from the mobile app, not just what a customer would see.
+ * BLUE V1 Phase B8, extended through Phase B23-ext. Unlike the customer
+ * -facing App\Actions\ServiceCatalog\GetServiceDetailsAction (which only
+ * ever shows active rows to a shopper), this presenter deliberately shows
+ * Admin every row regardless of its own `is_active` flag - an operator
+ * needs to see what is currently hidden from the mobile app, not just what
+ * a customer would see.
  *
- * Options/Capabilities/Specializations/Media are presented read-only here.
- * See App\Actions\Admin\Service\AdminGetServiceAction's docblock for why:
- * in short, each one gates real downstream behavior (Cart/Contract
- * eligibility, technician-candidate matching, pricing) or has no
- * established mutation-safety story yet, so BLUE V1 standing policy is to
- * report rather than invent a mutation policy for them.
+ * `service_capabilities` remains presented read-only - see
+ * App\Actions\Admin\Service\AdminGetServiceAction's docblock for why.
+ * Everything else here (Options/Choices/Specializations/Media, and as of
+ * Phase B23-ext: content sections, checkpoint groups/checkpoints, and
+ * per-choice structured attributes) has an explicit, reviewed mutation
+ * Action - see each domain's own Action docblock for its specific safety
+ * story.
  */
 final class AdminServicePresenter
 {
@@ -40,7 +42,9 @@ final class AdminServicePresenter
             ->select([
                 'services.id', 'services.code', 'services.slug', 'services.name',
                 'services.short_description', 'services.description', 'services.is_active',
-                'services.display_order', 'services.original_price', 'services.created_at', 'services.updated_at',
+                'services.display_order', 'services.original_price', 'services.is_featured',
+                'services.estimated_duration_minutes', 'services.min_quantity', 'services.max_quantity',
+                'services.created_at', 'services.updated_at',
                 'service_categories.id as category_id', 'service_categories.code as category_code',
                 'service_categories.name as category_name', 'service_categories.is_active as category_is_active',
             ])
@@ -70,6 +74,9 @@ final class AdminServicePresenter
                 'code' => $row->code,
                 'name' => $row->name,
                 'is_active' => (bool) $row->is_active,
+                'is_featured' => (bool) $row->is_featured,
+                'estimated_duration_minutes' => $row->estimated_duration_minutes === null ? null : (int) $row->estimated_duration_minutes,
+                'quantity' => ['min' => (int) $row->min_quantity, 'max' => (int) $row->max_quantity],
                 'display_order' => (int) $row->display_order,
                 'category' => [
                     'id' => $row->category_id,
@@ -121,6 +128,9 @@ final class AdminServicePresenter
             'short_description' => $row->short_description,
             'description' => $row->description,
             'is_active' => (bool) $row->is_active,
+            'is_featured' => (bool) $row->is_featured,
+            'estimated_duration_minutes' => $row->estimated_duration_minutes === null ? null : (int) $row->estimated_duration_minutes,
+            'quantity' => ['min' => (int) $row->min_quantity, 'max' => (int) $row->max_quantity],
             'display_order' => (int) $row->display_order,
             'created_at' => Carbon::parse($row->created_at)->toIso8601String(),
             'updated_at' => Carbon::parse($row->updated_at)->toIso8601String(),
@@ -135,6 +145,8 @@ final class AdminServicePresenter
             'options' => self::optionsFor($serviceId),
             'media' => self::mediaFor($serviceId),
             'pricing' => self::pricingSummaryFor($serviceId, $row->original_price === null ? null : (string) $row->original_price),
+            'content_sections' => self::contentSectionsFor($serviceId),
+            'checkpoint_groups' => self::checkpointGroupsFor($serviceId),
         ];
     }
 
@@ -241,7 +253,10 @@ final class AdminServicePresenter
             ->get(['id', 'service_option_id', 'code', 'name', 'description', 'display_order', 'is_active'])
             ->groupBy(fn (object $r) => bin2hex($r->service_option_id));
 
-        return $options->map(function (object $option) use ($numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId) {
+        $choiceIds = $choicesByOptionId->flatten(1)->pluck('id')->all();
+        $attributesByChoiceId = self::choiceAttributesFor($choiceIds);
+
+        return $options->map(function (object $option) use ($numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId, $attributesByChoiceId) {
             $key = bin2hex($option->id);
 
             $payload = [
@@ -285,6 +300,7 @@ final class AdminServicePresenter
                         'description' => $choice->description,
                         'display_order' => (int) $choice->display_order,
                         'is_active' => (bool) $choice->is_active,
+                        'attributes' => $attributesByChoiceId->get(bin2hex($choice->id), collect())->values()->all(),
                     ])
                     ->values()
                     ->all();
@@ -373,5 +389,174 @@ final class AdminServicePresenter
             quantity: 1,
             currencyCode: DefaultCurrency::code(),
         )->unitTotal;
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext - the Admin Pricing Preview/tester tool's ONLY
+     * calculation call, kept out of App\Actions\Admin\Pricing\
+     * AdminPreviewServicePricingAction directly per this codebase's Admin/
+     * pricing-engine isolation boundary (same reasoning as
+     * currentSellingPrice() above). Selections have already been validated
+     * and shaped by App\Support\Cart\CartSelectionValidator (the same
+     * validator the real Cart Add/Update flow uses) before this is called -
+     * never a second, divergent calculation or a JS-side reimplementation.
+     *
+     * @param  array<string, array<string, mixed>>  $selections
+     * @return array<string, mixed>
+     */
+    public static function previewPricing(string $serviceUuid, array $selections, int $quantity): array
+    {
+        return (new PricingEngine)->evaluate(
+            serviceIdUuid: $serviceUuid,
+            selections: $selections,
+            quantity: $quantity,
+            currencyCode: DefaultCurrency::code(),
+        )->toArray();
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext. Generic typed key/value attributes on a
+     * SINGLE_SELECT/MULTI_SELECT choice (e.g. a car-service package
+     * choice's oil brand/grade, duration, recommended odometer) - see
+     * App\Actions\Admin\Service\AdminServiceOptionChoiceAttributeAction's
+     * docblock. Every value is presented regardless of its own `is_active`
+     * flag, matching this presenter's Admin-sees-everything convention.
+     *
+     * @param  array<int, string>  $choiceIdsBinary
+     * @return Collection<string, Collection<int, array<string, mixed>>> Keyed by hex choice id.
+     */
+    private static function choiceAttributesFor(array $choiceIdsBinary): Collection
+    {
+        if ($choiceIdsBinary === []) {
+            return collect();
+        }
+
+        return DB::table('service_option_choice_attributes')
+            ->join('service_option_choice_attribute_types', 'service_option_choice_attribute_types.id', '=', 'service_option_choice_attributes.attribute_type_id')
+            ->whereIn('service_option_choice_attributes.choice_id', $choiceIdsBinary)
+            ->orderBy('service_option_choice_attribute_types.display_order')
+            ->select([
+                'service_option_choice_attributes.id',
+                'service_option_choice_attributes.choice_id',
+                'service_option_choice_attributes.value_string',
+                'service_option_choice_attributes.value_number',
+                'service_option_choice_attributes.is_active',
+                'service_option_choice_attribute_types.code as attribute_type_code',
+                'service_option_choice_attribute_types.name as attribute_type_name',
+                'service_option_choice_attribute_types.data_type',
+            ])
+            ->get()
+            ->groupBy(fn (object $r) => bin2hex($r->choice_id))
+            ->map(fn (Collection $rows) => $rows->map(fn (object $r) => [
+                'uuid' => UuidBinary::toString($r->id),
+                'attribute_type_code' => $r->attribute_type_code,
+                'attribute_type_name' => $r->attribute_type_name,
+                'data_type' => $r->data_type,
+                'value' => $r->data_type === 'NUMBER' ? $r->value_number : $r->value_string,
+                'is_active' => (bool) $r->is_active,
+            ]));
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext. Generic ordered content blocks for a Service
+     * (Overview / Recommended For / What's Included / free-form headings)
+     * - see App\Actions\Admin\Service\AdminServiceContentSectionAction's
+     * docblock.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function contentSectionsFor(string $serviceIdBinary): array
+    {
+        return DB::table('service_content_sections')
+            ->join('service_content_section_types', 'service_content_section_types.id', '=', 'service_content_sections.section_type_id')
+            ->where('service_content_sections.service_id', $serviceIdBinary)
+            ->orderBy('service_content_sections.display_order')
+            ->select([
+                'service_content_sections.id',
+                'service_content_sections.title',
+                'service_content_sections.body',
+                'service_content_sections.display_order',
+                'service_content_sections.is_active',
+                'service_content_section_types.code as section_type_code',
+                'service_content_section_types.name as section_type_name',
+            ])
+            ->get()
+            ->map(fn (object $r) => [
+                'uuid' => UuidBinary::toString($r->id),
+                'section_type_code' => $r->section_type_code,
+                'section_type_name' => $r->section_type_name,
+                'title' => $r->title,
+                'body' => $r->body,
+                'display_order' => (int) $r->display_order,
+                'is_active' => (bool) $r->is_active,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext. Generic ordered workshop-checklist structure
+     * for a Service - see App\Actions\Admin\Service\
+     * AdminServiceCheckpointGroupAction / AdminServiceCheckpointAction's
+     * docblocks. `checkpoint_count`/`active_checkpoint_count` are always
+     * DERIVED here (never a manually-maintained counter column) so they
+     * can never drift from the actual checkpoint rows.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function checkpointGroupsFor(string $serviceIdBinary): array
+    {
+        $groups = DB::table('service_checkpoint_groups')
+            ->where('service_id', $serviceIdBinary)
+            ->orderBy('display_order')
+            ->get(['id', 'name', 'description', 'display_order', 'is_active']);
+
+        if ($groups->isEmpty()) {
+            return [];
+        }
+
+        $groupIds = $groups->pluck('id')->all();
+
+        $checkpointsByGroupId = DB::table('service_checkpoints')
+            ->join('service_checkpoint_action_types', 'service_checkpoint_action_types.id', '=', 'service_checkpoints.action_type_id')
+            ->whereIn('service_checkpoints.group_id', $groupIds)
+            ->orderBy('service_checkpoints.display_order')
+            ->select([
+                'service_checkpoints.id',
+                'service_checkpoints.group_id',
+                'service_checkpoints.name',
+                'service_checkpoints.description',
+                'service_checkpoints.display_order',
+                'service_checkpoints.is_active',
+                'service_checkpoint_action_types.code as action_type_code',
+                'service_checkpoint_action_types.name as action_type_name',
+            ])
+            ->get()
+            ->groupBy(fn (object $r) => bin2hex($r->group_id));
+
+        return $groups->map(function (object $group) use ($checkpointsByGroupId) {
+            $checkpoints = ($checkpointsByGroupId->get(bin2hex($group->id)) ?? collect())
+                ->map(fn (object $c) => [
+                    'uuid' => UuidBinary::toString($c->id),
+                    'name' => $c->name,
+                    'description' => $c->description,
+                    'action_type_code' => $c->action_type_code,
+                    'action_type_name' => $c->action_type_name,
+                    'display_order' => (int) $c->display_order,
+                    'is_active' => (bool) $c->is_active,
+                ])
+                ->values();
+
+            return [
+                'uuid' => UuidBinary::toString($group->id),
+                'name' => $group->name,
+                'description' => $group->description,
+                'display_order' => (int) $group->display_order,
+                'is_active' => (bool) $group->is_active,
+                'checkpoint_count' => $checkpoints->count(),
+                'active_checkpoint_count' => $checkpoints->where('is_active', true)->count(),
+                'checkpoints' => $checkpoints->all(),
+            ];
+        })->values()->all();
     }
 }

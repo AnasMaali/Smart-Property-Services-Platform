@@ -43,6 +43,10 @@ class GetServiceDetailsAction
                 'services.short_description',
                 'services.description',
                 'services.original_price',
+                'services.is_featured',
+                'services.estimated_duration_minutes',
+                'services.min_quantity',
+                'services.max_quantity',
                 'service_categories.id as category_id',
                 'service_categories.code as category_code',
                 'service_categories.name as category_name',
@@ -92,6 +96,9 @@ class GetServiceDetailsAction
             'name' => $service->name,
             'short_description' => $service->short_description,
             'description' => $service->description,
+            'is_featured' => (bool) $service->is_featured,
+            'estimated_duration_minutes' => $service->estimated_duration_minutes === null ? null : (int) $service->estimated_duration_minutes,
+            'quantity' => ['min' => (int) $service->min_quantity, 'max' => (int) $service->max_quantity],
             'category' => [
                 'id' => $service->category_id,
                 'code' => $service->category_code,
@@ -117,7 +124,103 @@ class GetServiceDetailsAction
                     && bccomp((string) $service->original_price, $pricingPreview->unitTotal, 6) > 0,
             ],
             'options' => $this->loadOptions($service->id, $now),
+            'content_sections' => $this->loadContentSections($service->id),
+            'checkpoint_groups' => $this->loadCheckpointGroups($service->id),
         ];
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext - active, ordered content blocks only (Overview
+     * / Recommended For / What's Included / a free-form heading). No
+     * internal DB id is ever exposed to the customer client.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadContentSections(string $serviceIdBinary): array
+    {
+        return DB::table('service_content_sections')
+            ->join('service_content_section_types', 'service_content_section_types.id', '=', 'service_content_sections.section_type_id')
+            ->where('service_content_sections.service_id', $serviceIdBinary)
+            ->where('service_content_sections.is_active', 1)
+            ->orderBy('service_content_sections.display_order')
+            ->select([
+                'service_content_section_types.code as section_type_code',
+                'service_content_sections.title',
+                'service_content_sections.body',
+            ])
+            ->get()
+            ->map(fn ($row) => [
+                'section_type_code' => $row->section_type_code,
+                'title' => $row->title,
+                'body' => $row->body,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext - active checkpoint groups, each with its
+     * active checkpoints ordered, plus a DERIVED count (never a stored
+     * counter - see App\Support\Admin\AdminServicePresenter::
+     * checkpointGroupsFor()'s docblock for why). A group with zero active
+     * checkpoints is omitted entirely rather than shown empty.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadCheckpointGroups(string $serviceIdBinary): array
+    {
+        $groups = DB::table('service_checkpoint_groups')
+            ->where('service_id', $serviceIdBinary)
+            ->where('is_active', 1)
+            ->orderBy('display_order')
+            ->get(['id', 'name', 'description']);
+
+        if ($groups->isEmpty()) {
+            return [];
+        }
+
+        $groupIds = $groups->pluck('id')->all();
+
+        $checkpointsByGroupId = DB::table('service_checkpoints')
+            ->join('service_checkpoint_action_types', 'service_checkpoint_action_types.id', '=', 'service_checkpoints.action_type_id')
+            ->whereIn('service_checkpoints.group_id', $groupIds)
+            ->where('service_checkpoints.is_active', 1)
+            ->orderBy('service_checkpoints.display_order')
+            ->select([
+                'service_checkpoints.group_id',
+                'service_checkpoints.name',
+                'service_checkpoints.description',
+                'service_checkpoint_action_types.code as action_type_code',
+                'service_checkpoint_action_types.name as action_type_name',
+            ])
+            ->get()
+            ->groupBy(fn ($row) => bin2hex($row->group_id));
+
+        return $groups
+            ->map(function ($group) use ($checkpointsByGroupId) {
+                $checkpoints = ($checkpointsByGroupId->get(bin2hex($group->id)) ?? collect())
+                    ->map(fn ($c) => [
+                        'name' => $c->name,
+                        'description' => $c->description,
+                        'action_type_code' => $c->action_type_code,
+                        'action_type_name' => $c->action_type_name,
+                    ])
+                    ->values();
+
+                if ($checkpoints->isEmpty()) {
+                    return null;
+                }
+
+                return [
+                    'name' => $group->name,
+                    'description' => $group->description,
+                    'checkpoint_count' => $checkpoints->count(),
+                    'checkpoints' => $checkpoints->all(),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
     }
 
     /**
@@ -176,10 +279,49 @@ class GetServiceDetailsAction
             ->get(['id', 'service_option_id', 'code', 'name', 'description'])
             ->groupBy(fn ($row) => bin2hex($row->service_option_id));
 
+        $choiceIds = $choicesByOptionId->flatten(1)->pluck('id')->all();
+        $attributesByChoiceId = $this->loadChoiceAttributes($choiceIds);
+
         return $options
-            ->map(fn ($option) => $this->mapOption($option, $numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId))
+            ->map(fn ($option) => $this->mapOption($option, $numericRulesByOptionId, $selectionRulesByOptionId, $choicesByOptionId, $attributesByChoiceId))
             ->values()
             ->all();
+    }
+
+    /**
+     * BLUE V1 Phase B23-ext - active-only, customer-safe structured
+     * attributes for a set of choices (e.g. a car-service package choice's
+     * oil brand/grade). Never leaks the internal attribute row id.
+     *
+     * @param  array<int, string>  $choiceIdsBinary
+     * @return Collection<string, array<int, array<string, mixed>>> Keyed by hex choice id.
+     */
+    private function loadChoiceAttributes(array $choiceIdsBinary): Collection
+    {
+        if ($choiceIdsBinary === []) {
+            return collect();
+        }
+
+        return DB::table('service_option_choice_attributes')
+            ->join('service_option_choice_attribute_types', 'service_option_choice_attribute_types.id', '=', 'service_option_choice_attributes.attribute_type_id')
+            ->whereIn('service_option_choice_attributes.choice_id', $choiceIdsBinary)
+            ->where('service_option_choice_attributes.is_active', 1)
+            ->orderBy('service_option_choice_attribute_types.display_order')
+            ->select([
+                'service_option_choice_attributes.choice_id',
+                'service_option_choice_attributes.value_string',
+                'service_option_choice_attributes.value_number',
+                'service_option_choice_attribute_types.code as attribute_type_code',
+                'service_option_choice_attribute_types.name as attribute_type_name',
+                'service_option_choice_attribute_types.data_type',
+            ])
+            ->get()
+            ->groupBy(fn ($row) => bin2hex($row->choice_id))
+            ->map(fn (Collection $rows) => $rows->map(fn ($row) => [
+                'attribute_type_code' => $row->attribute_type_code,
+                'attribute_type_name' => $row->attribute_type_name,
+                'value' => $row->data_type === 'NUMBER' ? $row->value_number : $row->value_string,
+            ])->values()->all());
     }
 
     /**
@@ -190,6 +332,7 @@ class GetServiceDetailsAction
         Collection $numericRulesByOptionId,
         Collection $selectionRulesByOptionId,
         Collection $choicesByOptionId,
+        Collection $attributesByChoiceId,
     ): array {
         $key = bin2hex($option->id);
 
@@ -234,6 +377,7 @@ class GetServiceDetailsAction
                     'code' => $choice->code,
                     'name' => $choice->name,
                     'description' => $choice->description,
+                    'attributes' => $attributesByChoiceId->get(bin2hex($choice->id), []),
                 ])
                 ->values()
                 ->all();

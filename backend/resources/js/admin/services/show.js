@@ -64,6 +64,39 @@ if (page) {
 
     const discountSummaryEl = page.querySelector('[data-discount-summary]');
 
+    const catalogPolicyForm = page.querySelector('[data-catalog-policy-form]');
+    const catalogPolicyError = catalogPolicyForm.querySelector('[data-catalog-policy-error]');
+
+    const contentSectionsEl = page.querySelector('[data-content-sections]');
+    const contentSectionsEmptyEl = page.querySelector('[data-content-sections-empty]');
+    const addContentSectionForm = page.querySelector('[data-add-content-section-form]');
+    const addContentSectionError = addContentSectionForm.querySelector('[data-add-content-section-error]');
+    const contentSectionTypeSelect = addContentSectionForm.querySelector('[data-content-section-type-select]');
+    const contentSectionRowTemplate = document.querySelector('[data-content-section-row-template]');
+    const editContentSectionModal = document.querySelector('[data-edit-content-section-modal]');
+    const editContentSectionForm = editContentSectionModal.querySelector('[data-edit-content-section-form]');
+    const editContentSectionError = editContentSectionModal.querySelector('[data-edit-content-section-error]');
+
+    const checkpointGroupsEl = page.querySelector('[data-checkpoint-groups]');
+    const checkpointGroupsEmptyEl = page.querySelector('[data-checkpoint-groups-empty]');
+    const checkpointGroupCardTemplate = document.querySelector('[data-checkpoint-group-card-template]');
+    const checkpointRowTemplate = document.querySelector('[data-checkpoint-row-template]');
+    const addCheckpointGroupModal = document.querySelector('[data-add-checkpoint-group-modal]');
+    const addCheckpointGroupForm = addCheckpointGroupModal.querySelector('[data-add-checkpoint-group-form]');
+    const addCheckpointGroupError = addCheckpointGroupModal.querySelector('[data-add-checkpoint-group-error]');
+    const addCheckpointModal = document.querySelector('[data-add-checkpoint-modal]');
+    const addCheckpointForm = addCheckpointModal.querySelector('[data-add-checkpoint-form]');
+    const addCheckpointError = addCheckpointModal.querySelector('[data-add-checkpoint-error]');
+    const checkpointActionTypeSelect = addCheckpointModal.querySelector('[data-checkpoint-action-type-select]');
+    const checkpointMoveField = addCheckpointModal.querySelector('[data-checkpoint-move-field]');
+    const checkpointGroupSelect = addCheckpointModal.querySelector('[data-checkpoint-group-select]');
+
+    const choiceAttributePillTemplate = document.querySelector('[data-choice-attribute-pill-template]');
+    const addChoiceAttributeModal = document.querySelector('[data-add-choice-attribute-modal]');
+    const addChoiceAttributeForm = addChoiceAttributeModal.querySelector('[data-add-choice-attribute-form]');
+    const addChoiceAttributeError = addChoiceAttributeModal.querySelector('[data-add-choice-attribute-error]');
+    const choiceAttributeTypeSelect = addChoiceAttributeModal.querySelector('[data-choice-attribute-type-select]');
+
     const addOptionModal = document.querySelector('[data-add-option-modal]');
     const addOptionForm = addOptionModal.querySelector('[data-add-option-form]');
     const addOptionTitle = addOptionModal.querySelector('[data-add-option-title]');
@@ -195,6 +228,18 @@ if (page) {
         const toggleButtonEl = node.querySelector('[data-choice-toggle-active]');
         toggleButtonEl.textContent = choice.is_active ? 'Deactivate' : 'Activate';
         toggleButtonEl.addEventListener('click', () => onToggleChoiceActive(choice));
+
+        node.querySelector('[data-choice-add-attribute]').addEventListener('click', () => openAddChoiceAttributeModal(choice.uuid));
+
+        const attributesEl = node.querySelector('[data-choice-attributes]');
+        (choice.attributes ?? []).forEach((attribute) => {
+            const pillNode = choiceAttributePillTemplate.content.cloneNode(true);
+            const pill = pillNode.querySelector('[data-choice-attribute-pill]');
+            pill.classList.toggle('opacity-50', !attribute.is_active);
+            pillNode.querySelector('[data-field="label"]').textContent = `${attribute.attribute_type_name}: ${attribute.value}`;
+            pillNode.querySelector('[data-choice-attribute-toggle]').addEventListener('click', () => onToggleChoiceAttributeActive(attribute));
+            attributesEl.appendChild(pillNode);
+        });
 
         return node;
     }
@@ -328,6 +373,381 @@ if (page) {
         });
     }
 
+    // --- Content sections -----------------------------------------------------
+
+    function renderContentSections(sections) {
+        contentSectionsEl.replaceChildren();
+
+        if (sections.length === 0) {
+            contentSectionsEmptyEl.classList.remove('hidden');
+            return;
+        }
+
+        contentSectionsEmptyEl.classList.add('hidden');
+
+        sections.forEach((section) => {
+            const node = contentSectionRowTemplate.content.cloneNode(true);
+            const row = node.querySelector('[data-content-section-row]');
+            row.dataset.sectionUuid = section.uuid;
+
+            node.querySelector('[data-field="section_type_code"]').textContent = section.section_type_name;
+            node.querySelector('[data-field="title"]').textContent = section.title;
+            node.querySelector('[data-field="body"]').textContent = section.body;
+            node.querySelector('[data-field="is_active"]').replaceWith(activeBadgeEl(section.is_active));
+
+            node.querySelector('[data-edit-content-section]').addEventListener('click', () => openEditContentSectionModal(section));
+
+            const toggleButtonEl = node.querySelector('[data-toggle-content-section-active]');
+            toggleButtonEl.textContent = section.is_active ? 'Deactivate' : 'Activate';
+            toggleButtonEl.addEventListener('click', () => onToggleContentSectionActive(section));
+
+            contentSectionsEl.appendChild(node);
+        });
+    }
+
+    function onToggleContentSectionActive(section) {
+        const action = section.is_active ? 'deactivate' : 'activate';
+
+        openToggleActiveModal({
+            title: section.is_active ? 'Deactivate content section' : 'Activate content section',
+            message: section.is_active
+                ? 'This hides the section from the customer catalog.'
+                : 'This makes the section visible in the customer catalog again.',
+            confirmLabel: section.is_active ? 'Deactivate' : 'Activate',
+            onConfirm: async () => {
+                await request(`/api/v1/admin/service-content-sections/${encodeURIComponent(section.uuid)}/${action}`, { method: 'POST' });
+                await loadService();
+            },
+        });
+    }
+
+    function openEditContentSectionModal(section) {
+        editContentSectionError.classList.add('hidden');
+        editContentSectionForm.dataset.sectionUuid = section.uuid;
+        editContentSectionForm.elements.namedItem('title').value = section.title;
+        editContentSectionForm.elements.namedItem('body').value = section.body;
+        editContentSectionForm.elements.namedItem('display_order').value = String(section.display_order);
+        editContentSectionModal.style.display = 'flex';
+    }
+
+    editContentSectionModal.querySelector('[data-edit-content-section-cancel]').addEventListener('click', () => {
+        editContentSectionModal.style.display = 'none';
+    });
+
+    editContentSectionForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        editContentSectionError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/service-content-sections/${encodeURIComponent(editContentSectionForm.dataset.sectionUuid)}`, {
+                method: 'PATCH',
+                body: {
+                    title: editContentSectionForm.elements.namedItem('title').value.trim(),
+                    body: editContentSectionForm.elements.namedItem('body').value.trim(),
+                    display_order: Number(editContentSectionForm.elements.namedItem('display_order').value || 0),
+                },
+            });
+
+            editContentSectionModal.style.display = 'none';
+            await loadService();
+        } catch (error) {
+            editContentSectionError.textContent = messageOf(error, 'Unable to save this content section.');
+            editContentSectionError.classList.remove('hidden');
+        }
+    });
+
+    addContentSectionForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addContentSectionError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/content-sections`, {
+                method: 'POST',
+                body: {
+                    section_type_code: contentSectionTypeSelect.value,
+                    title: addContentSectionForm.elements.namedItem('title').value.trim(),
+                    body: addContentSectionForm.elements.namedItem('body').value.trim(),
+                    display_order: 0,
+                },
+            });
+
+            addContentSectionForm.reset();
+            await loadService();
+        } catch (error) {
+            addContentSectionError.textContent = messageOf(error, 'Unable to add this content section.');
+            addContentSectionError.classList.remove('hidden');
+        }
+    });
+
+    // --- Checkpoint groups / checkpoints ---------------------------------------
+
+    function renderCheckpointGroups(groups) {
+        checkpointGroupsEl.replaceChildren();
+
+        if (groups.length === 0) {
+            checkpointGroupsEmptyEl.classList.remove('hidden');
+            return;
+        }
+
+        checkpointGroupsEmptyEl.classList.add('hidden');
+
+        groups.forEach((group) => {
+            const node = checkpointGroupCardTemplate.content.cloneNode(true);
+            const card = node.querySelector('[data-checkpoint-group-card]');
+            card.dataset.groupUuid = group.uuid;
+
+            node.querySelector('[data-field="name"]').textContent = group.name;
+            node.querySelector('[data-field="description"]').textContent = group.description ?? '';
+            node.querySelector('[data-field="active_checkpoint_count"]').textContent = String(group.active_checkpoint_count);
+            node.querySelector('[data-field="checkpoint_count"]').textContent = String(group.checkpoint_count);
+            node.querySelector('[data-field="is_active"]').replaceWith(activeBadgeEl(group.is_active));
+
+            node.querySelector('[data-edit-checkpoint-group]').addEventListener('click', () => openEditCheckpointGroupModal(group));
+
+            const toggleGroupButton = node.querySelector('[data-toggle-checkpoint-group-active]');
+            toggleGroupButton.textContent = group.is_active ? 'Deactivate' : 'Activate';
+            toggleGroupButton.addEventListener('click', () => onToggleCheckpointGroupActive(group));
+
+            node.querySelector('[data-add-checkpoint-open]').addEventListener('click', () => openAddCheckpointModal(group.uuid));
+
+            const checkpointsEl = node.querySelector('[data-checkpoints]');
+            group.checkpoints.forEach((checkpoint) => {
+                const checkpointNode = checkpointRowTemplate.content.cloneNode(true);
+                const row = checkpointNode.querySelector('[data-checkpoint-row]');
+                row.dataset.checkpointUuid = checkpoint.uuid;
+
+                checkpointNode.querySelector('[data-field="name"]').textContent = checkpoint.name;
+                checkpointNode.querySelector('[data-field="action_type_name"]').textContent = checkpoint.action_type_name;
+                checkpointNode.querySelector('[data-field="is_active"]').replaceWith(activeBadgeEl(checkpoint.is_active));
+
+                checkpointNode.querySelector('[data-edit-checkpoint]').addEventListener('click', () => openEditCheckpointModal(checkpoint, group.uuid));
+
+                const toggleCheckpointButton = checkpointNode.querySelector('[data-toggle-checkpoint-active]');
+                toggleCheckpointButton.textContent = checkpoint.is_active ? 'Deactivate' : 'Activate';
+                toggleCheckpointButton.addEventListener('click', () => onToggleCheckpointActive(checkpoint));
+
+                checkpointsEl.appendChild(checkpointNode);
+            });
+
+            checkpointGroupsEl.appendChild(node);
+        });
+    }
+
+    function onToggleCheckpointGroupActive(group) {
+        const action = group.is_active ? 'deactivate' : 'activate';
+
+        openToggleActiveModal({
+            title: group.is_active ? 'Deactivate checkpoint group' : 'Activate checkpoint group',
+            message: group.is_active ? 'This hides the group (and its checkpoints) from the customer catalog.' : 'This makes the group visible again.',
+            confirmLabel: group.is_active ? 'Deactivate' : 'Activate',
+            onConfirm: async () => {
+                await request(`/api/v1/admin/service-checkpoint-groups/${encodeURIComponent(group.uuid)}/${action}`, { method: 'POST' });
+                await loadService();
+            },
+        });
+    }
+
+    function onToggleCheckpointActive(checkpoint) {
+        const action = checkpoint.is_active ? 'deactivate' : 'activate';
+
+        openToggleActiveModal({
+            title: checkpoint.is_active ? 'Deactivate checkpoint' : 'Activate checkpoint',
+            message: checkpoint.is_active ? 'This hides the checkpoint from the customer catalog.' : 'This makes the checkpoint visible again.',
+            confirmLabel: checkpoint.is_active ? 'Deactivate' : 'Activate',
+            onConfirm: async () => {
+                await request(`/api/v1/admin/service-checkpoints/${encodeURIComponent(checkpoint.uuid)}/${action}`, { method: 'POST' });
+                await loadService();
+            },
+        });
+    }
+
+    page.querySelector('[data-add-checkpoint-group-open]').addEventListener('click', () => {
+        addCheckpointGroupError.classList.add('hidden');
+        addCheckpointGroupForm.reset();
+        addCheckpointGroupForm.dataset.mode = 'create';
+        addCheckpointGroupModal.querySelector('[data-add-checkpoint-group-title]').textContent = 'Add checkpoint group';
+        addCheckpointGroupModal.style.display = 'flex';
+    });
+
+    addCheckpointGroupModal.querySelector('[data-add-checkpoint-group-cancel]').addEventListener('click', () => {
+        addCheckpointGroupModal.style.display = 'none';
+    });
+
+    function openEditCheckpointGroupModal(group) {
+        addCheckpointGroupError.classList.add('hidden');
+        addCheckpointGroupForm.dataset.mode = 'edit';
+        addCheckpointGroupForm.dataset.groupUuid = group.uuid;
+        addCheckpointGroupForm.elements.namedItem('name').value = group.name;
+        addCheckpointGroupForm.elements.namedItem('description').value = group.description ?? '';
+        addCheckpointGroupForm.elements.namedItem('display_order').value = String(group.display_order);
+        addCheckpointGroupModal.querySelector('[data-add-checkpoint-group-title]').textContent = 'Edit checkpoint group';
+        addCheckpointGroupModal.style.display = 'flex';
+    }
+
+    addCheckpointGroupForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addCheckpointGroupError.classList.add('hidden');
+
+        const payload = {
+            name: addCheckpointGroupForm.elements.namedItem('name').value.trim(),
+            description: addCheckpointGroupForm.elements.namedItem('description').value.trim() || null,
+            display_order: Number(addCheckpointGroupForm.elements.namedItem('display_order').value || 0),
+        };
+
+        try {
+            if (addCheckpointGroupForm.dataset.mode === 'edit') {
+                await request(`/api/v1/admin/service-checkpoint-groups/${encodeURIComponent(addCheckpointGroupForm.dataset.groupUuid)}`, {
+                    method: 'PATCH',
+                    body: payload,
+                });
+            } else {
+                await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/checkpoint-groups`, {
+                    method: 'POST',
+                    body: payload,
+                });
+            }
+
+            addCheckpointGroupModal.style.display = 'none';
+            await loadService();
+        } catch (error) {
+            addCheckpointGroupError.textContent = messageOf(error, 'Unable to save this checkpoint group.');
+            addCheckpointGroupError.classList.remove('hidden');
+        }
+    });
+
+    function openAddCheckpointModal(groupUuid) {
+        addCheckpointError.classList.add('hidden');
+        addCheckpointForm.reset();
+        addCheckpointForm.dataset.mode = 'create';
+        addCheckpointForm.dataset.groupUuid = groupUuid;
+        checkpointMoveField.classList.add('hidden');
+        addCheckpointModal.querySelector('[data-add-checkpoint-title]').textContent = 'Add checkpoint';
+        addCheckpointModal.style.display = 'flex';
+    }
+
+    function openEditCheckpointModal(checkpoint, currentGroupUuid) {
+        addCheckpointError.classList.add('hidden');
+        addCheckpointForm.dataset.mode = 'edit';
+        addCheckpointForm.dataset.checkpointUuid = checkpoint.uuid;
+        addCheckpointForm.elements.namedItem('name').value = checkpoint.name;
+        addCheckpointForm.elements.namedItem('description').value = checkpoint.description ?? '';
+        addCheckpointForm.elements.namedItem('action_type_code').value = checkpoint.action_type_code;
+        addCheckpointForm.elements.namedItem('display_order').value = String(checkpoint.display_order);
+        checkpointGroupSelect.value = currentGroupUuid;
+        checkpointMoveField.classList.remove('hidden');
+        addCheckpointModal.querySelector('[data-add-checkpoint-title]').textContent = 'Edit checkpoint';
+        addCheckpointModal.style.display = 'flex';
+    }
+
+    addCheckpointModal.querySelector('[data-add-checkpoint-cancel]').addEventListener('click', () => {
+        addCheckpointModal.style.display = 'none';
+    });
+
+    addCheckpointForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addCheckpointError.classList.add('hidden');
+
+        const payload = {
+            name: addCheckpointForm.elements.namedItem('name').value.trim(),
+            description: addCheckpointForm.elements.namedItem('description').value.trim() || null,
+            action_type_code: checkpointActionTypeSelect.value,
+            display_order: Number(addCheckpointForm.elements.namedItem('display_order').value || 0),
+        };
+
+        try {
+            if (addCheckpointForm.dataset.mode === 'edit') {
+                payload.group_uuid = checkpointGroupSelect.value;
+                await request(`/api/v1/admin/service-checkpoints/${encodeURIComponent(addCheckpointForm.dataset.checkpointUuid)}`, {
+                    method: 'PATCH',
+                    body: payload,
+                });
+            } else {
+                await request(`/api/v1/admin/service-checkpoint-groups/${encodeURIComponent(addCheckpointForm.dataset.groupUuid)}/checkpoints`, {
+                    method: 'POST',
+                    body: payload,
+                });
+            }
+
+            addCheckpointModal.style.display = 'none';
+            await loadService();
+        } catch (error) {
+            addCheckpointError.textContent = messageOf(error, 'Unable to save this checkpoint.');
+            addCheckpointError.classList.remove('hidden');
+        }
+    });
+
+    // --- Catalog policy ---------------------------------------------------------
+
+    catalogPolicyForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        catalogPolicyError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/catalog-policy`, {
+                method: 'POST',
+                body: {
+                    is_featured: catalogPolicyForm.elements.namedItem('is_featured').checked,
+                    estimated_duration_minutes: catalogPolicyForm.elements.namedItem('estimated_duration_minutes').value || null,
+                    min_quantity: Number(catalogPolicyForm.elements.namedItem('min_quantity').value),
+                    max_quantity: Number(catalogPolicyForm.elements.namedItem('max_quantity').value),
+                },
+            });
+
+            await loadService();
+        } catch (error) {
+            catalogPolicyError.textContent = messageOf(error, 'Unable to save the catalog policy.');
+            catalogPolicyError.classList.remove('hidden');
+        }
+    });
+
+    // --- Choice attributes -------------------------------------------------------
+
+    function openAddChoiceAttributeModal(choiceUuid) {
+        addChoiceAttributeError.classList.add('hidden');
+        addChoiceAttributeForm.reset();
+        addChoiceAttributeForm.dataset.choiceUuid = choiceUuid;
+        addChoiceAttributeModal.style.display = 'flex';
+    }
+
+    addChoiceAttributeModal.querySelector('[data-add-choice-attribute-cancel]').addEventListener('click', () => {
+        addChoiceAttributeModal.style.display = 'none';
+    });
+
+    addChoiceAttributeForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        addChoiceAttributeError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/service-option-choices/${encodeURIComponent(addChoiceAttributeForm.dataset.choiceUuid)}/attributes`, {
+                method: 'POST',
+                body: {
+                    attribute_type_code: choiceAttributeTypeSelect.value,
+                    value: addChoiceAttributeForm.elements.namedItem('value').value.trim(),
+                },
+            });
+
+            addChoiceAttributeModal.style.display = 'none';
+            await loadService();
+        } catch (error) {
+            addChoiceAttributeError.textContent = messageOf(error, 'Unable to save this attribute.');
+            addChoiceAttributeError.classList.remove('hidden');
+        }
+    });
+
+    function onToggleChoiceAttributeActive(attribute) {
+        const action = attribute.is_active ? 'deactivate' : 'activate';
+
+        openToggleActiveModal({
+            title: attribute.is_active ? 'Deactivate attribute' : 'Activate attribute',
+            message: attribute.is_active ? 'This hides the attribute from the customer catalog.' : 'This makes the attribute visible again.',
+            confirmLabel: attribute.is_active ? 'Deactivate' : 'Activate',
+            onConfirm: async () => {
+                await request(`/api/v1/admin/service-option-choice-attributes/${encodeURIComponent(attribute.uuid)}/${action}`, { method: 'POST' });
+                await loadService();
+            },
+        });
+    }
+
     async function loadService() {
         setState('loading');
 
@@ -364,11 +784,19 @@ if (page) {
         metadataForm.elements.namedItem('description').value = service.description ?? '';
         metadataForm.elements.namedItem('display_order').value = String(service.display_order);
 
+        catalogPolicyForm.elements.namedItem('is_featured').checked = service.is_featured;
+        catalogPolicyForm.elements.namedItem('estimated_duration_minutes').value = service.estimated_duration_minutes ?? '';
+        catalogPolicyForm.elements.namedItem('min_quantity').value = String(service.quantity.min);
+        catalogPolicyForm.elements.namedItem('max_quantity').value = String(service.quantity.max);
+
         renderCapabilities(service.capabilities);
         renderSpecializations(service.specializations);
         renderOptions(service.options);
         renderMedia(service.media);
         renderPricing(service.pricing);
+        renderContentSections(service.content_sections);
+        renderCheckpointGroups(service.checkpoint_groups);
+        populateCheckpointGroupSelect(service.checkpoint_groups);
     }
 
     function onToggleActive(isCurrentlyActive) {
@@ -772,18 +1200,35 @@ if (page) {
         populateSelect(optionTypeSelect, OPTION_TYPES, { valueKey: 'code', labelKey: 'label' });
 
         try {
-            const [categoriesResponse, specializationsResponse] = await Promise.all([
+            const [categoriesResponse, specializationsResponse, sectionTypesResponse, checkpointActionTypesResponse, attributeTypesResponse] = await Promise.all([
                 request('/api/v1/admin/service-categories'),
                 request('/api/v1/admin/specializations'),
+                request('/api/v1/admin/service-content-section-types'),
+                request('/api/v1/admin/service-checkpoint-action-types'),
+                request('/api/v1/admin/service-option-choice-attribute-types'),
             ]);
 
             populateSelect(changeCategorySelect, categoriesResponse.data.service_categories ?? [], { valueKey: 'id', labelKey: 'name' });
             populateSelect(specializationSelect, specializationsResponse.data.specializations ?? [], { valueKey: 'id', labelKey: 'name', placeholder: 'Select a specialization...' });
+            populateSelect(contentSectionTypeSelect, sectionTypesResponse.data.section_types ?? [], { valueKey: 'code', labelKey: 'name' });
+            populateSelect(checkpointActionTypeSelect, checkpointActionTypesResponse.data.action_types ?? [], { valueKey: 'code', labelKey: 'name' });
+            populateSelect(choiceAttributeTypeSelect, attributeTypesResponse.data.attribute_types ?? [], { valueKey: 'code', labelKey: 'name' });
         } catch {
             // Non-fatal: the read-only service detail (and its already-set
             // category/specializations) still render fine; only the "change
             // to..." dropdowns stay empty.
         }
+    }
+
+    function populateCheckpointGroupSelect(groups) {
+        checkpointGroupSelect.replaceChildren();
+
+        groups.forEach((group) => {
+            const option = document.createElement('option');
+            option.value = group.uuid;
+            option.textContent = group.name;
+            checkpointGroupSelect.appendChild(option);
+        });
     }
 
     adminAuthReady().then((ready) => {
