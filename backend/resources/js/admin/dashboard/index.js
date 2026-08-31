@@ -12,7 +12,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
-import { statusLabel, formatDateTime } from '../lib/format.js';
+import { statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
 import { adminAuthReady } from '../auth/restore.js';
 
 const page = document.querySelector('[data-dashboard-page]');
@@ -22,6 +22,7 @@ if (page) {
     const errorEl = page.querySelector('[data-dashboard-error]');
     const contentEl = page.querySelector('[data-dashboard-content]');
     const summaryCardsEl = page.querySelector('[data-summary-cards]');
+    const financialSnapshotEl = page.querySelector('[data-financial-snapshot]');
     const attentionGroupsEl = page.querySelector('[data-attention-groups]');
     const attentionEmptyEl = page.querySelector('[data-attention-empty]');
     const activityListEl = page.querySelector('[data-activity-list]');
@@ -230,6 +231,15 @@ if (page) {
         }));
     }
 
+    function renderFinancialSnapshot(snapshot) {
+        const currency = snapshot.currency;
+
+        financialSnapshotEl.querySelector('[data-field="gross_revenue"]').textContent = formatMoney(snapshot.gross_revenue, currency);
+        financialSnapshotEl.querySelector('[data-field="net_revenue"]').textContent = formatMoney(snapshot.net_revenue, currency);
+        financialSnapshotEl.querySelector('[data-field="refunds"]').textContent = formatMoney(snapshot.refunds, currency);
+        financialSnapshotEl.querySelector('[data-field="pay_on_site_pending"]').textContent = formatMoney(snapshot.pay_on_site_pending, currency);
+    }
+
     async function loadDashboard() {
         setState('loading');
 
@@ -238,6 +248,7 @@ if (page) {
             const data = response.data;
 
             renderSummaryCards(data.summary);
+            renderFinancialSnapshot(data.financial_snapshot);
             renderAttentionGroups(data.attention);
             renderActivity(data.recent_activity);
 

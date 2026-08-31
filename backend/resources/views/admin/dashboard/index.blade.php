@@ -24,6 +24,32 @@
 
         <div data-summary-cards class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
 
+        <div data-financial-snapshot class="rounded-2xl border border-slate-200 bg-white p-6">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-slate-900">Financial snapshot (last 24h)</h3>
+                <a href="/admin/finance" class="text-xs font-semibold text-blue-600 hover:text-blue-800">View Financial Dashboard →</a>
+            </div>
+
+            <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Gross Revenue</p>
+                    <p data-field="gross_revenue" class="mt-1 text-lg font-semibold text-slate-950"></p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Net Revenue</p>
+                    <p data-field="net_revenue" class="mt-1 text-lg font-semibold text-slate-950"></p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Refunds</p>
+                    <p data-field="refunds" class="mt-1 text-lg font-semibold text-slate-950"></p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Pay on Site Pending</p>
+                    <p data-field="pay_on_site_pending" class="mt-1 text-lg font-semibold text-slate-950"></p>
+                </div>
+            </div>
+        </div>
+
         <div class="rounded-2xl border border-slate-200 bg-white">
             <div class="border-b border-slate-100 px-6 py-4">
                 <h3 class="text-sm font-semibold text-slate-900">Needs attention</h3>
@@ -50,6 +76,8 @@
                 <a href="/admin/bookings" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Bookings</a>
                 <a href="/admin/technicians" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Technicians</a>
                 <a href="/admin/contracts" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Contracts</a>
+                <a href="/admin/finance" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Financial Dashboard</a>
+                <a href="/admin/finance/ledger" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Financial Ledger</a>
                 <a href="/admin/payments" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Payments</a>
                 <a href="/admin/billing" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Contract Billing</a>
                 <a href="/admin/customers" class="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Customers</a>

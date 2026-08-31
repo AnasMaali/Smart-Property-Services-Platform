@@ -175,6 +175,8 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/customers',
             'api/v1/admin/customers/{customer}',
             'api/v1/admin/dashboard',
+            'api/v1/admin/financial-dashboard',
+            'api/v1/admin/financial-ledger',
             'api/v1/admin/me',
             'api/v1/admin/payment-method-types',
             'api/v1/admin/payments',

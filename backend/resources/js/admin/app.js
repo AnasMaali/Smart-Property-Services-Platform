@@ -12,6 +12,8 @@ import './payments/index';
 import './payments/show';
 import './billing/index';
 import './billing/show';
+import './financial/dashboard';
+import './financial/ledger';
 import './customers/index';
 import './customers/show';
 import './properties/show';

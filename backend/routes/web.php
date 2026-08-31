@@ -55,6 +55,11 @@ Route::prefix('admin')->name('admin.')->group(function () {
         return view('admin.billing.show', ['billingUuid' => $billing]);
     })->name('billing.show');
 
+    // BLUE V1 Admin Financial Dashboard + Ledger shell routes. Same
+    // convention as every other module above.
+    Route::view('/finance', 'admin.financial.dashboard')->name('financial.dashboard');
+    Route::view('/finance/ledger', 'admin.financial.ledger')->name('financial.ledger');
+
     // BLUE V1 Phase B6 - Customers/Properties shell routes. Same convention
     // as every other module above. There is no global Properties index
     // route - a Property is always reached from its owning Customer's

@@ -3,6 +3,7 @@
 namespace App\Actions\Admin\Dashboard;
 
 use App\Support\Admin\AdminDashboardPresenter;
+use App\Support\Admin\AdminFinancialSummaryCalculator;
 use App\Support\Cart\Concerns\BuildsCartResult;
 use Illuminate\Support\Facades\DB;
 
@@ -59,8 +60,38 @@ final class AdminGetDashboardAction
                 'support_unassigned_open' => AdminDashboardPresenter::unassignedOpenSupportRequests($this->unassignedOpenSupportRequests()),
             ],
             'recent_activity' => AdminDashboardPresenter::recentActivity($this->recentActivity()),
+            'financial_snapshot' => $this->financialSnapshot($last24Hours),
             'generated_at' => now()->toIso8601String(),
         ]);
+    }
+
+    /**
+     * A concise rolling-last-24h financial snapshot for the main
+     * Dashboard - deliberately small (Gross/Net/Refunds/Pay-on-Site
+     * Pending only); the full breakdown, ledger, and custom date ranges
+     * live on the dedicated Financial Dashboard
+     * (GET /v1/admin/financial-dashboard) this links to. Reuses
+     * App\Support\Admin\AdminFinancialSummaryCalculator - the exact same
+     * calculation the dedicated page uses - so the two surfaces can never
+     * disagree. The rolling last-24h window (rather than a Dubai calendar
+     * "today") matches this file's own established convention above for
+     * exactly the storage-vs-server-timezone reason explained in this
+     * class's docblock; "Pay on Site Pending" is a current outstanding
+     * balance and is never window-limited - see
+     * AdminFinancialSummaryCalculator::payOnSitePending()'s docblock.
+     */
+    private function financialSnapshot($last24Hours): array
+    {
+        $summary = AdminFinancialSummaryCalculator::compute($last24Hours, now());
+
+        return [
+            'window' => 'LAST_24_HOURS',
+            'currency' => $summary['currency'],
+            'gross_revenue' => $summary['gross_revenue'],
+            'net_revenue' => $summary['net_revenue'],
+            'refunds' => $summary['refunds'],
+            'pay_on_site_pending' => $summary['breakdown']['pay_on_site']['pending'],
+        ];
     }
 
     /**
