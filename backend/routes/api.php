@@ -27,6 +27,8 @@ use App\Http\Controllers\Api\V1\Admin\ContractBilling\ListAdminContractBillingsC
 use App\Http\Controllers\Api\V1\Admin\Customer\GetAdminCustomerController;
 use App\Http\Controllers\Api\V1\Admin\Customer\ListAdminCustomersController;
 use App\Http\Controllers\Api\V1\Admin\Dashboard\GetAdminDashboardController;
+use App\Http\Controllers\Api\V1\Admin\Financial\GetAdminFinancialDashboardController;
+use App\Http\Controllers\Api\V1\Admin\Financial\ListAdminFinancialLedgerController;
 use App\Http\Controllers\Api\V1\Admin\MeController as AdminMeController;
 use App\Http\Controllers\Api\V1\Admin\Payment\GetAdminPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Payment\ListAdminPaymentsController;
@@ -379,6 +381,16 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
     Route::get('/v1/admin/contract-billings/{billing}', GetAdminContractBillingController::class)
         ->middleware(AdminCapability::BILLING_VIEW->middleware());
+
+    // BLUE V1 Admin Financial Dashboard + Ledger - read-only reporting over
+    // the same authoritative payment/refund/on-site/repair-quote-balance
+    // tables `payments.view` already gates above; no new capability is
+    // introduced since this is the same money-movement domain (see
+    // App\Support\Admin\AdminFinancialSummaryCalculator's docblock).
+    Route::get('/v1/admin/financial-dashboard', GetAdminFinancialDashboardController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/financial-ledger', ListAdminFinancialLedgerController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
 
     // BLUE V1 Phase B9 - Pricing management. Reads/authors the exact
     // canonical `pricing_scheme_versions`/`pricing_rules` rows
