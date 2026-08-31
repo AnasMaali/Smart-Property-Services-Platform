@@ -91,9 +91,12 @@ use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionChoiceAttr
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionChoiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\UpdateAdminServiceOptionController;
 use App\Http\Controllers\Api\V1\Admin\Service\UploadAdminServiceMediaController;
+use App\Http\Controllers\Api\V1\Admin\Support\AssignAdminSupportRequestController;
 use App\Http\Controllers\Api\V1\Admin\Support\GetAdminSupportRequestController;
 use App\Http\Controllers\Api\V1\Admin\Support\ListAdminSupportRequestsController;
 use App\Http\Controllers\Api\V1\Admin\Support\SendAdminSupportMessageController;
+use App\Http\Controllers\Api\V1\Admin\Support\UnassignAdminSupportRequestController;
+use App\Http\Controllers\Api\V1\Admin\Support\UpdateAdminSupportRequestStatusController;
 use App\Http\Controllers\Api\V1\Admin\Technician\AssignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CompleteWorkController;
 use App\Http\Controllers\Api\V1\Admin\Technician\CreateAdminTechnicianController;
@@ -651,16 +654,27 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     // BLUE V1 Phase B7 - Support Requests/Messages. `support.view` covers
-    // both list/detail reads; `support.manage` covers the one Support
-    // mutation this phase implements (an Admin reply message) - mirrors
-    // the technicians.view/technicians.assign split exactly. Status-
-    // transition and assignment mutations are deliberately NOT implemented
-    // yet - see docs/api-contracts/admin-operations-v1.md "Support".
+    // both list/detail reads; `support.manage` covers every Support
+    // mutation - the Admin reply message plus, as of BLUE V1 Admin Support
+    // Management, the status-transition and assignment mutations that
+    // phase deliberately deferred - mirrors the technicians.view/
+    // technicians.assign split exactly. See docs/api-contracts/
+    // admin-operations-v1.md "Support".
     Route::get('/v1/admin/support-requests', ListAdminSupportRequestsController::class)
         ->middleware(AdminCapability::SUPPORT_VIEW->middleware());
     Route::get('/v1/admin/support-requests/{supportRequest}', GetAdminSupportRequestController::class)
         ->middleware(AdminCapability::SUPPORT_VIEW->middleware());
     Route::post('/v1/admin/support-requests/{supportRequest}/messages', SendAdminSupportMessageController::class)
+        ->middleware(AdminCapability::SUPPORT_MANAGE->middleware());
+    // BLUE V1 Admin Support Management - explicit status-transition and
+    // assignment Actions (App\Support\Admin\SupportRequestStatusMachine /
+    // AdminAssignSupportRequestAction / AdminUnassignSupportRequestAction),
+    // never a generic PATCH - see those Actions' docblocks.
+    Route::post('/v1/admin/support-requests/{supportRequest}/status', UpdateAdminSupportRequestStatusController::class)
+        ->middleware(AdminCapability::SUPPORT_MANAGE->middleware());
+    Route::post('/v1/admin/support-requests/{supportRequest}/assign-admin', AssignAdminSupportRequestController::class)
+        ->middleware(AdminCapability::SUPPORT_MANAGE->middleware());
+    Route::post('/v1/admin/support-requests/{supportRequest}/unassign-admin', UnassignAdminSupportRequestController::class)
         ->middleware(AdminCapability::SUPPORT_MANAGE->middleware());
 });
 

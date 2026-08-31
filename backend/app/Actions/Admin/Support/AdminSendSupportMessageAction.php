@@ -13,21 +13,19 @@ use InvalidArgumentException;
 
 /**
  * Posts an Admin reply message on a Support Request (BLUE V1 Phase B7,
- * POST /v1/admin/support-requests/{supportRequest}/messages) - the ONLY
- * Support mutation this phase implements. `sender_user_id` is always the
- * `auth.admin`-resolved actor, never a request field (matches every other
- * privileged Admin mutation in this codebase).
+ * POST /v1/admin/support-requests/{supportRequest}/messages).
+ * `sender_user_id` is always the `auth.admin`-resolved actor, never a
+ * request field (matches every other privileged Admin mutation in this
+ * codebase).
  *
  * Deliberately does NOT touch `support_requests.status_id`/
- * `status_changed_at`/`resolved_at`/`closed_at` - no existing code
- * (customer-facing or Admin) or product requirement document defines
- * whether/how sending a reply should affect the Support Request's
- * lifecycle status, and inventing that policy here would be exactly the
- * kind of unrequested lifecycle rule this phase's own instructions
- * prohibit. Status-transition and assignment mutations are intentionally
- * NOT implemented in this phase - see docs/api-contracts/
- * admin-operations-v1.md "Support" section for the full explanation of
- * why that decision was made, and what would be needed to add them later.
+ * `status_changed_at`/`resolved_at`/`closed_at` - a reply is a
+ * conversation event, not a lifecycle transition. BLUE V1 Admin Support
+ * Management added the explicit, separate Actions for that
+ * (App\Actions\Admin\Support\AdminUpdateSupportRequestStatusAction /
+ * AdminAssignSupportRequestAction / AdminUnassignSupportRequestAction) -
+ * an Admin who wants a reply to also change status calls both endpoints,
+ * never one implicitly triggering the other.
  */
 final class AdminSendSupportMessageAction
 {

@@ -106,6 +106,51 @@
                         <dd data-field="closed_at" class="font-medium text-slate-900"></dd>
                     </div>
                 </dl>
+
+                <div class="mt-4 border-t border-slate-100 pt-4">
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Change status</label>
+                    <div class="flex gap-2">
+                        <select data-status-select class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                               text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                            <option value="OPEN">Open</option>
+                            <option value="IN_PROGRESS">In progress</option>
+                            <option value="RESOLVED">Resolved</option>
+                            <option value="CLOSED">Closed</option>
+                        </select>
+                        <button type="button" data-apply-status
+                                class="shrink-0 rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold
+                                       text-white transition hover:bg-slate-800">
+                            Update
+                        </button>
+                    </div>
+                    <p data-status-error class="mt-2 hidden text-sm text-red-600"></p>
+                </div>
+
+                <div class="mt-4 border-t border-slate-100 pt-4">
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">Assign admin</label>
+                    <div class="flex gap-2">
+                        <input type="text" data-assign-admin-uuid placeholder="Admin uuid"
+                               class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                                      text-sm text-slate-900 outline-none placeholder:text-slate-400
+                                      focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                        <button type="button" data-apply-assign
+                                class="shrink-0 rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold
+                                       text-white transition hover:bg-slate-800">
+                            Assign
+                        </button>
+                    </div>
+                    <div class="mt-2 flex gap-3">
+                        <button type="button" data-assign-to-me
+                                class="text-xs font-semibold text-blue-600 hover:text-blue-800">
+                            Assign to me
+                        </button>
+                        <button type="button" data-unassign
+                                class="text-xs font-semibold text-slate-500 hover:text-slate-800">
+                            Unassign
+                        </button>
+                    </div>
+                    <p data-assign-error class="mt-2 hidden text-sm text-red-600"></p>
+                </div>
             </div>
 
         </div>

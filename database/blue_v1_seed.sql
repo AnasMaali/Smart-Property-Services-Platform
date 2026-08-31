@@ -209,7 +209,7 @@ VALUES
 (
     'support.manage',
     'Manage Support Requests',
-    'Post an Admin reply message on a Support Request. Status-transition and assignment mutations are not yet implemented.',
+    'Post an Admin reply message on a Support Request, change its lifecycle status (OPEN/IN_PROGRESS/RESOLVED/CLOSED), and assign/unassign the responsible Admin.',
     TRUE
 ),
 (

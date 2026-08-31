@@ -648,11 +648,17 @@ standing policy.
 | List Support Requests | GET | `/v1/admin/support-requests` | `support.view` |
 | Get Support Request | GET | `/v1/admin/support-requests/{supportRequest}` | `support.view` |
 | Send Support Message | POST | `/v1/admin/support-requests/{supportRequest}/messages` | `support.manage` |
+| Update Support Request Status | POST | `/v1/admin/support-requests/{supportRequest}/status` | `support.manage` |
+| Assign Support Request | POST | `/v1/admin/support-requests/{supportRequest}/assign-admin` | `support.manage` |
+| Unassign Support Request | POST | `/v1/admin/support-requests/{supportRequest}/unassign-admin` | `support.manage` |
 
-`support.view`/`support.manage` are new BLUE V1 Phase B7 `admin_permissions` rows, granted to `ADMIN`
+`support.view`/`support.manage` are BLUE V1 Phase B7 `admin_permissions` rows, granted to `ADMIN`
 the same way every other capability in this document already is (`SUPER_ADMIN` needs no row). The
 split mirrors the existing `technicians.view`/`technicians.assign` convention exactly: `support.view`
-covers both reads; `support.manage` covers the one Support mutation this phase implements.
+covers both reads; `support.manage` covers every Support mutation, including the status-transition and
+assignment Actions BLUE V1 Admin Support Management added (see "Status transitions and assignment"
+below) - no separate capability was introduced for them, mirroring `bookings.manage` already covering
+more than one mutation type.
 
 ### List Support Requests — `GET /v1/admin/support-requests`
 
@@ -703,27 +709,56 @@ frontend always re-renders authoritative server state rather than patching local
 endpoint **never** writes `status_id`, `status_changed_at`, `resolved_at`, or `closed_at` — a reply
 does not change the request's lifecycle status.
 
-### Status transitions and assignment — not implemented, and why
+### Status transitions and assignment (BLUE V1 Admin Support Management)
 
 BLUE's Support requirements (`docs/03-features-and-requirements/09-human-support.md`) confirm the
 `OPEN` → `IN_PROGRESS` → `RESOLVED` → `CLOSED` status vocabulary and that Admins are expected to
-eventually update status and close requests, but neither that document nor the schema defines the
-exact transition graph (which statuses may move to which others, what triggers each move, whether a
-`CLOSED` request can reopen) or any assignment rule (who may assign, whether reassignment is allowed,
-whether assignment requires a particular role). Per BLUE V1 standing policy, ambiguous lifecycle
-policy is never invented — it is reported and deferred instead of shipped as a guess.
+update status and close requests, but neither that document nor the schema defines the exact
+transition graph or any assignment rule. BLUE V1 Phase B7 therefore deliberately shipped status and
+assignment as **read-only** display and reported the gap rather than guessing a policy. BLUE V1 Admin
+Support Management defines and implements that policy explicitly:
 
-Consequently, Phase B7 deliberately implements **read-only** status and assignment display only:
-- `status` is shown as a badge; there is no status-change endpoint, and neither the frontend nor any
-  Action ever writes `support_requests.status_id`/`status_changed_at`/`resolved_at`/`closed_at`.
-- `assigned_admin` is shown as read-only text ("Unassigned" or the assigned Admin's name); there is no
-  assignment/reassignment endpoint.
+**Status — `POST /v1/admin/support-requests/{supportRequest}/status`**
+(`App\Actions\Admin\Support\AdminUpdateSupportRequestStatusAction`, body `{ status: string }`, a real
+`support_request_statuses.code`). Every transition is validated against
+`App\Support\Admin\SupportRequestStatusMachine`'s explicit allowed graph:
 
-No generic `PATCH /v1/admin/support-requests/{supportRequest}` was added specifically to avoid
-papering over this gap with an implicit, unreviewed lifecycle policy. A future phase can introduce an
-explicit `AdminUpdateSupportRequestStatusAction`/`AdminAssignSupportRequestAction` (mirroring the
-explicit-Action-per-transition convention `App\Support\Contract\ContractStatusMachine` already
-establishes for Contracts) once the transition/assignment rules are confirmed.
+```
+OPEN <-> IN_PROGRESS
+OPEN -> RESOLVED
+IN_PROGRESS -> RESOLVED
+RESOLVED -> CLOSED
+RESOLVED -> IN_PROGRESS   (reopen for further work)
+CLOSED -> IN_PROGRESS     (reopen a closed request)
+```
+
+`OPEN -> CLOSED` and `CLOSED -> {OPEN, RESOLVED}` are not allowed — a request always passes through
+`RESOLVED` on its way to `CLOSED`, and reopening a `CLOSED` request always hands it back to active work
+(`IN_PROGRESS`), never straight to an unclaimed `OPEN` queue. The row is locked (`SELECT ... FOR
+UPDATE`) before validation. Requesting the request's current status is a safe, idempotent `200` (no
+write, no audit row). A structurally disallowed transition is a `409`. `resolved_at`/`closed_at` move
+with the target status: entering `RESOLVED` stamps `resolved_at` fresh and clears `closed_at`; entering
+`CLOSED` stamps `closed_at` and keeps the existing `resolved_at`; entering `OPEN`/`IN_PROGRESS` clears
+both. A successful transition writes one `SUPPORT_REQUEST_STATUS_CHANGED` `admin_audit_logs` row
+(`{ status: <old> }` / `{ status: <new> }`).
+
+**Assignment — `POST .../assign-admin` / `POST .../unassign-admin`**
+(`App\Actions\Admin\Support\AdminAssignSupportRequestAction` / `AdminUnassignSupportRequestAction`).
+`assign-admin` takes `{ admin_uuid: string }`; the target must be a real user currently holding an
+active `ADMIN`/`SUPER_ADMIN` role (the same eligibility check `AdminSupportRequestPresenter` already
+uses to classify a message sender as `ADMIN`), otherwise `422`. Because
+`support_requests.assigned_admin_user_id` is a single nullable FK column — not a join table with its
+own release/history rows like `technician_assignments` — one Action covers both the initial assignment
+and reassigning to a different Admin; every prior value stays recoverable from `admin_audit_logs`.
+Already-assigned-to-this-exact-admin (or already-unassigned, for `unassign-admin`) is a safe, idempotent
+`200`. A successful mutation writes one `SUPPORT_REQUEST_ASSIGNED` / `SUPPORT_REQUEST_REASSIGNED` /
+`SUPPORT_REQUEST_UNASSIGNED` `admin_audit_logs` row (`{ admin_uuid }` — never a raw binary id). Neither
+endpoint touches lifecycle status.
+
+No generic `PATCH /v1/admin/support-requests/{supportRequest}` was added — status and assignment stay
+their own explicit Actions/endpoints, mirroring the explicit-Action-per-transition convention
+`App\Support\Contract\ContractStatusMachine` already establishes for Contracts (status) and
+`App\Actions\Admin\Technician\AdminAssignTechnicianAction` establishes for assignment.
 
 ## Admin Service Catalog (Categories/Services) management (BLUE V1 Phase B8)
 

@@ -484,4 +484,482 @@ class AdminSupportRequestTest extends TestCase
         $this->assertSame($support['uuid'], $response->json('data.support_request.uuid'));
         $this->assertSame($customer['user_uuid'], $response->json('data.support_request.customer.uuid'));
     }
+
+    // -----------------------------------------------------------------
+    // WRITE - Status transitions
+    // -----------------------------------------------------------------
+
+    private function revokeSupportManage(): void
+    {
+        $adminRoleId = DB::table('roles')->where('code', 'ADMIN')->value('id');
+        $permissionId = DB::table('admin_permissions')->where('code', 'support.manage')->value('id');
+
+        DB::table('admin_role_permissions')
+            ->where('role_id', $adminRoleId)
+            ->where('permission_id', $permissionId)
+            ->delete();
+    }
+
+    public function test_admin_can_transition_open_to_in_progress(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true]);
+        $this->assertSame('IN_PROGRESS', $response->json('data.support_request.status'));
+    }
+
+    public function test_admin_can_transition_open_directly_to_resolved(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'RESOLVED'],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200);
+        $this->assertSame('RESOLVED', $response->json('data.support_request.status'));
+        $this->assertNotNull($response->json('data.support_request.resolved_at'));
+    }
+
+    public function test_admin_can_progress_through_the_full_lifecycle(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+        $headers = $this->bearer($admin['access_token']);
+        $url = '/api/v1/admin/support-requests/'.$support['uuid'].'/status';
+
+        $this->postJson($url, ['status' => 'IN_PROGRESS'], $headers)->assertStatus(200);
+        $this->postJson($url, ['status' => 'RESOLVED'], $headers)->assertStatus(200);
+
+        $resolvedRow = DB::table('support_requests')->where('id', UuidBinary::toBinary($support['uuid']))->first();
+        $this->assertNotNull($resolvedRow->resolved_at);
+        $this->assertNull($resolvedRow->closed_at);
+
+        $closeResponse = $this->postJson($url, ['status' => 'CLOSED'], $headers);
+        $closeResponse->assertStatus(200);
+        $this->assertSame('CLOSED', $closeResponse->json('data.support_request.status'));
+        $this->assertNotNull($closeResponse->json('data.support_request.resolved_at'));
+        $this->assertNotNull($closeResponse->json('data.support_request.closed_at'));
+    }
+
+    public function test_reopening_a_closed_request_clears_resolved_and_closed_timestamps(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $past = Carbon::now()->subHour();
+        $support = $this->createSupportRequest($customer['user_uuid'], [
+            'status_id' => $this->supportStatusId('CLOSED'),
+            'created_at' => $past,
+            'status_changed_at' => $past,
+            'resolved_at' => $past,
+            'closed_at' => $past,
+        ]);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200);
+        $this->assertSame('IN_PROGRESS', $response->json('data.support_request.status'));
+        $this->assertNull($response->json('data.support_request.resolved_at'));
+        $this->assertNull($response->json('data.support_request.closed_at'));
+    }
+
+    public function test_open_cannot_transition_directly_to_closed(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'CLOSED'],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(409)->assertJson(['success' => false]);
+        $this->assertSame('OPEN', $this->supportStatusCode($support['uuid']));
+    }
+
+    public function test_closed_cannot_reopen_directly_to_open(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid'], ['status_id' => $this->supportStatusId('CLOSED'), 'closed_at' => now()]);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'OPEN'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(409);
+    }
+
+    public function test_setting_the_same_status_is_idempotent(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'OPEN'],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true, 'message' => 'Support request is already in this status.']);
+        $this->assertSame(0, DB::table('admin_audit_logs')->where('entity_identifier', $support['uuid'])->where('action_code', 'SUPPORT_REQUEST_STATUS_CHANGED')->count());
+    }
+
+    public function test_invalid_status_code_is_rejected(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'NOT_A_REAL_STATUS'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(422);
+    }
+
+    public function test_status_change_on_nonexistent_request_returns_404(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.UuidBinary::generate().'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(404);
+    }
+
+    public function test_status_change_writes_an_audit_row(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(200);
+
+        $audit = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $support['uuid'])
+            ->where('action_code', 'SUPPORT_REQUEST_STATUS_CHANGED')
+            ->first();
+
+        $this->assertNotNull($audit);
+        $this->assertSame(UuidBinary::toBinary($admin['user_uuid']), $audit->admin_user_id);
+        $this->assertStringContainsString('IN_PROGRESS', (string) $audit->new_values);
+        $this->assertStringContainsString('OPEN', (string) $audit->old_values);
+    }
+
+    public function test_customer_cannot_change_support_request_status(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($customer['access_token']),
+        )->assertStatus(401);
+    }
+
+    public function test_unauthenticated_request_cannot_change_status(): void
+    {
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.UuidBinary::generate().'/status',
+            ['status' => 'IN_PROGRESS'],
+        )->assertStatus(401);
+    }
+
+    public function test_status_change_requires_support_manage_capability(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+        $this->revokeSupportManage();
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/status',
+            ['status' => 'IN_PROGRESS'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(403);
+    }
+
+    private function supportStatusCode(string $supportRequestUuid): string
+    {
+        return (string) DB::table('support_requests')
+            ->join('support_request_statuses', 'support_request_statuses.id', '=', 'support_requests.status_id')
+            ->where('support_requests.id', UuidBinary::toBinary($supportRequestUuid))
+            ->value('support_request_statuses.code');
+    }
+
+    // -----------------------------------------------------------------
+    // WRITE - Assignment
+    // -----------------------------------------------------------------
+
+    public function test_admin_can_assign_a_support_request(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $assignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true]);
+        $this->assertSame($assignee['user_uuid'], $response->json('data.support_request.assigned_admin.uuid'));
+    }
+
+    public function test_admin_can_reassign_to_a_different_admin(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $firstAssignee = $this->createAndLoginAdmin(['ADMIN']);
+        $secondAssignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid'], ['assigned_admin_user_id' => UuidBinary::toBinary($firstAssignee['user_uuid'])]);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $secondAssignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true, 'message' => 'Support request reassigned successfully.']);
+        $this->assertSame($secondAssignee['user_uuid'], $response->json('data.support_request.assigned_admin.uuid'));
+    }
+
+    public function test_admin_can_unassign_a_support_request(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid'], ['assigned_admin_user_id' => UuidBinary::toBinary($assignee['user_uuid'])]);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/unassign-admin',
+            [],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true]);
+        $this->assertNull($response->json('data.support_request.assigned_admin'));
+    }
+
+    public function test_assigning_to_a_non_admin_user_is_rejected(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $customer['user_uuid']],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(422);
+        $this->assertNull(DB::table('support_requests')->where('id', UuidBinary::toBinary($support['uuid']))->value('assigned_admin_user_id'));
+    }
+
+    public function test_assigning_to_a_nonexistent_user_is_rejected(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => UuidBinary::generate()],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(422);
+    }
+
+    public function test_malformed_admin_uuid_is_rejected(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => 'not-a-uuid'],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(422);
+    }
+
+    public function test_assigning_the_same_admin_again_is_idempotent(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid'], ['assigned_admin_user_id' => UuidBinary::toBinary($assignee['user_uuid'])]);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $assignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true, 'message' => 'This admin is already assigned to this support request.']);
+        $this->assertSame(0, DB::table('admin_audit_logs')->where('entity_identifier', $support['uuid'])->whereIn('action_code', ['SUPPORT_REQUEST_ASSIGNED', 'SUPPORT_REQUEST_REASSIGNED'])->count());
+    }
+
+    public function test_unassigning_an_already_unassigned_request_is_idempotent(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $response = $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/unassign-admin',
+            [],
+            $this->bearer($admin['access_token']),
+        );
+
+        $response->assertStatus(200)->assertJson(['success' => true, 'message' => 'This support request is already unassigned.']);
+        $this->assertSame(0, DB::table('admin_audit_logs')->where('entity_identifier', $support['uuid'])->where('action_code', 'SUPPORT_REQUEST_UNASSIGNED')->count());
+    }
+
+    public function test_assign_on_nonexistent_request_returns_404(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.UuidBinary::generate().'/assign-admin',
+            ['admin_uuid' => $assignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(404);
+    }
+
+    public function test_unassign_on_nonexistent_request_returns_404(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.UuidBinary::generate().'/unassign-admin',
+            [],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(404);
+    }
+
+    public function test_assignment_writes_an_audit_row(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $assignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(200);
+
+        $audit = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $support['uuid'])
+            ->where('action_code', 'SUPPORT_REQUEST_ASSIGNED')
+            ->first();
+
+        $this->assertNotNull($audit);
+        $this->assertSame(UuidBinary::toBinary($admin['user_uuid']), $audit->admin_user_id);
+        $this->assertStringContainsString($assignee['user_uuid'], (string) $audit->new_values);
+    }
+
+    public function test_unassignment_writes_an_audit_row(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid'], ['assigned_admin_user_id' => UuidBinary::toBinary($assignee['user_uuid'])]);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/unassign-admin',
+            [],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(200);
+
+        $audit = DB::table('admin_audit_logs')
+            ->where('entity_identifier', $support['uuid'])
+            ->where('action_code', 'SUPPORT_REQUEST_UNASSIGNED')
+            ->first();
+
+        $this->assertNotNull($audit);
+        $this->assertStringContainsString($assignee['user_uuid'], (string) $audit->old_values);
+    }
+
+    public function test_customer_cannot_assign_support_requests(): void
+    {
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $customer['user_uuid']],
+            $this->bearer($customer['access_token']),
+        )->assertStatus(401);
+    }
+
+    public function test_unauthenticated_request_cannot_unassign(): void
+    {
+        $this->postJson('/api/v1/admin/support-requests/'.UuidBinary::generate().'/unassign-admin')->assertStatus(401);
+    }
+
+    public function test_assignment_requires_support_manage_capability(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+        $this->revokeSupportManage();
+
+        $this->postJson(
+            '/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin',
+            ['admin_uuid' => $assignee['user_uuid']],
+            $this->bearer($admin['access_token']),
+        )->assertStatus(403);
+    }
+
+    public function test_status_and_assignment_responses_never_expose_unsafe_fields(): void
+    {
+        $admin = $this->createAndLoginAdmin(['ADMIN']);
+        $assignee = $this->createAndLoginAdmin(['ADMIN']);
+        $customer = $this->createAuthenticatedCartCustomer();
+        $support = $this->createSupportRequest($customer['user_uuid']);
+        $headers = $this->bearer($admin['access_token']);
+
+        $statusResponse = $this->postJson('/api/v1/admin/support-requests/'.$support['uuid'].'/status', ['status' => 'IN_PROGRESS'], $headers);
+        $assignResponse = $this->postJson('/api/v1/admin/support-requests/'.$support['uuid'].'/assign-admin', ['admin_uuid' => $assignee['user_uuid']], $headers);
+
+        foreach ([$statusResponse, $assignResponse] as $response) {
+            $json = json_encode($response->json());
+            $this->assertStringNotContainsString('password_hash', $json);
+            $this->assertSame($support['uuid'], $response->json('data.support_request.uuid'));
+        }
+    }
 }

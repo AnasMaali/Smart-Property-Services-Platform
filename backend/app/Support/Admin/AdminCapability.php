@@ -101,13 +101,18 @@ enum AdminCapability: string
     case CUSTOMERS_VIEW = 'customers.view';
 
     /**
-     * BLUE V1 Phase B7. Mirrors the `technicians.view`/`technicians.assign`
-     * split exactly: `support.view` covers listing/reading Support Requests
-     * and their conversation; `support.manage` covers the one Support
-     * mutation this phase implements (posting an Admin reply message).
-     * Status-transition/assignment mutations were deliberately deferred
-     * (no existing lifecycle policy to reuse) - see
-     * App\Actions\Admin\Support\AdminSendSupportMessageAction's docblock.
+     * BLUE V1 Phase B7, extended by BLUE V1 Admin Support Management.
+     * Mirrors the `technicians.view`/`technicians.assign` split exactly:
+     * `support.view` covers listing/reading Support Requests and their
+     * conversation; `support.manage` covers every Support mutation -
+     * posting an Admin reply message, the explicit status-transition
+     * Action (App\Support\Admin\SupportRequestStatusMachine), and
+     * assign/unassign (App\Actions\Admin\Support\
+     * AdminAssignSupportRequestAction / AdminUnassignSupportRequestAction).
+     * No separate `support.assign` capability was introduced - reversible,
+     * non-financial Support mutations stay under one `.manage` capability
+     * exactly like `bookings.manage` already covers more than one mutation
+     * type.
      */
     case SUPPORT_VIEW = 'support.view';
 

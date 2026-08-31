@@ -1,6 +1,7 @@
 /**
- * Admin Support Request detail (BLUE V1 Phase B7). Reuses the centralized
- * Admin API client against GET /v1/admin/support-requests/{supportRequest}
+ * Admin Support Request detail (BLUE V1 Phase B7, extended by BLUE V1
+ * Admin Support Management). Reuses the centralized Admin API client
+ * against GET /v1/admin/support-requests/{supportRequest}
  * (App\Actions\Admin\Support\AdminGetSupportRequestAction / App\Support\
  * Admin\AdminSupportRequestPresenter) - every field rendered below comes
  * directly from that response; nothing is invented or recomputed
@@ -10,13 +11,20 @@
  * Admin-controlled) text. They are rendered exclusively via textContent
  * below - never innerHTML - to prevent stored XSS.
  *
- * Only one mutation exists for this module: posting an Admin reply
- * message (POST .../messages). Status transitions and assignment are
- * deliberately NOT implemented in this phase (no existing lifecycle
- * policy to reuse - see App\Actions\Admin\Support\
- * AdminSendSupportMessageAction's docblock) and are rendered read-only.
- * After a successful reply, this page reloads the authoritative server
- * state (loadSupportRequest()) rather than patching local state.
+ * Mutations: posting an Admin reply message (POST .../messages), changing
+ * lifecycle status (POST .../status - App\Actions\Admin\Support\
+ * AdminUpdateSupportRequestStatusAction validates the transition
+ * server-side against App\Support\Admin\SupportRequestStatusMachine; this
+ * page never guesses which transitions are legal, it just submits the
+ * chosen target status and surfaces a 409/422 like any other rejection),
+ * and assign/unassign (POST .../assign-admin, .../unassign-admin - the
+ * assign field takes a raw Admin uuid, mirroring the existing
+ * customer_uuid-style exact-uuid filter convention on the list page,
+ * since no "list Admins" endpoint exists to populate a picker; "Assign to
+ * me" is a convenience that fills it with the caller's own uuid from GET
+ * /v1/admin/me). After every successful mutation, this page reloads the
+ * authoritative server state (loadSupportRequest()) rather than patching
+ * local state.
  */
 
 import { request, ApiError } from '../lib/api-client.js';
@@ -36,6 +44,12 @@ if (page) {
     const replyForm = page.querySelector('[data-reply-form]');
     const replySubmit = replyForm.querySelector('[data-reply-submit]');
     const replyError = replyForm.querySelector('[data-reply-error]');
+    const statusSelect = page.querySelector('[data-status-select]');
+    const statusError = page.querySelector('[data-status-error]');
+    const assignAdminUuidInput = page.querySelector('[data-assign-admin-uuid]');
+    const assignError = page.querySelector('[data-assign-error]');
+
+    let currentAdminUuid = null;
 
     function field(name) {
         return page.querySelector(`[data-field="${name}"]`);
@@ -139,6 +153,7 @@ if (page) {
         setText('subject', supportRequest.subject);
         setText('created_at', formatDateTime(supportRequest.created_at));
         renderBadge(field('status'), supportRequest.status);
+        statusSelect.value = supportRequest.status;
 
         renderCustomer(supportRequest.customer);
         renderBooking(supportRequest.booking);
@@ -185,9 +200,81 @@ if (page) {
         }
     });
 
-    adminAuthReady().then((ready) => {
-        if (ready) {
-            loadSupportRequest();
+    page.querySelector('[data-apply-status]').addEventListener('click', async () => {
+        statusError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/support-requests/${encodeURIComponent(supportRequestUuid)}/status`, {
+                method: 'POST',
+                body: { status: statusSelect.value },
+            });
+
+            await loadSupportRequest();
+        } catch (error) {
+            statusError.textContent = error instanceof ApiError ? error.message : 'Unable to change status.';
+            statusError.classList.remove('hidden');
         }
+    });
+
+    async function assignTo(adminUuid) {
+        assignError.classList.add('hidden');
+
+        if (!adminUuid) {
+            assignError.textContent = 'Enter an Admin uuid to assign.';
+            assignError.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            await request(`/api/v1/admin/support-requests/${encodeURIComponent(supportRequestUuid)}/assign-admin`, {
+                method: 'POST',
+                body: { admin_uuid: adminUuid },
+            });
+
+            assignAdminUuidInput.value = '';
+            await loadSupportRequest();
+        } catch (error) {
+            assignError.textContent = error instanceof ApiError ? error.message : 'Unable to assign this support request.';
+            assignError.classList.remove('hidden');
+        }
+    }
+
+    page.querySelector('[data-apply-assign]').addEventListener('click', () => {
+        assignTo(assignAdminUuidInput.value.trim());
+    });
+
+    page.querySelector('[data-assign-to-me]').addEventListener('click', () => {
+        assignTo(currentAdminUuid);
+    });
+
+    page.querySelector('[data-unassign]').addEventListener('click', async () => {
+        assignError.classList.add('hidden');
+
+        try {
+            await request(`/api/v1/admin/support-requests/${encodeURIComponent(supportRequestUuid)}/unassign-admin`, {
+                method: 'POST',
+            });
+
+            await loadSupportRequest();
+        } catch (error) {
+            assignError.textContent = error instanceof ApiError ? error.message : 'Unable to unassign this support request.';
+            assignError.classList.remove('hidden');
+        }
+    });
+
+    adminAuthReady().then(async (ready) => {
+        if (!ready) {
+            return;
+        }
+
+        try {
+            const me = await request('/api/v1/admin/me');
+            currentAdminUuid = me.data.user_uuid;
+        } catch {
+            // "Assign to me" simply stays unavailable if this fails; every
+            // other mutation on this page does not depend on it.
+        }
+
+        loadSupportRequest();
     });
 }
