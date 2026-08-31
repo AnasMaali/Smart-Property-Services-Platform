@@ -52,6 +52,23 @@ use App\Http\Controllers\Api\V1\Admin\Pricing\UpdateAdminPricingRuleController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Rating\GetAdminRatingController;
 use App\Http\Controllers\Api\V1\Admin\Rating\ListAdminRatingsController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Audit\ExportAdminAuditLogCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Audit\ExportAdminAuditLogPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Booking\ExportAdminBookingReportCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Booking\ExportAdminBookingReportPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Booking\GetAdminBookingReportController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Financial\ExportAdminFinancialSummaryReportCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Financial\ExportAdminFinancialSummaryReportPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Financial\GetAdminFinancialSummaryReportController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Payment\ExportAdminPaymentReportCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Payment\ExportAdminPaymentReportPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Payment\GetAdminPaymentReportController;
+use App\Http\Controllers\Api\V1\Admin\Reports\PayOnSite\ExportAdminPayOnSiteReportCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\PayOnSite\ExportAdminPayOnSiteReportPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\PayOnSite\GetAdminPayOnSiteReportController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Refund\ExportAdminRefundReportCsvController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Refund\ExportAdminRefundReportPdfController;
+use App\Http\Controllers\Api\V1\Admin\Reports\Refund\GetAdminRefundReportController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCheckpointController;
 use App\Http\Controllers\Api\V1\Admin\Service\ActivateAdminServiceCheckpointGroupController;
@@ -512,6 +529,65 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
     Route::get('/v1/admin/financial-ledger', ListAdminFinancialLedgerController::class)
         ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+
+    // BLUE V1 Admin Reports + Print + Export - screen/CSV/PDF report
+    // surfaces built directly on top of the Financial Dashboard/Ledger's
+    // own authoritative sources (App\Support\Admin\
+    // AdminFinancialSummaryCalculator, App\Actions\Admin\Booking\
+    // AdminListBookingsAction, App\Actions\Admin\Payment\
+    // AdminListPaymentsAction, `booking_refunds`, `booking_on_site_settlements`,
+    // and the existing Audit Log's own filters) - never a second
+    // calculation of a total. Permission mapping deliberately reuses each
+    // domain's existing capability rather than inventing a single
+    // `reports.manage`: Financial/Payment/Refund/Pay-on-Site reports are
+    // gated by `payments.view` (the same capability the Financial
+    // Dashboard/Ledger already require), the Booking report by
+    // `bookings.view`, and the Audit Log export by `audit.view` - so an
+    // Admin can never gain Payment report access merely because they can
+    // view Bookings. All ten CSV/PDF export routes contain the word
+    // "refund" or are adjacent to it; the `refunds` report trio is
+    // explicitly read-only (never executes or mutates a refund) and is
+    // carved out in tests/Feature/Admin/NoOperationalEndpointsExposedTest.php
+    // for that reason, mirroring that test's existing carve-outs.
+    Route::get('/v1/admin/reports/financial', GetAdminFinancialSummaryReportController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/financial/csv', ExportAdminFinancialSummaryReportCsvController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/financial/pdf', ExportAdminFinancialSummaryReportPdfController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+
+    Route::get('/v1/admin/reports/bookings', GetAdminBookingReportController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+    Route::get('/v1/admin/reports/bookings/csv', ExportAdminBookingReportCsvController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+    Route::get('/v1/admin/reports/bookings/pdf', ExportAdminBookingReportPdfController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+
+    Route::get('/v1/admin/reports/payments', GetAdminPaymentReportController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/payments/csv', ExportAdminPaymentReportCsvController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/payments/pdf', ExportAdminPaymentReportPdfController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+
+    Route::get('/v1/admin/reports/refunds', GetAdminRefundReportController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/refunds/csv', ExportAdminRefundReportCsvController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/refunds/pdf', ExportAdminRefundReportPdfController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+
+    Route::get('/v1/admin/reports/pay-on-site', GetAdminPayOnSiteReportController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/pay-on-site/csv', ExportAdminPayOnSiteReportCsvController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+    Route::get('/v1/admin/reports/pay-on-site/pdf', ExportAdminPayOnSiteReportPdfController::class)
+        ->middleware(AdminCapability::PAYMENTS_VIEW->middleware());
+
+    Route::get('/v1/admin/reports/audit-log/csv', ExportAdminAuditLogCsvController::class)
+        ->middleware(AdminCapability::AUDIT_VIEW->middleware());
+    Route::get('/v1/admin/reports/audit-log/pdf', ExportAdminAuditLogPdfController::class)
+        ->middleware(AdminCapability::AUDIT_VIEW->middleware());
 
     // BLUE V1 Phase B9 - Pricing management. Reads/authors the exact
     // canonical `pricing_scheme_versions`/`pricing_rules` rows

@@ -16,3 +16,43 @@ body {
 [x-cloak] {
     display: none !important;
 }
+
+/*
+ * BLUE V1 Admin Reports - print styling (feature "12. PRINT"). Every
+ * report page carries a `.print-only` header (hidden on screen, shown only
+ * when printing) and marks its filter form / action buttons `.no-print` so
+ * a printed report - or a "Save as PDF" from the browser's own print
+ * dialog - shows just the report title/date-range/summary/table, never the
+ * Admin sidebar, header, filter controls, or action buttons.
+ */
+.print-only {
+    display: none;
+}
+
+@media print {
+    [data-admin-shell] aside,
+    [data-admin-shell] header,
+    .no-print {
+        display: none !important;
+    }
+
+    [data-admin-shell] {
+        display: block !important;
+    }
+
+    [data-admin-shell] > div {
+        padding-left: 0 !important;
+    }
+
+    [data-admin-shell] main {
+        padding: 0 !important;
+    }
+
+    body {
+        background: #ffffff;
+    }
+
+    .print-only {
+        display: block;
+    }
+}

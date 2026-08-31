@@ -7,7 +7,7 @@
 
 <div data-audit-log-page class="space-y-6">
 
-    <form data-audit-log-filter-form class="rounded-2xl border border-slate-200 bg-white p-5">
+    <form data-audit-log-filter-form class="no-print rounded-2xl border border-slate-200 bg-white p-5">
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
@@ -104,9 +104,40 @@
                        font-medium text-slate-600 hover:bg-slate-50">
                 Clear
             </button>
+
+            <span class="mx-1 h-5 w-px bg-slate-200"></span>
+
+            <button
+                type="button"
+                data-audit-log-print
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm
+                       font-medium text-slate-700 hover:bg-slate-50">
+                Print
+            </button>
+
+            <button
+                type="button"
+                data-audit-log-export-csv
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm
+                       font-medium text-slate-700 hover:bg-slate-50">
+                Export CSV
+            </button>
+
+            <button
+                type="button"
+                data-audit-log-export-pdf
+                class="rounded-lg border border-slate-300 px-4 py-2 text-sm
+                       font-medium text-slate-700 hover:bg-slate-50">
+                Export PDF
+            </button>
         </div>
 
     </form>
+
+    <div class="print-only mb-4">
+        <h2 class="text-lg font-bold">BLUE — Audit Log Export</h2>
+        <p class="text-sm text-slate-600">Current filtered view</p>
+    </div>
 
 
     <div class="rounded-2xl border border-slate-200 bg-white">
@@ -140,7 +171,7 @@
         <div
             data-audit-log-pagination
             style="display: none;"
-            class="items-center justify-between border-t
+            class="no-print items-center justify-between border-t
                     border-slate-100 px-5 py-4 text-sm text-slate-600">
             <span data-audit-log-pagination-summary></span>
 

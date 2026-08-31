@@ -156,6 +156,56 @@
 
                 <p class="px-3 pb-2 text-xs font-medium uppercase
                           tracking-wider text-slate-600">
+                    Reports
+                </p>
+
+                <a
+                    href="/admin/reports/financial"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/reports/financial') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Financial
+                </a>
+
+                <a
+                    href="/admin/reports/bookings"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/reports/bookings') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Bookings
+                </a>
+
+                <a
+                    href="/admin/reports/payments"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/reports/payments') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Payments
+                </a>
+
+                <a
+                    href="/admin/reports/refunds"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/reports/refunds') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Refunds
+                </a>
+
+                <a
+                    href="/admin/reports/pay-on-site"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/reports/pay-on-site') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Pay on Site
+                </a>
+
+            </div>
+
+
+            <div class="pt-5">
+
+                <p class="px-3 pb-2 text-xs font-medium uppercase
+                          tracking-wider text-slate-600">
                     Application
                 </p>
 

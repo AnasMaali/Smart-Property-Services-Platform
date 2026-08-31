@@ -60,6 +60,17 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::view('/finance', 'admin.financial.dashboard')->name('financial.dashboard');
     Route::view('/finance/ledger', 'admin.financial.ledger')->name('financial.ledger');
 
+    // BLUE V1 Admin Reports + Print + Export - shell routes for the
+    // Reports section (distinct from Finance > Dashboard/Ledger above; see
+    // resources/views/admin/layouts/app.blade.php's "Reports" nav group).
+    // Same "empty Blade shell, all data/authorization from the API
+    // client-side" convention as every other module in this file.
+    Route::view('/reports/financial', 'admin.reports.financial')->name('reports.financial');
+    Route::view('/reports/bookings', 'admin.reports.bookings')->name('reports.bookings');
+    Route::view('/reports/payments', 'admin.reports.payments')->name('reports.payments');
+    Route::view('/reports/refunds', 'admin.reports.refunds')->name('reports.refunds');
+    Route::view('/reports/pay-on-site', 'admin.reports.pay-on-site')->name('reports.pay-on-site');
+
     // BLUE V1 Phase B6 - Customers/Properties shell routes. Same convention
     // as every other module above. There is no global Properties index
     // route - a Property is always reached from its owning Customer's

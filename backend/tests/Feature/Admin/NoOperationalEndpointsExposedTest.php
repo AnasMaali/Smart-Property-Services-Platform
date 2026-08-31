@@ -74,6 +74,21 @@ class NoOperationalEndpointsExposedTest extends TestCase
         // CANCELLED, the same reasoning already carved out contracts.cancel
         // and bookings.cancel above for their own domains.
         'api/v1/admin/repair-quotes/{quote}/cancel',
+        // BLUE V1 Admin Reports + Print + Export - the Refund Report trio
+        // (screen/CSV/PDF, App\Actions\Admin\Reports\AdminRefundReportAction).
+        // Its URI contains "refund" purely because it reports ON refunds -
+        // it is strictly read-only (SELECT-only queries over the existing
+        // `booking_refunds` table) and never executes, retries, or mutates
+        // a refund the way a real operational refund route would. Carved
+        // out here for the same reason every route above it was.
+        'api/v1/admin/reports/refunds',
+        'api/v1/admin/reports/refunds/csv',
+        'api/v1/admin/reports/refunds/pdf',
+        // The matching Blade shell route (routes/web.php) - same
+        // read-only reasoning, renders an empty shell with no data/
+        // authorization decision made server-side, exactly like every
+        // other `admin/*` shell route in that file.
+        'admin/reports/refunds',
     ];
 
     public function test_no_out_of_scope_operational_routes_are_registered(): void
@@ -195,6 +210,23 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/repair-quotes/{quote}/cancel',
             'api/v1/admin/repair-quotes/{quote}/revise',
             'api/v1/admin/repair-quotes/{quote}/send',
+            'api/v1/admin/reports/audit-log/csv',
+            'api/v1/admin/reports/audit-log/pdf',
+            'api/v1/admin/reports/bookings',
+            'api/v1/admin/reports/bookings/csv',
+            'api/v1/admin/reports/bookings/pdf',
+            'api/v1/admin/reports/financial',
+            'api/v1/admin/reports/financial/csv',
+            'api/v1/admin/reports/financial/pdf',
+            'api/v1/admin/reports/pay-on-site',
+            'api/v1/admin/reports/pay-on-site/csv',
+            'api/v1/admin/reports/pay-on-site/pdf',
+            'api/v1/admin/reports/payments',
+            'api/v1/admin/reports/payments/csv',
+            'api/v1/admin/reports/payments/pdf',
+            'api/v1/admin/reports/refunds',
+            'api/v1/admin/reports/refunds/csv',
+            'api/v1/admin/reports/refunds/pdf',
             'api/v1/admin/service-capability-types',
             'api/v1/admin/service-categories',
             'api/v1/admin/service-categories/{category}',

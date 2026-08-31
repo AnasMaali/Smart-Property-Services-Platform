@@ -11,12 +11,16 @@
 import { request, ApiError } from '../lib/api-client.js';
 import { adminAuthReady } from '../auth/restore.js';
 import { statusLabel, formatDateTime } from '../lib/format.js';
+import { downloadReportFile } from '../lib/download.js';
 
 const page = document.querySelector('[data-audit-log-page]');
 
 if (page) {
     const filterForm = page.querySelector('[data-audit-log-filter-form]');
     const clearButton = page.querySelector('[data-audit-log-clear-filters]');
+    const printButton = page.querySelector('[data-audit-log-print]');
+    const exportCsvButton = page.querySelector('[data-audit-log-export-csv]');
+    const exportPdfButton = page.querySelector('[data-audit-log-export-pdf]');
     const loadingEl = page.querySelector('[data-audit-log-loading]');
     const errorEl = page.querySelector('[data-audit-log-error]');
     const emptyEl = page.querySelector('[data-audit-log-empty]');
@@ -170,6 +174,37 @@ if (page) {
     clearButton.addEventListener('click', () => {
         filterForm.reset();
         navigate(new URLSearchParams());
+    });
+
+    // BLUE V1 Admin Reports + Print + Export - "9. AUDIT LOG EXPORT". Reads
+    // the exact same filters currently applied on screen (paramsFromForm()
+    // above), against the dedicated read-only export routes
+    // (App\Actions\Admin\Reports\AdminExportAuditLogAction) - never a
+    // second audit trail, never a write.
+    printButton.addEventListener('click', () => window.print());
+
+    exportCsvButton.addEventListener('click', async () => {
+        exportCsvButton.disabled = true;
+
+        try {
+            await downloadReportFile(`/api/v1/admin/reports/audit-log/csv?${paramsFromForm().toString()}`, 'audit-log-export.csv');
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            exportCsvButton.disabled = false;
+        }
+    });
+
+    exportPdfButton.addEventListener('click', async () => {
+        exportPdfButton.disabled = true;
+
+        try {
+            await downloadReportFile(`/api/v1/admin/reports/audit-log/pdf?${paramsFromForm().toString()}`, 'audit-log-export.pdf');
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            exportPdfButton.disabled = false;
+        }
     });
 
     window.addEventListener('popstate', () => {
