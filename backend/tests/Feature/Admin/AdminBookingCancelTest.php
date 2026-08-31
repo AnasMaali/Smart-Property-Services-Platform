@@ -296,12 +296,14 @@ class AdminBookingCancelTest extends TestCase
 
         Carbon::setTestNow($startsAt->copy()->addSecond());
 
-        $this->cancelViaAdmin($admin['access_token'], UuidBinary::toString($booking->id), 'Too late.')
-            ->assertStatus(409);
+        try {
+            $this->cancelViaAdmin($admin['access_token'], UuidBinary::toString($booking->id), 'Too late.')
+                ->assertStatus(409);
 
-        $this->assertSame('PAID', DB::table('booking_statuses')->where('id', DB::table('bookings')->where('id', $booking->id)->value('status_id'))->value('code'));
-        $this->assertSame(0, $this->auditCount());
-
-        Carbon::setTestNow();
+            $this->assertSame('PAID', DB::table('booking_statuses')->where('id', DB::table('bookings')->where('id', $booking->id)->value('status_id'))->value('code'));
+            $this->assertSame(0, $this->auditCount());
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 }

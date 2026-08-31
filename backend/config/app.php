@@ -63,9 +63,16 @@ return [
     | will be used by the PHP date and date-time functions. The timezone
     | is set to "UTC" by default as it is suitable for most use cases.
     |
+    | This is the STORAGE timezone only - every appointment/cancellation
+    | instant persisted by the app is stored under this timezone. BLUE V1's
+    | UAE business/calendar-day rules (refund eligibility, cancellation
+    | policy, etc.) do NOT use this value - they use the separate
+    | `config('cancellation.timezone')` (Asia/Dubai) instead. See
+    | App\Support\Booking\RefundEligibilityCalculator.
+    |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => env('APP_TIMEZONE', 'UTC'),
 
     /*
     |--------------------------------------------------------------------------

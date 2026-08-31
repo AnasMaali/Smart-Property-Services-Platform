@@ -260,7 +260,7 @@ DROP TABLE IF EXISTS `appointment_time_windows`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `appointment_time_windows` (
-  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
   `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
@@ -299,7 +299,7 @@ CREATE TABLE `appointment_slots` (
   `starts_at` datetime(6) NOT NULL,
   `ends_at` datetime(6) NOT NULL,
   `booking_capacity` smallint unsigned NOT NULL DEFAULT '1',
-  `time_window_id` smallint unsigned NOT NULL,
+  `time_window_id` int unsigned NOT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `internal_note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -3487,7 +3487,7 @@ DROP TABLE IF EXISTS `service_zones`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `service_zones` (
-  `id` smallint unsigned NOT NULL AUTO_INCREMENT,
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
   `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
@@ -3523,7 +3523,7 @@ DROP TABLE IF EXISTS `service_zone_areas`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `service_zone_areas` (
   `area_id` int unsigned NOT NULL,
-  `service_zone_id` smallint unsigned NOT NULL,
+  `service_zone_id` int unsigned NOT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`area_id`),
