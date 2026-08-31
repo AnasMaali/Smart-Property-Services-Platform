@@ -104,12 +104,33 @@
                         px-4 py-3 text-sm text-red-700"></div>
         </div>
 
+        <div data-retire-card class="rounded-2xl border border-slate-200 bg-white p-6">
+            <h3 class="text-sm font-semibold text-slate-900">Retire this version</h3>
+            <p class="mt-1 text-xs text-slate-400">
+                Stops this version from being selected for future pricing. Its rules and history stay fully
+                readable - nothing is deleted. Only allowed when another PUBLISHED version already covers
+                what happens right now, so live checkout is never left without a price.
+            </p>
+            <button
+                type="button"
+                data-retire-submit
+                class="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold
+                       text-red-700 transition hover:bg-red-50
+                       disabled:cursor-not-allowed disabled:opacity-50">
+                Retire version
+            </button>
+            <div data-retire-error class="hidden mt-3 rounded-xl border border-red-200 bg-red-50
+                        px-4 py-3 text-sm text-red-700"></div>
+        </div>
+
         <div data-add-rule-card class="rounded-2xl border border-slate-200 bg-white p-6">
-            <h3 class="text-sm font-semibold text-slate-900">Add a rule</h3>
+            <h3 data-add-rule-heading class="text-sm font-semibold text-slate-900">Add a rule</h3>
             <p class="mt-1 text-xs text-slate-400">
                 Set base prices, per-unit/tiered pricing (e.g. "first unit 200, each additional 75", or
                 hourly with a discounted rate past a threshold), and conditional pricing (e.g. "when
-                Bedrooms = 2, set price to 1250") - all without writing raw JSON.
+                Bedrooms = 2, set price to 1250") - all without writing raw JSON. Editing an existing rule
+                here is only available for a simple rule with no conditions/tiers - a conditional or
+                tiered rule is edited by calling the Admin API directly (<code>PUT .../rules/{rule}</code>).
             </p>
 
             <form data-add-rule-form class="mt-3 space-y-4">
@@ -206,6 +227,10 @@
 
                 <div class="flex items-center gap-4">
                     <p data-add-rule-error class="hidden text-sm text-red-600"></p>
+                    <button type="button" data-cancel-edit-rule style="display: none;"
+                            class="text-sm font-medium text-slate-500 hover:text-slate-800">
+                        Cancel edit
+                    </button>
                     <button type="submit" data-add-rule-submit
                             class="ml-auto rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                         Add rule
@@ -233,8 +258,9 @@
         <div class="rounded-2xl border border-slate-200 bg-white p-6">
             <h3 class="text-sm font-semibold text-slate-900">Pricing preview</h3>
             <p class="mt-1 text-xs text-slate-400">
-                Verify this configuration (including still-unpublished DRAFT changes above only take effect
-                once published) against the exact same pricing calculation Cart/Checkout use. Nothing is saved.
+                Evaluates THIS exact version - including its still-unpublished DRAFT rules above - through
+                the exact same pricing calculation Cart/Checkout use. Read-only: nothing is saved, and this
+                can never change what a real customer is quoted.
             </p>
 
             <form data-preview-form class="mt-3 space-y-3">
@@ -371,6 +397,10 @@
             <div class="flex items-center gap-2">
                 <span data-field="effect_summary" class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700"></span>
                 <span data-field="stop_processing" style="display: none;" class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">Stops processing</span>
+                <button type="button" data-edit-rule-button style="display: none;"
+                        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    Edit
+                </button>
                 <button type="button" data-delete-rule-button style="display: none;"
                         class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
                     Delete

@@ -417,6 +417,32 @@ final class AdminServicePresenter
     }
 
     /**
+     * The Admin Pricing Preview's calculation call for one EXPLICITLY named
+     * `pricing_scheme_versions` row - most importantly a DRAFT an Admin
+     * wants to check before publishing - kept out of App\Actions\Admin\
+     * Pricing\* directly per the same Admin/pricing-engine isolation
+     * boundary as previewPricing() above. Delegates to
+     * App\Support\Pricing\PricingEngine::evaluateForVersion(), which never
+     * touches App\Support\Pricing\PricingSchemeSelector - this can never
+     * affect, and is never confused with, what a real customer's Cart/
+     * Checkout/service-details preview calculates.
+     *
+     * @param  array<string, array<string, mixed>>  $selections
+     * @param  array<string, string>  $context
+     * @return array<string, mixed>
+     */
+    public static function previewPricingForVersion(string $serviceUuid, string $pricingSchemeVersionUuid, array $selections, int $quantity, array $context = []): array
+    {
+        return (new PricingEngine)->evaluateForVersion(
+            serviceIdUuid: $serviceUuid,
+            pricingSchemeVersionUuid: $pricingSchemeVersionUuid,
+            selections: $selections,
+            quantity: $quantity,
+            context: $context,
+        )->toArray();
+    }
+
+    /**
      * BLUE V1 Phase B23-ext. Generic typed key/value attributes on a
      * SINGLE_SELECT/MULTI_SELECT choice (e.g. a car-service package
      * choice's oil brand/grade, duration, recommended odometer) - see

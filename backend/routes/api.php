@@ -36,9 +36,12 @@ use App\Http\Controllers\Api\V1\Admin\Pricing\CreateAdminPricingSchemeDraftContr
 use App\Http\Controllers\Api\V1\Admin\Pricing\DeleteAdminPricingRuleController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\GetAdminPricingSchemeController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\ListAdminPricingSchemesController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\PreviewAdminPricingSchemeVersionController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\PreviewAdminServicePricingController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\PublishAdminPricingSchemeController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\RetireAdminPricingSchemeVersionController;
 use App\Http\Controllers\Api\V1\Admin\Pricing\SetAdminServiceCurrentPriceController;
+use App\Http\Controllers\Api\V1\Admin\Pricing\UpdateAdminPricingRuleController;
 use App\Http\Controllers\Api\V1\Admin\Property\GetAdminPropertyController;
 use App\Http\Controllers\Api\V1\Admin\Rating\GetAdminRatingController;
 use App\Http\Controllers\Api\V1\Admin\Rating\ListAdminRatingsController;
@@ -477,10 +480,37 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::PRICING_MANAGE->middleware());
     Route::post('/v1/admin/pricing-schemes/{pricingScheme}/rules', CreateAdminPricingRuleController::class)
         ->middleware(AdminCapability::PRICING_MANAGE->middleware());
+    // Atomic delete+recreate of one DRAFT rule (same UUID, same semantics
+    // AdminCreatePricingRuleAction's docblock already documents as the
+    // "editing a DRAFT rule" pattern) under a single request/transaction -
+    // see App\Actions\Admin\Pricing\AdminUpdatePricingRuleAction.
+    Route::put('/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}', UpdateAdminPricingRuleController::class)
+        ->middleware(AdminCapability::PRICING_MANAGE->middleware());
     Route::delete('/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}', DeleteAdminPricingRuleController::class)
         ->middleware(AdminCapability::PRICING_MANAGE->middleware());
     Route::post('/v1/admin/pricing-schemes/{pricingScheme}/publish', PublishAdminPricingSchemeController::class)
         ->middleware([AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
+
+    // Explicit Admin-triggered PUBLISHED -> RETIRED transition - see
+    // App\Actions\Admin\Pricing\AdminRetirePricingSchemeVersionAction's
+    // docblock for the safety gate (never leaves a service+currency with no
+    // currently-active pricing) and why it never deletes the version or its
+    // rules. Mirrors publish's own capability/step-up bar exactly: like
+    // publish, retiring a version can immediately change what real
+    // customers are quoted and is uniquely dangerous/hard to reverse.
+    Route::post('/v1/admin/pricing-schemes/{pricingScheme}/retire', RetireAdminPricingSchemeVersionController::class)
+        ->middleware([AdminCapability::PRICING_PUBLISH->middleware(), 'admin.stepup']);
+
+    // Pricing Preview for one EXPLICITLY named scheme version - most
+    // importantly a DRAFT, before it is ever published. A pure READ (same
+    // reasoning as PreviewAdminServicePricingController just below): never
+    // writes a Cart, Cart Item, or any pricing row, and never touches the
+    // targeted version's own status/effective dates, so `pricing.view`
+    // alone is enough. See App\Actions\Admin\Pricing\
+    // AdminPreviewPricingSchemeVersionAction's docblock for how this stays
+    // fully separate from what a real customer's Cart/Checkout resolves.
+    Route::post('/v1/admin/pricing-schemes/{pricingScheme}/preview', PreviewAdminPricingSchemeVersionController::class)
+        ->middleware(AdminCapability::PRICING_VIEW->middleware());
 
     // BLUE V1 Phase B23-ext - pricing preview/tester. A pure READ: it never
     // writes a Cart, Cart Item, or any pricing row, so it needs only

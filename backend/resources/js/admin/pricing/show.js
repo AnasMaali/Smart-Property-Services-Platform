@@ -8,25 +8,36 @@
  *
  * Phase B23-ext adds: condition-group/condition and tier authoring on the
  * "Add a rule" form (previously limited to a single unconditional effect -
- * conditional/multi-tier rules required calling the API directly), and a
- * Pricing Preview tool that evaluates a hypothetical selection through
- * POST /v1/admin/services/{service}/pricing-preview (App\Actions\Admin\
- * Pricing\AdminPreviewServicePricingAction), the exact same calculation
- * Cart/Checkout use - never a second, client-side reimplementation. The
- * Rules list below already IS the "readable summary before publish": every
- * condition/tier shown there is rendered directly from the persisted
+ * conditional/multi-tier rules required calling the API directly).
+ *
+ * Advanced Pricing Administration (this phase) adds three things:
+ *  - Pricing Preview now evaluates THIS EXACT scheme version - draft
+ *    included - through POST /v1/admin/pricing-schemes/{scheme}/preview
+ *    (App\Actions\Admin\Pricing\AdminPreviewPricingSchemeVersionAction),
+ *    never a second/duplicated calculation and never the currently-live
+ *    price of some other version.
+ *  - Editing a rule (PUT .../rules/{rule}) reuses the exact same "Add a
+ *    rule" form fields, only for a simple rule with no conditions/tiers -
+ *    the same scope limit the "Add a rule" form itself already has for
+ *    conditional/tiered rules; editing one of those is done via the API
+ *    directly so this page never silently drops a condition/tier it
+ *    doesn't know how to re-populate into the form.
+ *  - Retiring a PUBLISHED version (POST .../retire) - a plain confirm()
+ *    dialog, matching this page's existing delete-rule confirmation.
+ *
+ * The Rules list below already IS the "readable summary before publish":
+ * every condition/tier shown there is rendered directly from the persisted
  * structure (renderConditionGroups/renderTiers), never a separate
  * business-logic description.
  *
- * Mutations (add rule / delete rule / publish) only ever act on a DRAFT
- * scheme version - the server is the authoritative enforcer of that (see
- * AdminCreatePricingRuleAction/AdminDeletePricingRuleAction/
- * AdminPublishPricingSchemeAction), but this page also hides the relevant
- * forms/buttons for a non-DRAFT version as a UX hint. Publishing reuses
- * the existing WebAuthn Step-Up flow transparently through
- * lib/api-client.js's request() - no special-case code is needed here.
- * Every mutation reloads the authoritative server response afterward
- * rather than patching local state.
+ * Mutations (add/edit/delete rule, publish, retire) only ever act on the
+ * scheme version status that allows them - the server is the authoritative
+ * enforcer of that (see each Action's own docblock), but this page also
+ * hides/shows the relevant forms/buttons per status as a UX hint.
+ * Publishing/retiring reuse the existing WebAuthn Step-Up flow
+ * transparently through lib/api-client.js's request() - no special-case
+ * code is needed here. Every mutation reloads the authoritative server
+ * response afterward rather than patching local state.
  */
 
 import { request, ApiError } from '../lib/api-client.js';
@@ -44,10 +55,15 @@ if (page) {
     const publishForm = page.querySelector('[data-publish-form]');
     const publishSubmit = publishForm.querySelector('[data-publish-submit]');
     const publishError = page.querySelector('[data-publish-error]');
+    const retireCard = page.querySelector('[data-retire-card]');
+    const retireSubmit = page.querySelector('[data-retire-submit]');
+    const retireError = page.querySelector('[data-retire-error]');
     const addRuleCard = page.querySelector('[data-add-rule-card]');
+    const addRuleHeading = page.querySelector('[data-add-rule-heading]');
     const addRuleForm = page.querySelector('[data-add-rule-form]');
     const addRuleSubmit = addRuleForm.querySelector('[data-add-rule-submit]');
     const addRuleError = addRuleForm.querySelector('[data-add-rule-error]');
+    const cancelEditRuleButton = addRuleForm.querySelector('[data-cancel-edit-rule]');
     const effectTypeSelect = addRuleForm.querySelector('[data-effect-type-select]');
     const effectAmountField = addRuleForm.querySelector('[data-effect-amount-field]');
     const perUnitFields = addRuleForm.querySelector('[data-per-unit-fields]');
@@ -81,6 +97,7 @@ if (page) {
 
     let serviceUuid = null;
     let serviceOptions = [];
+    let editingRuleUuid = null;
 
     function field(name) {
         return page.querySelector(`[data-field="${name}"]`);
@@ -211,6 +228,17 @@ if (page) {
             const deleteButton = node.querySelector('[data-delete-rule-button]');
             deleteButton.style.display = 'inline-block';
             deleteButton.addEventListener('click', () => onDeleteRule(rule.uuid, rule.label));
+
+            // Editing here is only offered for a simple rule with no
+            // conditions/tiers - the same scope this form's "Add a rule"
+            // side already has. A conditional/tiered rule's edit button
+            // stays hidden so this page can never silently drop structure
+            // it doesn't know how to re-populate into the form.
+            if (rule.condition_groups.length === 0 && rule.tiers.length === 0) {
+                const editButton = node.querySelector('[data-edit-rule-button]');
+                editButton.style.display = 'inline-block';
+                editButton.addEventListener('click', () => startEditRule(rule));
+            }
         }
 
         return node;
@@ -263,6 +291,11 @@ if (page) {
         const isDraft = scheme.status === 'DRAFT';
         publishCard.style.display = isDraft ? 'block' : 'none';
         addRuleCard.style.display = isDraft ? 'block' : 'none';
+        retireCard.style.display = scheme.status === 'PUBLISHED' ? 'block' : 'none';
+
+        if (!isDraft) {
+            cancelEditRule();
+        }
 
         setText('rules_count', String(scheme.rules.length));
 
@@ -289,6 +322,40 @@ if (page) {
             window.alert(error instanceof ApiError ? error.message : 'Unable to delete this rule.');
         }
     }
+
+    function startEditRule(rule) {
+        editingRuleUuid = rule.uuid;
+        addRuleForm.reset();
+        tiersEditor.replaceChildren();
+        conditionGroupsEditor.replaceChildren();
+        perUnitFields.classList.add('hidden');
+
+        addRuleForm.elements.namedItem('rule_code').value = rule.rule_code;
+        addRuleForm.elements.namedItem('label').value = rule.label;
+        addRuleForm.elements.namedItem('priority').value = String(rule.priority);
+        effectTypeSelect.value = rule.effect_type;
+        effectAmountField.style.display = AMOUNTLESS_EFFECT_TYPES.includes(rule.effect_type) ? 'none' : 'block';
+        addRuleForm.elements.namedItem('effect_amount').value = rule.effect_amount ?? '';
+        addRuleForm.elements.namedItem('stop_processing').checked = rule.stop_processing;
+
+        addRuleHeading.textContent = `Edit rule "${rule.label}"`;
+        addRuleSubmit.textContent = 'Save changes';
+        cancelEditRuleButton.style.display = 'inline-block';
+        addRuleForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function cancelEditRule() {
+        editingRuleUuid = null;
+        addRuleForm.reset();
+        tiersEditor.replaceChildren();
+        conditionGroupsEditor.replaceChildren();
+        perUnitFields.classList.add('hidden');
+        addRuleHeading.textContent = 'Add a rule';
+        addRuleSubmit.textContent = 'Add rule';
+        cancelEditRuleButton.style.display = 'none';
+    }
+
+    cancelEditRuleButton.addEventListener('click', cancelEditRule);
 
     // --- Effect type / per-unit tiers -------------------------------------
 
@@ -509,19 +576,18 @@ if (page) {
             body.condition_groups = conditionGroups;
         }
 
-        try {
-            await request(`/api/v1/admin/pricing-schemes/${encodeURIComponent(schemeUuid)}/rules`, {
-                method: 'POST',
-                body,
-            });
+        const isEditing = editingRuleUuid !== null;
+        const url = isEditing
+            ? `/api/v1/admin/pricing-schemes/${encodeURIComponent(schemeUuid)}/rules/${encodeURIComponent(editingRuleUuid)}`
+            : `/api/v1/admin/pricing-schemes/${encodeURIComponent(schemeUuid)}/rules`;
 
-            addRuleForm.reset();
-            tiersEditor.replaceChildren();
-            conditionGroupsEditor.replaceChildren();
-            perUnitFields.classList.add('hidden');
+        try {
+            await request(url, { method: isEditing ? 'PUT' : 'POST', body });
+
+            cancelEditRule();
             await loadScheme();
         } catch (error) {
-            addRuleError.textContent = error instanceof ApiError ? error.message : 'Unable to add this rule.';
+            addRuleError.textContent = error instanceof ApiError ? error.message : `Unable to ${isEditing ? 'save' : 'add'} this rule.`;
             addRuleError.classList.remove('hidden');
         } finally {
             addRuleSubmit.disabled = false;
@@ -550,6 +616,28 @@ if (page) {
             publishError.classList.remove('hidden');
         } finally {
             publishSubmit.disabled = false;
+        }
+    });
+
+    retireSubmit.addEventListener('click', async () => {
+        if (!window.confirm('Retire this pricing scheme version? It will stop being selected for future pricing. Its rules and history stay fully readable - nothing is deleted.')) {
+            return;
+        }
+
+        retireError.classList.add('hidden');
+        retireSubmit.disabled = true;
+
+        try {
+            await request(`/api/v1/admin/pricing-schemes/${encodeURIComponent(schemeUuid)}/retire`, {
+                method: 'POST',
+            });
+
+            await loadScheme();
+        } catch (error) {
+            retireError.textContent = error instanceof ApiError ? error.message : 'Unable to retire this pricing scheme version.';
+            retireError.classList.remove('hidden');
+        } finally {
+            retireSubmit.disabled = false;
         }
     });
 
@@ -665,7 +753,7 @@ if (page) {
         previewSubmit.disabled = true;
 
         try {
-            const response = await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/pricing-preview`, {
+            const response = await request(`/api/v1/admin/pricing-schemes/${encodeURIComponent(schemeUuid)}/preview`, {
                 method: 'POST',
                 body: {
                     quantity: Number(previewForm.elements.namedItem('quantity').value || 1),

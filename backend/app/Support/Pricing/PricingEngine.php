@@ -5,6 +5,7 @@ namespace App\Support\Pricing;
 use App\Support\Uuid\UuidBinary;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
  * The single reusable pricing entry point every caller shares: service
@@ -126,7 +127,61 @@ final class PricingEngine
         return $results;
     }
 
-    private function unavailable(string $currencyCode, int $quantity): PricingResult
+    /**
+     * Evaluates one EXPLICITLY named `pricing_scheme_versions` row -
+     * DRAFT, PUBLISHED, or RETIRED - instead of resolving "the currently
+     * -effective PUBLISHED version" the way evaluate() always does. This is
+     * the smallest safe extension supporting an Admin Pricing Preview that
+     * can evaluate a not-yet-published DRAFT before it goes live: it never
+     * touches App\Support\Pricing\PricingSchemeSelector or the effective
+     * -date window at all, so it can never influence, and is never confused
+     * with, what a real customer's Cart/Checkout/service-details preview
+     * calculates via evaluate() above - those two selection paths stay
+     * completely separate. Still delegates to the exact same
+     * PricingRuleEvaluator - never a second calculation algorithm.
+     *
+     * @param  string  $serviceIdUuid  Standard UUID string.
+     * @param  string  $pricingSchemeVersionUuid  Standard UUID string of the exact `pricing_scheme_versions` row to evaluate, regardless of its status.
+     * @param  array<string, array<string, mixed>>  $selections  Same shape as evaluate().
+     * @param  array<string, string>  $context  Same shape as evaluate().
+     */
+    public function evaluateForVersion(
+        string $serviceIdUuid,
+        string $pricingSchemeVersionUuid,
+        array $selections,
+        int $quantity,
+        array $context = [],
+    ): PricingResult {
+        try {
+            $serviceIdBinary = UuidBinary::toBinary($serviceIdUuid);
+            $versionIdBinary = UuidBinary::toBinary($pricingSchemeVersionUuid);
+        } catch (InvalidArgumentException) {
+            return $this->unavailable(null, $quantity);
+        }
+
+        $version = DB::table('pricing_scheme_versions')
+            ->join('currencies', 'currencies.id', '=', 'pricing_scheme_versions.currency_id')
+            ->where('pricing_scheme_versions.id', $versionIdBinary)
+            ->where('pricing_scheme_versions.service_id', $serviceIdBinary)
+            ->first(['pricing_scheme_versions.id', 'currencies.code as currency_code']);
+
+        if ($version === null) {
+            return $this->unavailable(null, $quantity);
+        }
+
+        $rules = $this->repository->rulesForSchemeVersion($versionIdBinary);
+
+        return $this->evaluator->evaluate(
+            rules: $rules,
+            selections: $selections,
+            quantity: $quantity,
+            context: $context,
+            currencyCode: $version->currency_code,
+            pricingSchemeVersion: $pricingSchemeVersionUuid,
+        );
+    }
+
+    private function unavailable(?string $currencyCode, int $quantity): PricingResult
     {
         return new PricingResult(
             status: PricingStatus::UNAVAILABLE,

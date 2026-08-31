@@ -1059,28 +1059,22 @@ enforced centrally by each Action locking and checking `status` before writing):
   calls `validate()` for a friendly aggregated error list, then calls the real `publish()` — the exact
   same transactional, row-locking, overlap-rejecting operation, never copied or reimplemented.
 
+**Implemented later** (Advanced Pricing Administration — see its own subsection below for the full
+detail): editing an existing DRAFT rule in place (`PUT .../rules/{rule}`) and explicitly retiring a
+PUBLISHED version (`POST .../retire`) — both originally deferred here for the reasons the two bullets
+below described, until an explicit, reviewed lifecycle/editing policy was approved.
+
 **Deferred, and why**:
 
-- **Update an existing DRAFT rule (PATCH)** — no update endpoint exists; editing a DRAFT rule is
-  delete + recreate. This avoids inventing partial-update semantics for a rule's nested condition/tier
-  structure that no existing code establishes.
-- **Retire a PUBLISHED scheme** — `RETIRED` is a valid schema status (used only in
-  `PricingSchemeSelectorTest`'s fixtures to prove a retired version is correctly excluded from
-  selection), but **no existing Action or business rule anywhere in this codebase transitions a
-  version to `RETIRED`**. Inventing how/when that happens would mean guessing financial lifecycle
-  policy, which BLUE V1 standing policy forbids. A `RETIRED` version therefore stays reachable only via
-  direct read.
 - **Service Zones on the Service/Pricing pages** — confirmed in B8: `service_zones`/
   `service_zone_areas` has no relationship to `services` at all in the schema; it is purely an
   Area→pricing-context mapping. Nothing to author here.
-- **Pricing Preview / test calculation** — investigated `App\Support\Checkout\
-  CheckoutContextResolver`: it resolves `SERVICE_ZONE` (and any future context attribute) from a real
-  `cart_locations.area_id`, i.e. a genuine Cart/Checkout/Property context. Synthesizing a fake context
-  from the Admin panel to "preview" a rule would mean guessing what context values are realistic,
-  which is exactly the kind of invented business behavior this phase avoids. No
-  `POST .../preview` endpoint was built; an Admin instead uses the real, unmodified
-  `GET /v1/services/{slug}` pricing preview (which already calls the same `PricingEngine` with no
-  selections) to confirm a published change, exactly as the end-to-end test below does.
+- **Pricing Preview / test calculation** — deferred here at B9 for the reason below, then built twice
+  later: Phase B23-ext added a preview of a Service's currently-**published** price
+  (`POST /v1/admin/services/{service}/pricing-preview`), and Advanced Pricing Administration (see its
+  own subsection below) added a preview of one **explicitly named** scheme version — most importantly
+  a **DRAFT**, before it is ever published. Neither synthesizes context: an Admin may only supply
+  context values it already knows are realistic (e.g. `SERVICE_ZONE`) — never guessed/invented here.
 - **Condition-group/tier authoring in the frontend UI** — the backend `Create Pricing Rule` endpoint
   fully supports nested condition groups and multi-tier `ADD_PER_UNIT` rules (see the dedicated tests
   in `AdminPricingTest`), but the Admin web UI's "Add a rule" form only covers the common unconditional
@@ -1136,6 +1130,63 @@ to the corresponding B9 detail page (`/admin/pricing/{scheme}`), replacing the e
 summary — Pricing editing stays entirely in the Pricing domain; Service Catalog never gained pricing
 -mutation UI of its own. Every mutation reloads the authoritative server response afterward; all
 dynamic text is rendered via `textContent`/`createElement`, never `innerHTML`.
+
+## Advanced Pricing Administration
+
+Closes the three gaps B9 explicitly deferred above: safe editing of an existing DRAFT rule, Pricing
+Preview against an explicitly named scheme version (a DRAFT included, before it is ever published), and
+an Admin-triggered PUBLISHED → RETIRED transition. No schema change — `pricing_scheme_versions.status`
+already allowed `RETIRED`; nothing new needed authoring or reading it explicitly.
+
+| Feature | Method | Route | Capability |
+|---|---|---|---|
+| Update Pricing Rule | PUT | `/v1/admin/pricing-schemes/{pricingScheme}/rules/{rule}` | `pricing.manage` |
+| Retire Pricing Scheme Version | POST | `/v1/admin/pricing-schemes/{pricingScheme}/retire` | `pricing.publish` + `admin.stepup` |
+| Preview Pricing Scheme Version | POST | `/v1/admin/pricing-schemes/{pricingScheme}/preview` | `pricing.view` |
+
+**Update Pricing Rule** (`App\Actions\Admin\Pricing\AdminUpdatePricingRuleAction`) — an atomic delete +
+recreate of one DRAFT rule under a single transaction, keeping its UUID stable, instead of two separate
+client calls. Shares field-level shape validation and the raw insert path with `AdminCreatePricingRuleAction`
+via the new `App\Actions\Admin\Pricing\Concerns\PersistsPricingRule` trait — never a second, divergent
+copy of those CHECK-constraint-mirroring rules. Only a DRAFT version's rules may be edited; a duplicate
+`rule_code`/`priority` against another rule on the same version is still rejected (409), excluding the
+rule being edited itself. Audits `PRICING_RULE_UPDATED` with a compact old/new field snapshot.
+
+**Retire Pricing Scheme Version** (`App\Actions\Admin\Pricing\AdminRetirePricingSchemeVersionAction`) —
+the direct, reviewed operation B9 deferred, generalizing the exact "bookkeeping on the version's own
+validity window only, never a rewrite of its rules/amounts" approach `AdminSetServiceCurrentPriceAction`
+already uses internally when it replaces a Service's current price. Only a PUBLISHED version may be
+retired (a DRAFT is rejected 409; an already-RETIRED version is an idempotent 200 no-op, no new audit
+row). **Safety gate**: if the version being retired is the one `PricingSchemeSelector::selectCurrent()`
+currently selects for its (service, currency), retirement is refused (409) unless another PUBLISHED
+version would immediately take its place — this can never leave live Cart/Checkout pricing
+`UNAVAILABLE`. A not-yet-started or already-lapsed PUBLISHED version is never "currently selected", so
+retiring one of those is always allowed. Never deletes the version or any rule/condition/tier; a
+retired version and any `booking_items.pricing_scheme_version_id` already pointing at it stay fully
+readable forever. Audits `PRICING_SCHEME_RETIRED` with the old/new status and `effective_to`.
+
+**Preview Pricing Scheme Version** (`App\Actions\Admin\Pricing\AdminPreviewPricingSchemeVersionAction`)
+— evaluates one explicitly named `pricing_scheme_versions` row (any status; most importantly a DRAFT)
+through `App\Support\Pricing\PricingEngine::evaluateForVersion()`, a new sibling method that never
+touches `PricingSchemeSelector`, so it can never influence — and is never confused with — what
+`evaluate()` resolves for a real customer's Cart/Checkout/service-details preview; the two selection
+paths stay completely separate (proven by `test_preview_of_a_draft_never_affects_the_live_published_price`).
+Selections are validated through the same `CartSelectionValidator` the real Cart flow uses; an optional
+`context` map lets an Admin supply resolved pricing context attribute values (e.g. `SERVICE_ZONE`) to
+preview a context-conditional rule — never synthesized/guessed by this codebase, exactly like B9's
+original preview-context concern required. A pure read: no Booking, Payment, Cart Item, or pricing row
+is ever written, and the targeted version's own status/effective dates are never touched.
+
+### Frontend
+
+`/admin/pricing/{scheme}` (`resources/js/admin/pricing/show.js`) now: points its existing Pricing
+Preview form at `POST .../pricing-schemes/{scheme}/preview` instead of the Service-level current-price
+preview, so it always evaluates the version actually being viewed, DRAFT included; offers an "Edit"
+button on a DRAFT rule card only when that rule has no condition groups/tiers (the same scope the
+"Add a rule" form itself already has — a conditional/tiered rule is edited via the API directly, so
+this page can never silently drop structure it doesn't know how to re-populate into the form); and
+shows a "Retire this version" card with a confirm() dialog only while `status = PUBLISHED`. Every
+mutation still reloads the authoritative server response afterward.
 
 ## Admin Operational Dashboard (BLUE V1 Phase B10)
 
