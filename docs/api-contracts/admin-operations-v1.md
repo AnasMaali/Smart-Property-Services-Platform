@@ -863,13 +863,11 @@ Only **display metadata** and **is_active** are mutable, on both Categories and 
   activating an already-active row (or deactivating an already-inactive one) is a safe no-op and
   writes no audit row.
 
-Options, Capabilities, Specializations, Media, and Zones remain **read-only** (or, for Zones, entirely
-absent from the Service detail page) after inspecting how each is actually consumed elsewhere:
+Options, Specializations, Media, and Zones remain **read-only** (or, for Zones, entirely absent from the
+Service detail page) after inspecting how each is actually consumed elsewhere. `service_capabilities`
+gained an explicit, reviewed mutation Action (BLUE V1 Admin Service Capabilities Management, see
+"Admin Service Capabilities Management" below) once its Cart/Contract safety story was confirmed:
 
-- **`service_capabilities`** gates real Cart/Contract eligibility (`App\Support\Pricing\
-  ServiceCapabilities::has()`, checked by `AddCartItemAction` for `CART_ELIGIBLE` and
-  `RequestContractAction` for `SUBSCRIPTION`) — toggling one is a structural product-behavior change,
-  not display metadata.
 - **`service_specializations`** directly determines technician-candidate eligibility for a booking
   item (`App\Actions\Admin\Technician\AdminListTechnicianCandidatesAction` intersects it with
   `technician_specializations`) — an uninformed edit could silently make a Service unassignable or
@@ -913,13 +911,59 @@ safety story is confirmed — never a generic PATCH covering all of them at once
 - Both toggles are idempotent no-ops when the row is already in the target state (no audit row is
   written when nothing actually changes).
 
+### Admin Service Capabilities Management
+
+`POST /v1/admin/services/{service}/capabilities` (`services.manage`) sets a Service's complete
+`service_capabilities` set — replace semantics, resolved server-side from `service_capability_types`
+by code (the client never supplies a numeric capability type id). An unknown or inactive code is
+rejected with `422`; an empty `capabilities` array is valid and clears every capability (unlike
+payment methods, nothing about "zero capabilities" is an invalid domain state). `GET
+/v1/admin/service-capability-types` (`services.view`) is the read-only seeded lookup
+(`CART_ELIGIBLE`/`QUOTE_ONLY`/`EMERGENCY`/`SUBSCRIPTION`/`REQUIRES_SITE_VISIT`) the editor UI uses to
+populate its checkboxes, exactly like `GET /v1/admin/payment-method-types` above it.
+
+Only two capability codes have real runtime behavior today, both via the existing generic
+`App\Support\Pricing\ServiceCapabilities::has()` check — this feature never duplicates that check
+anywhere else:
+
+- **`CART_ELIGIBLE`** gates `AddCartItemAction`/`UpdateCartItemAction`. Removing it blocks **future**
+  Cart adds and blocks a customer from editing (e.g. changing quantity/options on) an item already in
+  their Cart. It does **not** remove the Service from a Cart it is already in, and — since neither
+  Checkout nor Payment nor Booking-conversion re-validates capability or `is_active` (no live
+  revalidation exists at any of those stages, a pre-existing gap shared with plain Service
+  deactivation) — an already-added, untouched CartItem can still reach Checkout/Payment/Booking
+  unimpeded. This mirrors the exact precedent `AdminDeactivateServiceAction` already established for
+  `services.is_active`; closing that residual gap (if ever desired) is a separate decision affecting
+  both `is_active` and `CART_ELIGIBLE` alike, not something this feature introduces or invents a fix
+  for.
+- **`SUBSCRIPTION`** gates `RequestContractAction` (customer request time) and
+  `AdminApproveContractAction` (Admin approval time, a genuine independent server-side recheck).
+  Removing it blocks **future** Contract requests/approvals only. Once a `service_contract_items` row
+  exists it is a write-once, immutable snapshot with no live dependency on `service_capabilities` —
+  ongoing visit-booking (`CreateContractBookingAction`) and every recurring maintenance job
+  (`contracts:expire`, `contracts:suspend-past-due-billing`, …) ignore capability/`is_active` entirely,
+  so an already-approved/active Contract is completely unaffected by a later `SUBSCRIPTION` removal.
+
+`QUOTE_ONLY`, `EMERGENCY`, and `REQUIRES_SITE_VISIT` can be stored and read like any other capability
+but have **no runtime behavior anywhere in this codebase** — this feature does not invent any.
+
+In every case: no CartItem is ever deleted, no checkout/payment snapshot is ever rewritten, and no
+Contract is ever cancelled or rewritten as a side effect of a capability change. Capability changes are
+purely forward-looking eligibility configuration, following the same non-cascading precedent as
+Service `is_active` deactivation above.
+
+The mutation is idempotent: if the requested set (order-independent) already equals the current set,
+it is a safe no-op — no writes, no audit row.
+
 ### Audit logging
 
 `SERVICE_CATEGORY_UPDATED`, `SERVICE_CATEGORY_ACTIVATED`, `SERVICE_CATEGORY_DEACTIVATED`,
-`SERVICE_UPDATED`, `SERVICE_ACTIVATED`, `SERVICE_DEACTIVATED` — one row per successful, state-changing
-mutation. A metadata update logs only `name` and `display_order` in `new_values`/`old_values`, never
-`description` (never logging large description blobs). Activate/deactivate log no `new_values` at all
-beyond the action itself; an idempotent no-op writes no audit row.
+`SERVICE_UPDATED`, `SERVICE_ACTIVATED`, `SERVICE_DEACTIVATED`, `SERVICE_CAPABILITIES_CHANGED` — one row
+per successful, state-changing mutation. A metadata update logs only `name` and `display_order` in
+`new_values`/`old_values`, never `description` (never logging large description blobs).
+Activate/deactivate log no `new_values` at all beyond the action itself; an idempotent no-op writes no
+audit row. `SERVICE_CAPABILITIES_CHANGED` logs `{"capabilities": [...]}` (sorted capability codes only —
+never a raw `BINARY(16)` id or internal numeric capability type id) in both `old_values`/`new_values`.
 
 ### Pricing boundary with B9
 
@@ -938,10 +982,11 @@ browsing structure for what shows up in the mobile app — rather than getting a
 sidebar entry; the global cross-category Services list (`/admin/services`) is reached from there via a
 "View all Services" link, per the "keep navigation simple" guidance. A Category detail page
 (`/admin/service-categories/{category}`) lists its Services; a Service detail page
-(`/admin/services/{service}`) shows Overview/Options/Capabilities/Specializations/Media/Pricing as
-read-only cards alongside the metadata-edit form and the Activate/Deactivate control. Every mutation
-reloads the authoritative server response afterward rather than patching local state; Service/Category
-names/descriptions are rendered exclusively via `textContent`/`createElement`, never `innerHTML`.
+(`/admin/services/{service}`) shows Overview/Options/Specializations/Media/Pricing as read-only cards,
+a Capabilities checkbox editor (Save Capabilities), alongside the metadata-edit form and the
+Activate/Deactivate control. Every mutation reloads the authoritative server response afterward rather
+than patching local state; Service/Category names/descriptions are rendered exclusively via
+`textContent`/`createElement`, never `innerHTML`.
 
 ## Admin Pricing Management (BLUE V1 Phase B9)
 

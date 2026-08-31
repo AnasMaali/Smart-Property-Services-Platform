@@ -72,6 +72,11 @@ if (page) {
     const paymentMethodsCheckboxes = paymentPolicyForm.querySelector('[data-payment-methods-checkboxes]');
     const paymentPolicyRequiresPrepaymentEl = paymentPolicyForm.querySelector('[data-payment-policy-requires-prepayment]');
 
+    const capabilitiesForm = page.querySelector('[data-capabilities-form]');
+    const capabilitiesError = capabilitiesForm.querySelector('[data-capabilities-error]');
+    const capabilitiesCheckboxes = capabilitiesForm.querySelector('[data-capabilities-checkboxes]');
+    const capabilitiesWarnings = capabilitiesForm.querySelector('[data-capabilities-warnings]');
+
     const contentSectionsEl = page.querySelector('[data-content-sections]');
     const contentSectionsEmptyEl = page.querySelector('[data-content-sections-empty]');
     const addContentSectionForm = page.querySelector('[data-add-content-section-form]');
@@ -160,25 +165,41 @@ if (page) {
         return badge(isActive ? 'Active' : 'Inactive', 'bg-emerald-50 text-emerald-700', 'bg-slate-100 text-slate-600', isActive);
     }
 
+    // Only CART_ELIGIBLE and SUBSCRIPTION have real runtime behavior today
+    // (see App\Actions\Admin\Service\AdminSetServiceCapabilitiesAction's
+    // docblock) - QUOTE_ONLY/EMERGENCY/REQUIRES_SITE_VISIT are deliberately
+    // never given a warning here, since claiming behavior they don't have
+    // would be misleading.
+    const CAPABILITY_RUNTIME_NOTES = {
+        CART_ELIGIBLE: 'Controls future Cart eligibility.',
+        SUBSCRIPTION: 'Controls future Service Contract eligibility.',
+    };
+
     function renderCapabilities(capabilities) {
-        const container = page.querySelector('[data-capabilities]');
-        const emptyEl = page.querySelector('[data-capabilities-empty]');
-        container.replaceChildren();
+        const activeCodes = new Set(capabilities.map((capability) => capability.code));
 
-        if (capabilities.length === 0) {
-            emptyEl.classList.remove('hidden');
-            return;
-        }
+        capabilitiesCheckboxes.replaceChildren(...capabilityTypes.map((type) => {
+            const label = document.createElement('label');
+            label.className = 'flex items-center gap-1.5';
 
-        emptyEl.classList.add('hidden');
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = type.code;
+            input.checked = activeCodes.has(type.code);
+            input.className = 'rounded border-slate-300';
 
-        capabilities.forEach((capability) => {
-            const pill = document.createElement('span');
-            pill.className = 'rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700';
-            pill.title = capability.description ?? '';
-            pill.textContent = capability.name;
-            container.appendChild(pill);
-        });
+            label.append(input, document.createTextNode(type.name));
+
+            return label;
+        }));
+
+        capabilitiesWarnings.replaceChildren(...capabilityTypes
+            .filter((type) => CAPABILITY_RUNTIME_NOTES[type.code])
+            .map((type) => {
+                const li = document.createElement('li');
+                li.textContent = `${type.name}: ${CAPABILITY_RUNTIME_NOTES[type.code]}`;
+                return li;
+            }));
     }
 
     function renderSpecializations(specializations) {
@@ -1203,18 +1224,20 @@ if (page) {
     }
 
     let paymentMethodTypes = [];
+    let capabilityTypes = [];
 
     async function loadLookups() {
         populateSelect(optionTypeSelect, OPTION_TYPES, { valueKey: 'code', labelKey: 'label' });
 
         try {
-            const [categoriesResponse, specializationsResponse, sectionTypesResponse, checkpointActionTypesResponse, attributeTypesResponse, paymentMethodTypesResponse] = await Promise.all([
+            const [categoriesResponse, specializationsResponse, sectionTypesResponse, checkpointActionTypesResponse, attributeTypesResponse, paymentMethodTypesResponse, capabilityTypesResponse] = await Promise.all([
                 request('/api/v1/admin/service-categories'),
                 request('/api/v1/admin/specializations'),
                 request('/api/v1/admin/service-content-section-types'),
                 request('/api/v1/admin/service-checkpoint-action-types'),
                 request('/api/v1/admin/service-option-choice-attribute-types'),
                 request('/api/v1/admin/payment-method-types'),
+                request('/api/v1/admin/service-capability-types'),
             ]);
 
             populateSelect(changeCategorySelect, categoriesResponse.data.service_categories ?? [], { valueKey: 'id', labelKey: 'name' });
@@ -1223,12 +1246,15 @@ if (page) {
             populateSelect(checkpointActionTypeSelect, checkpointActionTypesResponse.data.action_types ?? [], { valueKey: 'code', labelKey: 'name' });
             populateSelect(choiceAttributeTypeSelect, attributeTypesResponse.data.attribute_types ?? [], { valueKey: 'code', labelKey: 'name' });
             paymentMethodTypes = (paymentMethodTypesResponse.data.payment_method_types ?? []).filter((type) => type.is_active);
+            capabilityTypes = (capabilityTypesResponse.data.service_capability_types ?? []).filter((type) => type.is_active);
 
             // loadLookups() and loadService() run concurrently (see the
             // bottom of this file) - if the Service already loaded first,
-            // re-render its payment policy now that the type list exists.
+            // re-render its payment policy/capabilities now that the type
+            // lists exist.
             if (latestService) {
                 renderPaymentPolicy(latestService.payment_policy);
+                renderCapabilities(latestService.capabilities);
             }
         } catch {
             // Non-fatal: the read-only service detail (and its already-set
@@ -1278,6 +1304,25 @@ if (page) {
         } catch (error) {
             paymentPolicyError.textContent = messageOf(error, 'Unable to save the payment policy.');
             paymentPolicyError.classList.remove('hidden');
+        }
+    });
+
+    capabilitiesForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        capabilitiesError.classList.add('hidden');
+
+        const selected = Array.from(capabilitiesCheckboxes.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+
+        try {
+            await request(`/api/v1/admin/services/${encodeURIComponent(serviceUuid)}/capabilities`, {
+                method: 'POST',
+                body: { capabilities: selected },
+            });
+
+            await loadService();
+        } catch (error) {
+            capabilitiesError.textContent = messageOf(error, 'Unable to save capabilities.');
+            capabilitiesError.classList.remove('hidden');
         }
     });
 

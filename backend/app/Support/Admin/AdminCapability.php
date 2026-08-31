@@ -130,11 +130,11 @@ enum AdminCapability: string
 
     /**
      * Covers every Service Catalog mutation this phase implements: Category
-     * and Service display-metadata edits (name/description/display_order)
-     * and activate/deactivate toggles. Nothing about Service Options,
-     * Capabilities, Specializations, or Media is mutable here - see
-     * App\Actions\Admin\Service\AdminGetServiceAction's docblock for why
-     * each of those remains read-only in this phase.
+     * and Service display-metadata edits (name/description/display_order),
+     * activate/deactivate toggles, and (added in later phases) Options/
+     * Specializations/Media/Capabilities - see each domain's own Action
+     * docblock (e.g. App\Actions\Admin\Service\
+     * AdminSetServiceCapabilitiesAction) for its specific safety story.
      */
     case SERVICES_MANAGE = 'services.manage';
 

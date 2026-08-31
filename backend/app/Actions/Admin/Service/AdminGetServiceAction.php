@@ -8,14 +8,17 @@ use App\Support\Uuid\UuidBinary;
 use InvalidArgumentException;
 
 /**
- * BLUE V1 Phase B8, extended in Phase B23. `service_capabilities` remains
- * presented read-only here (App\Support\Admin\AdminServicePresenter) -
- * it gates real Cart/Contract eligibility (App\Support\Pricing\
+ * BLUE V1 Phase B8, extended in Phase B23. `service_capabilities`
+ * (App\Support\Admin\AdminServicePresenter) gained an explicit, reviewed
+ * mutation Action of its own - App\Actions\Admin\Service\
+ * AdminSetServiceCapabilitiesAction - in BLUE V1 Admin Service Capabilities
+ * Management. It gates real Cart/Contract eligibility (App\Support\Pricing\
  * ServiceCapabilities::has(), checked by App\Actions\Cart\AddCartItemAction
  * for CART_ELIGIBLE and App\Actions\Contract\RequestContractAction for
- * SUBSCRIPTION), so toggling one is a structural product-behavior change,
- * not catalog-admin display metadata, and still has no reviewed mutation
- * story.
+ * SUBSCRIPTION), so that Action's mutation is deliberately FORWARD-LOOKING
+ * only - see its own docblock for the full non-cascading safety story.
+ * QUOTE_ONLY/EMERGENCY/REQUIRES_SITE_VISIT remain vocabulary-only, with no
+ * runtime behavior anywhere in this codebase yet.
  *
  * Specializations/Options/Choices/Media all gained explicit, reviewed
  * mutation Actions in Phase B23 (App\Actions\Admin\Service\

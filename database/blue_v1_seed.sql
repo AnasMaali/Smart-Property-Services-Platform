@@ -221,7 +221,7 @@ VALUES
 (
     'services.manage',
     'Manage Service Catalog',
-    'Edit Service Category/Service display metadata (name, description, display order) and activate/deactivate Categories and Services. Options, capabilities, specializations, media, and pricing rules are not mutable through this capability.',
+    'Edit Service Category/Service display metadata (name, description, display order) and activate/deactivate Categories and Services. Also covers Options, Specializations, Media, and Capabilities mutation. Pricing rules are not mutable through this capability.',
     TRUE
 ),
 (

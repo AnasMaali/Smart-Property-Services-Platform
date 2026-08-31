@@ -75,12 +75,14 @@ use App\Http\Controllers\Api\V1\Admin\Service\DeactivateAdminServiceOptionContro
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceCategoryController;
 use App\Http\Controllers\Api\V1\Admin\Service\GetAdminServiceController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminPaymentMethodTypesController;
+use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCapabilityTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCategoriesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceCheckpointActionTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceContentSectionTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServiceOptionChoiceAttributeTypesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminServicesController;
 use App\Http\Controllers\Api\V1\Admin\Service\ListAdminSpecializationsController;
+use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceCapabilitiesController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceCatalogPolicyController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServiceOriginalPriceController;
 use App\Http\Controllers\Api\V1\Admin\Service\SetAdminServicePaymentMethodsController;
@@ -563,11 +565,16 @@ Route::middleware('auth.admin')->group(function () {
     // (original price + canonical-PricingEngine current price). `services.
     // view` covers every read below (list/detail, including the nested
     // capabilities/specializations/options/media/pricing-scheme summary on
-    // a Service); `services.manage` covers every mutation. Capabilities
-    // remain read-only here - see App\Actions\Admin\Service\
-    // AdminGetServiceAction's docblock for why - and
+    // a Service); `services.manage` covers every mutation - see
     // docs/api-contracts/admin-operations-v1.md "Service Catalog" for the
     // full write-up.
+    //
+    // BLUE V1 Admin Service Capabilities Management - `service_capabilities`
+    // gained an explicit, reviewed "set the whole set" mutation Action
+    // (App\Actions\Admin\Service\AdminSetServiceCapabilitiesAction), the
+    // same `services.manage` bar as every other Service mutation here.
+    // `service_capability_types` is a read-only seeded lookup (services.
+    // view), exactly like `/v1/admin/payment-method-types` above it.
     Route::get('/v1/admin/specializations', ListAdminSpecializationsController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::get('/v1/admin/service-categories', ListAdminServiceCategoriesController::class)
@@ -640,6 +647,11 @@ Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/payment-method-types', ListAdminPaymentMethodTypesController::class)
         ->middleware(AdminCapability::SERVICES_VIEW->middleware());
     Route::post('/v1/admin/services/{service}/payment-methods', SetAdminServicePaymentMethodsController::class)
+        ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
+
+    Route::get('/v1/admin/service-capability-types', ListAdminServiceCapabilityTypesController::class)
+        ->middleware(AdminCapability::SERVICES_VIEW->middleware());
+    Route::post('/v1/admin/services/{service}/capabilities', SetAdminServiceCapabilitiesController::class)
         ->middleware(AdminCapability::SERVICES_MANAGE->middleware());
 
     Route::get('/v1/admin/service-content-section-types', ListAdminServiceContentSectionTypesController::class)

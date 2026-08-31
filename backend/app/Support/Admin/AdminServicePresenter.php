@@ -19,13 +19,14 @@ use Illuminate\Support\Facades\DB;
  * needs to see what is currently hidden from the mobile app, not just what
  * a customer would see.
  *
- * `service_capabilities` remains presented read-only - see
- * App\Actions\Admin\Service\AdminGetServiceAction's docblock for why.
+ * `service_capabilities` has an explicit, reviewed mutation Action -
+ * App\Actions\Admin\Service\AdminSetServiceCapabilitiesAction - see its
+ * docblock for the forward-looking-only eligibility safety story.
  * Everything else here (Options/Choices/Specializations/Media, and as of
  * Phase B23-ext: content sections, checkpoint groups/checkpoints, and
- * per-choice structured attributes) has an explicit, reviewed mutation
- * Action - see each domain's own Action docblock for its specific safety
- * story.
+ * per-choice structured attributes) likewise has an explicit, reviewed
+ * mutation Action - see each domain's own Action docblock for its specific
+ * safety story.
  */
 final class AdminServicePresenter
 {

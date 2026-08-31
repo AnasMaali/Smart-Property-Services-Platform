@@ -138,10 +138,20 @@
             <div class="rounded-2xl border border-slate-200 bg-white p-6">
                 <h3 class="text-sm font-semibold text-slate-900">Capabilities</h3>
                 <p class="mt-1 text-xs text-slate-400">
-                    Read-only - gates real Cart/Contract eligibility behavior.
+                    Forward-looking eligibility configuration only - never affects an already-placed Cart item,
+                    an existing Booking/Payment, or an already-approved/active Contract.
                 </p>
-                <div data-capabilities-empty class="hidden mt-3 text-sm text-slate-500">No capabilities.</div>
-                <div data-capabilities class="mt-3 flex flex-wrap gap-2"></div>
+
+                <form data-capabilities-form class="mt-3 space-y-3">
+                    <div data-capabilities-checkboxes class="flex flex-wrap gap-4 text-sm"></div>
+                    <ul data-capabilities-warnings class="space-y-1 text-xs text-amber-700"></ul>
+                    <div class="flex items-center gap-4">
+                        <button type="submit" class="rounded-lg bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                            Save Capabilities
+                        </button>
+                        <p data-capabilities-error class="hidden text-sm text-red-600"></p>
+                    </div>
+                </form>
             </div>
 
             <div class="rounded-2xl border border-slate-200 bg-white p-6">
