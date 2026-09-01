@@ -135,7 +135,16 @@ class NoOperationalEndpointsExposedTest extends TestCase
             ->all();
 
         $this->assertSame([
+            'api/v1/admin/appointment-schedule',
+            'api/v1/admin/appointment-schedule/generate',
+            'api/v1/admin/appointment-schedule/{slot}',
+            'api/v1/admin/appointment-schedule/{slot}/activate',
+            'api/v1/admin/appointment-schedule/{slot}/deactivate',
             'api/v1/admin/appointment-slots',
+            'api/v1/admin/appointment-time-windows',
+            'api/v1/admin/appointment-time-windows/{window}',
+            'api/v1/admin/appointment-time-windows/{window}/activate',
+            'api/v1/admin/appointment-time-windows/{window}/deactivate',
             'api/v1/admin/audit-logs',
             'api/v1/admin/audit-logs/{auditLog}',
             'api/v1/admin/auth/login',
@@ -204,6 +213,10 @@ class NoOperationalEndpointsExposedTest extends TestCase
             'api/v1/admin/bookings/{booking}/force-complete',
             'api/v1/admin/bookings/{booking}/reschedule',
             'api/v1/admin/appointment-slots',
+            'api/v1/admin/appointment-schedule',
+            'api/v1/admin/appointment-schedule/generate',
+            'api/v1/admin/appointment-schedule/{slot}',
+            'api/v1/admin/appointment-time-windows',
             'api/v1/admin/technicians',
             'api/v1/admin/booking-items/{bookingItem}/technician-candidates',
             'api/v1/admin/booking-items/{bookingItem}/assign-technician',

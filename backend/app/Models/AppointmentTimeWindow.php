@@ -20,6 +20,8 @@ class AppointmentTimeWindow extends Model
         'code',
         'name',
         'description',
+        'start_time',
+        'end_time',
         'display_order',
         'is_active',
     ];

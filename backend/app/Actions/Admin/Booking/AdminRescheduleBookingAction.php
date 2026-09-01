@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Support\Admin\AdminAuditLogger;
 use App\Support\Booking\BookingStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Checkout\AppointmentSlotOccupancy;
 use App\Support\Technician\TechnicianOverlapChecker;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Http\Request;
@@ -22,16 +23,21 @@ use InvalidArgumentException;
  * Schema finding this Action relies on: `appointment_holds` is keyed by
  * `cart_id` (never `booking_id`), and a CONVERTED hold can never be
  * released - `chk_appointment_holds_final_state` forbids `released_at` and
- * `converted_at` both being non-null. This is not a gap to work around: it
- * means the ORIGINAL slot's capacity is a permanent historical fact (the
- * exact same behavior App\Actions\Booking\CancelBookingAction already
- * accepts - it never releases the original hold on cancellation either), and
- * a reschedule is recorded as a SECOND, independent converted hold for the
- * SAME `cart_id` at the NEW `appointment_slot_id`. Nothing prevents a cart
- * from holding more than one converted hold over time, so this needs no new
- * table - `appointment_holds` (queried by `cart_id`) plus this Action's own
- * `admin_audit_logs` row already form a complete, reconstructable
- * old-slot/new-slot/actor/reason/timestamp history.
+ * `converted_at` both being non-null. `converted_at` itself is therefore a
+ * permanent historical fact (when did this Booking originally occupy this
+ * slot), so a reschedule is recorded as a SECOND, independent converted
+ * hold for the SAME `cart_id` at the NEW `appointment_slot_id`, and the OLD
+ * hold's occupied-capacity claim is retired via `superseded_at` (added by
+ * phase18_appointment_hold_reschedule_schema_migration.sql) rather than
+ * `released_at`. As of BLUE V1 Phase B27, App\Actions\Booking\
+ * CancelBookingAction uses this exact same `superseded_at` signal to
+ * retire a Booking's converted hold on cancellation - this Action was the
+ * original, and remains the reference implementation, for that pattern.
+ * Nothing prevents a cart from holding more than one converted hold over
+ * time, so this needs no new table - `appointment_holds` (queried by
+ * `cart_id`) plus this Action's own `admin_audit_logs` row already form a
+ * complete, reconstructable old-slot/new-slot/actor/reason/timestamp
+ * history.
  *
  * Eligibility: CANCELLED/COMPLETED/IN_PROGRESS are rejected outright (an
  * in-progress job's time cannot retroactively move). PAID/ASSIGNED are
@@ -113,13 +119,8 @@ final class AdminRescheduleBookingAction
                 return $this->unprocessable('This appointment slot has already passed.');
             }
 
-            $occupied = DB::table('appointment_holds')
+            $occupied = AppointmentSlotOccupancy::query($now)
                 ->where('appointment_slot_id', $newSlotIdBinary)
-                ->whereNull('released_at')
-                ->whereNull('superseded_at')
-                ->where(function ($query) use ($now) {
-                    $query->whereNotNull('converted_at')->orWhere('expires_at', '>', $now);
-                })
                 ->lockForUpdate()
                 ->count();
 

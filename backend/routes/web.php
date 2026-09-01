@@ -24,6 +24,14 @@ Route::prefix('admin')->name('admin.')->group(function () {
         return view('admin.bookings.show', ['bookingUuid' => $booking]);
     })->name('bookings.show');
 
+    // BLUE V1 Phase B27 - Appointment Schedule Management shell route. Same
+    // "empty Blade shell, all data/authorization from the API client-side"
+    // convention as every other module in this file. One workspace covers
+    // both dated slots (day view) and reusable Time Window templates (a
+    // tab within the same page) - no separate page for each, per BLUE
+    // V1's "keep navigation simple" guidance.
+    Route::view('/appointment-schedule', 'admin.appointment-schedule.index')->name('appointment-schedule.index');
+
     // BLUE V1 Phase B3 - Technicians shell route. Same "empty Blade shell,
     // all data/authorization from the API client-side" convention as above.
     Route::view('/technicians', 'admin.technicians.index')->name('technicians.index');

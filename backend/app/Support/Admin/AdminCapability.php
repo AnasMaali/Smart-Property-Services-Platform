@@ -72,6 +72,34 @@ enum AdminCapability: string
      */
     case BOOKINGS_RESCHEDULE = 'bookings.reschedule';
 
+    /**
+     * BLUE V1 Phase B27 (Appointment Schedule Management). Read-only
+     * visibility into `appointment_time_windows` templates and dated
+     * `appointment_slots` - capacity, occupied/remaining counts, the
+     * Bookings occupying a slot, and safe (non-identifying) active-hold
+     * visibility. Deliberately distinct from `bookings.view`: this is
+     * about the schedule itself, not any one Booking.
+     */
+    case APPOINTMENTS_VIEW = 'appointments.view';
+
+    /**
+     * BLUE V1 Phase B27 (Appointment Schedule Management). Covers every
+     * schedule-shaping mutation: creating/editing/activating/deactivating
+     * `appointment_time_windows` templates, generating dated
+     * `appointment_slots` from them for a date range, and editing a dated
+     * slot's capacity/active-status/internal note. Deliberately NOT
+     * `bookings.reschedule` - that capability only ever moves ONE existing
+     * Booking to a different already-existing slot; this one changes
+     * global customer-facing availability for every future customer. No
+     * `admin.stepup`: every mutation here is reversible (deactivate, not
+     * delete; capacity can be raised back; a closed slot can reopen) and
+     * never touches payment, pricing, or a specific customer's Booking,
+     * matching the `services.manage`/`pricing.manage` (non-publish)
+     * precedent rather than the `bookings.force_complete`/
+     * `pricing.publish` one.
+     */
+    case APPOINTMENTS_MANAGE = 'appointments.manage';
+
     case TECHNICIANS_VIEW = 'technicians.view';
     case TECHNICIANS_ASSIGN = 'technicians.assign';
 

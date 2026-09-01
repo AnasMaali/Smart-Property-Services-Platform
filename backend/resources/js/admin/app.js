@@ -2,6 +2,7 @@ import './auth/login';
 import './auth/restore';
 import './auth/logout';
 import './dashboard/index';
+import './appointment-schedule/index';
 import './bookings/index';
 import './bookings/show';
 import './technicians/index';

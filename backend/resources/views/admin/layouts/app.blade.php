@@ -84,6 +84,14 @@
                 </a>
 
                 <a
+                    href="/admin/appointment-schedule"
+                    class="block rounded-lg px-3 py-2.5 text-sm
+                           hover:bg-slate-900 hover:text-white
+                           {{ request()->is('admin/appointment-schedule*') ? 'bg-slate-900 text-white' : 'text-slate-400' }}">
+                    Appointment Schedule
+                </a>
+
+                <a
                     href="/admin/technicians"
                     class="block rounded-lg px-3 py-2.5 text-sm
                            hover:bg-slate-900 hover:text-white
