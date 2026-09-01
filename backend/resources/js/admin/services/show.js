@@ -16,7 +16,7 @@
 
 import { request, ApiError } from '../lib/api-client.js';
 import { adminAuthReady } from '../auth/restore.js';
-import { formatDateTime } from '../lib/format.js';
+import { formatDateTime, statusLabel } from '../lib/format.js';
 import { openToggleActiveModal } from './toggle-active.js';
 
 const OPTION_TYPES = [
@@ -395,7 +395,7 @@ if (page) {
 
             const statusBadge = document.createElement('span');
             statusBadge.className = 'rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600';
-            statusBadge.textContent = version.status;
+            statusBadge.textContent = statusLabel(version.status);
 
             item.append(label, statusBadge);
             container.appendChild(item);

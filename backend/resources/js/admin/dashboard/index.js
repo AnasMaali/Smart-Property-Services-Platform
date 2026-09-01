@@ -116,7 +116,7 @@ if (page) {
             title: 'Payments requiring reconciliation',
             item: (item) => ({
                 primary: item.checkout_reference,
-                secondary: `${item.requested_amount} ${item.currency_code}`,
+                secondary: formatMoney(item.requested_amount, { code: item.currency_code, decimal_places: 2 }),
                 href: `/admin/payments/${encodeURIComponent(item.payment_uuid)}`,
             }),
         },

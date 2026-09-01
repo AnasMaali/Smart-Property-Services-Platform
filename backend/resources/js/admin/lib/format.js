@@ -73,6 +73,28 @@ export function statusBadgeClasses(code) {
     return STATUS_BADGE_CLASSES[code] || DEFAULT_STATUS_BADGE_CLASSES;
 }
 
+const HTML_ESCAPES = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+};
+
+/**
+ * Escapes free-text values (customer names, refund reasons, provider
+ * references, etc.) before they're interpolated into an innerHTML template
+ * string, since those values originate from customer/provider input rather
+ * than a fixed server-side vocabulary.
+ */
+export function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    return String(value).replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
 export function statusLabel(code) {
     if (!code) {
         return '—';

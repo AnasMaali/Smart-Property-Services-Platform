@@ -6,7 +6,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
-import { formatMoney, formatDateTime, statusLabel, statusBadgeClasses } from '../lib/format.js';
+import { formatMoney, formatDateTime, statusLabel, statusBadgeClasses, escapeHtml } from '../lib/format.js';
 import { adminAuthReady } from '../auth/restore.js';
 import { wireDateRangeToggle, paramsFromForm, applyParamsToForm } from '../lib/report-filters.js';
 import { downloadReportFile } from '../lib/download.js';
@@ -54,11 +54,11 @@ if (page) {
         tr.className = 'hover:bg-slate-50';
         tr.innerHTML = `
             <td class="px-5 py-3.5 text-slate-500">${formatDateTime(row.requested_at)}</td>
-            <td class="px-5 py-3.5 font-medium text-slate-900">${row.booking_number || '—'}</td>
-            <td class="px-5 py-3.5 text-slate-500">${row.original_payment_reference || '—'}</td>
+            <td class="px-5 py-3.5 font-medium text-slate-900">${escapeHtml(row.booking_number) || '—'}</td>
+            <td class="px-5 py-3.5 text-slate-500">${escapeHtml(row.original_payment_reference) || '—'}</td>
             <td class="px-5 py-3.5 font-medium text-slate-900">${formatMoney(row.amount, { code: row.currency_code, decimal_places: 2 })}</td>
             <td class="px-5 py-3.5"><span class="rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClasses(row.status)}">${statusLabel(row.status)}</span></td>
-            <td class="px-5 py-3.5 text-slate-500">${row.reason || '—'}</td>
+            <td class="px-5 py-3.5 text-slate-500">${escapeHtml(row.reason) || '—'}</td>
         `;
 
         return tr;

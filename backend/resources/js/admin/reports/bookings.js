@@ -6,7 +6,7 @@
  */
 
 import { request, ApiError } from '../lib/api-client.js';
-import { formatMoney, formatDateTime, statusLabel } from '../lib/format.js';
+import { formatMoney, formatDateTime, statusLabel, escapeHtml } from '../lib/format.js';
 import { adminAuthReady } from '../auth/restore.js';
 import { wireDateRangeToggle, paramsFromForm, applyParamsToForm } from '../lib/report-filters.js';
 import { downloadReportFile } from '../lib/download.js';
@@ -53,12 +53,12 @@ if (page) {
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-50';
         tr.innerHTML = `
-            <td class="px-5 py-3.5 font-medium text-slate-900">${row.booking_number}</td>
-            <td class="px-5 py-3.5 text-slate-700">${row.customer_name || '—'}</td>
+            <td class="px-5 py-3.5 font-medium text-slate-900">${escapeHtml(row.booking_number)}</td>
+            <td class="px-5 py-3.5 text-slate-700">${escapeHtml(row.customer_name) || '—'}</td>
             <td class="px-5 py-3.5">${statusLabel(row.status)}</td>
-            <td class="px-5 py-3.5 text-slate-500">${row.services || '—'}</td>
+            <td class="px-5 py-3.5 text-slate-500">${escapeHtml(row.services) || '—'}</td>
             <td class="px-5 py-3.5 text-slate-500">${formatDateTime(row.appointment_at)}</td>
-            <td class="px-5 py-3.5 text-slate-500">${row.payment_method || 'Contract'}</td>
+            <td class="px-5 py-3.5 text-slate-500">${escapeHtml(row.payment_method) || 'Contract'}</td>
             <td class="px-5 py-3.5 font-medium text-slate-900">${formatMoney(row.total, { code: row.currency_code, decimal_places: 2 })}</td>
         `;
 
