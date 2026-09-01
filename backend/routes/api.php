@@ -1,5 +1,16 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\ActivateAdminAppointmentScheduleSlotController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\ActivateAdminAppointmentTimeWindowController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\CreateAdminAppointmentTimeWindowController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\DeactivateAdminAppointmentScheduleSlotController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\DeactivateAdminAppointmentTimeWindowController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\GenerateAdminAppointmentScheduleController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\GetAdminAppointmentScheduleController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\GetAdminAppointmentScheduleSlotController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\ListAdminAppointmentTimeWindowsController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\UpdateAdminAppointmentScheduleSlotController;
+use App\Http\Controllers\Api\V1\Admin\AppointmentSchedule\UpdateAdminAppointmentTimeWindowController;
 use App\Http\Controllers\Api\V1\Admin\Audit\GetAdminAuditLogController;
 use App\Http\Controllers\Api\V1\Admin\Audit\ListAdminAuditLogsController;
 use App\Http\Controllers\Api\V1\Admin\Auth\AdminLoginController;
@@ -466,6 +477,43 @@ Route::middleware('auth.admin')->group(function () {
         ->middleware(AdminCapability::BOOKINGS_RESCHEDULE->middleware());
     Route::post('/v1/admin/bookings/{booking}/reschedule', RescheduleAdminBookingController::class)
         ->middleware(AdminCapability::BOOKINGS_RESCHEDULE->middleware());
+
+    // BLUE V1 Phase B27 - Appointment Schedule Management. Deliberately
+    // NOT `/v1/admin/appointment-slots` - that path is already the
+    // reschedule picker above (bookable-only, no `?date=`, gated by
+    // `bookings.reschedule`), and query strings do not change Laravel
+    // route matching, so reusing it would collide. `appointments.view`/
+    // `appointments.manage` are a distinct capability from
+    // `bookings.reschedule` on purpose - see App\Support\Admin\
+    // AdminCapability::APPOINTMENTS_MANAGE's docblock: this changes GLOBAL
+    // customer-facing availability, never just one Booking. No
+    // admin.stepup anywhere in this group - every mutation here is
+    // reversible (deactivate, not delete; capacity can be raised back; a
+    // closed slot can reopen) and never touches payment, pricing, or a
+    // specific customer's Booking.
+    Route::get('/v1/admin/appointment-time-windows', ListAdminAppointmentTimeWindowsController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_VIEW->middleware());
+    Route::post('/v1/admin/appointment-time-windows', CreateAdminAppointmentTimeWindowController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::patch('/v1/admin/appointment-time-windows/{window}', UpdateAdminAppointmentTimeWindowController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::post('/v1/admin/appointment-time-windows/{window}/activate', ActivateAdminAppointmentTimeWindowController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::post('/v1/admin/appointment-time-windows/{window}/deactivate', DeactivateAdminAppointmentTimeWindowController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+
+    Route::get('/v1/admin/appointment-schedule', GetAdminAppointmentScheduleController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_VIEW->middleware());
+    Route::post('/v1/admin/appointment-schedule/generate', GenerateAdminAppointmentScheduleController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::get('/v1/admin/appointment-schedule/{slot}', GetAdminAppointmentScheduleSlotController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_VIEW->middleware());
+    Route::patch('/v1/admin/appointment-schedule/{slot}', UpdateAdminAppointmentScheduleSlotController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::post('/v1/admin/appointment-schedule/{slot}/activate', ActivateAdminAppointmentScheduleSlotController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
+    Route::post('/v1/admin/appointment-schedule/{slot}/deactivate', DeactivateAdminAppointmentScheduleSlotController::class)
+        ->middleware(AdminCapability::APPOINTMENTS_MANAGE->middleware());
 
     Route::get('/v1/admin/technicians', ListAdminTechniciansController::class)
         ->middleware(AdminCapability::TECHNICIANS_VIEW->middleware());

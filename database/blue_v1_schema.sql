@@ -264,6 +264,8 @@ CREATE TABLE `appointment_time_windows` (
   `code` varchar(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `start_time` time NOT NULL DEFAULT '00:00:00',
+  `end_time` time NOT NULL DEFAULT '01:00:00',
   `display_order` smallint unsigned NOT NULL DEFAULT '0',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -274,7 +276,8 @@ CREATE TABLE `appointment_time_windows` (
   CONSTRAINT `chk_appointment_time_windows_active` CHECK ((`is_active` in (0,1))),
   CONSTRAINT `chk_appointment_time_windows_code` CHECK ((char_length(trim(`code`)) between 2 and 60)),
   CONSTRAINT `chk_appointment_time_windows_description` CHECK (((`description` is null) or (char_length(trim(`description`)) > 0))),
-  CONSTRAINT `chk_appointment_time_windows_name` CHECK ((char_length(trim(`name`)) between 2 and 120))
+  CONSTRAINT `chk_appointment_time_windows_name` CHECK ((char_length(trim(`name`)) between 2 and 120)),
+  CONSTRAINT `chk_appointment_time_windows_period` CHECK ((`start_time` < `end_time`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

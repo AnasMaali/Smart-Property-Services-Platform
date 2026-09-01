@@ -7,6 +7,7 @@ use App\Models\Cart;
 use App\Models\User;
 use App\Support\Cart\CartStatuses;
 use App\Support\Cart\Concerns\BuildsCartResult;
+use App\Support\Checkout\AppointmentSlotOccupancy;
 use App\Support\Checkout\CheckoutPresenter;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
@@ -81,14 +82,9 @@ class CreateAppointmentHoldAction
                 return $this->unprocessable('This appointment slot has already passed.');
             }
 
-            $occupied = DB::table('appointment_holds')
+            $occupied = AppointmentSlotOccupancy::query($now)
                 ->where('appointment_slot_id', $slotIdBinary)
                 ->where('cart_id', '!=', $cartIdBinary)
-                ->whereNull('released_at')
-                ->whereNull('superseded_at')
-                ->where(function ($query) use ($now) {
-                    $query->whereNotNull('converted_at')->orWhere('expires_at', '>', $now);
-                })
                 ->lockForUpdate()
                 ->count();
 

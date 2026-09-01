@@ -1,21 +1,21 @@
 <?php
 
-namespace App\Http\Controllers\Api\V1\Checkout;
+namespace App\Http\Controllers\Api\V1\Admin\AppointmentSchedule;
 
-use App\Actions\Checkout\GetAppointmentSlotsAction;
+use App\Actions\Admin\AppointmentSchedule\AdminDeactivateAppointmentTimeWindowAction;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-class GetAppointmentSlotsController extends Controller
+class DeactivateAdminAppointmentTimeWindowController extends Controller
 {
-    public function __invoke(Request $request, GetAppointmentSlotsAction $action): JsonResponse
+    public function __invoke(Request $request, AdminDeactivateAppointmentTimeWindowAction $action, string $window): JsonResponse
     {
         /** @var User $authUser */
         $authUser = $request->attributes->get('auth_user');
 
-        $result = $action->handle($authUser->id, $request->filled('date') ? $request->string('date')->toString() : null);
+        $result = $action->handle($request, $window, $authUser);
 
         return response()->json([
             'success' => $result['success'],

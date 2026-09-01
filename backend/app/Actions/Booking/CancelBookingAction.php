@@ -46,6 +46,15 @@ final class CancelBookingAction
      * - cancels the parent Booking
      * - cancels every non-terminal Booking Item
      * - releases active Technician assignments
+     * - (BLUE V1 Phase B27) supersedes this Booking's converted
+     *   `appointment_holds` row, so its slot's occupied capacity count
+     *   drops by one - `converted_at` is never touched (a permanent
+     *   historical record of when this Booking originally occupied the
+     *   slot); only `superseded_at` is set, mirroring the exact signal
+     *   App\Actions\Admin\Booking\AdminRescheduleBookingAction already
+     *   uses to free a slot a Booking moved away from. A standalone refund
+     *   with no Booking cancellation never reaches this code and never
+     *   releases capacity on its own
      * - calculates the refund policy result exactly ONCE, at the first
      *   real cancellation, and persists it as a historical snapshot
      *   (`bookings.cancellation_refund_percentage` /
@@ -342,6 +351,32 @@ final class CancelBookingAction
                     'reason' => $reason,
                     'changed_at' => $now->format('Y-m-d H:i:s.u'),
                 ]);
+
+                // BLUE V1 Phase B27 - retire this Booking's converted
+                // appointment_holds row from its slot's occupied-capacity
+                // count, using the exact same superseded_at signal
+                // App\Actions\Admin\Booking\AdminRescheduleBookingAction
+                // already uses to free a slot a Booking moved away from
+                // (see that Action's docblock and
+                // phase18_appointment_hold_reschedule_schema_migration.sql).
+                // converted_at is never touched - the hold remains a
+                // permanent, untouched historical record of when this
+                // Booking originally occupied this slot; only the "is this
+                // still occupying capacity" fact changes. Guarded by
+                // whereNull('superseded_at') so a retried cancellation (an
+                // idempotent replay never reaches this branch at all, since
+                // it's inside `if ($currentStatus !== 'CANCELLED')`) can
+                // never double-write or error. A refund alone - with no
+                // Booking cancellation - never reaches this code path, so
+                // capacity is never released by money movement alone (see
+                // App\Actions\Payment\ExecuteBookingRefundAction, which has
+                // no appointment_holds reference at all).
+                DB::table('appointment_holds')
+                    ->where('cart_id', $booking->cart_id)
+                    ->where('appointment_slot_id', $booking->appointment_slot_id)
+                    ->whereNotNull('converted_at')
+                    ->whereNull('superseded_at')
+                    ->update(['superseded_at' => $now->format('Y-m-d H:i:s.u'), 'updated_at' => $now->format('Y-m-d H:i:s.u')]);
 
                 // BLUE V1 Phase B24 - a PAY_ON_SITE Booking whose cash was
                 // ALREADY collected before this cancellation is never given

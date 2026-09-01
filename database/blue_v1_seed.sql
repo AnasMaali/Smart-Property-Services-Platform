@@ -147,6 +147,18 @@ VALUES
     TRUE
 ),
 (
+    'appointments.view',
+    'View Appointment Schedule',
+    'View appointment_time_windows templates and dated appointment_slots, including capacity, occupied/remaining counts, and safe (non-identifying) active-hold visibility. Read-only.',
+    TRUE
+),
+(
+    'appointments.manage',
+    'Manage Appointment Schedule',
+    'Manage appointment time windows and dated slots, including schedule generation, capacity, active status, and internal notes. This controls global customer-facing appointment availability and is distinct from rescheduling a single Booking.',
+    TRUE
+),
+(
     'technicians.view',
     'View Technicians',
     'View Technician records, availability, specializations, and the server-computed eligible-candidate list for a Booking Item.',
@@ -300,6 +312,8 @@ WHERE r.code = 'ADMIN'
     'bookings.cancel',
     'bookings.force_complete',
     'bookings.reschedule',
+    'appointments.view',
+    'appointments.manage',
     'technicians.view',
     'technicians.assign',
     'technicians.manage',
@@ -2652,6 +2666,94 @@ ON DUPLICATE KEY UPDATE
     description = new.description,
     display_order = new.display_order,
     is_active = new.is_active;
+
+
+-- =============================================================
+-- 33. APPOINTMENT TIME WINDOWS — BLUE V1 Phase B27
+--
+-- The six authoritative daily booking windows (see
+-- database/phase27_appointment_time_window_clock_times_migration.sql for
+-- the start_time/end_time columns this section relies on). Business
+-- reference data, not customer/booking data - Admin may later edit these
+-- through App\Actions\Admin\AppointmentSchedule\
+-- AdminUpdateAppointmentTimeWindowAction (appointments.manage), exactly
+-- like Service Categories (section 26) already are. Re-running this block
+-- is idempotent and never overwrites an Admin's own later edit to
+-- is_active - only name/description/start_time/end_time/display_order are
+-- refreshed, matching every other ON DUPLICATE KEY UPDATE block in this
+-- file that excludes is_active once an Admin can toggle it independently.
+-- =============================================================
+
+INSERT INTO appointment_time_windows (
+    code,
+    name,
+    description,
+    start_time,
+    end_time,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'W_0900_1100',
+    '09:00 - 11:00',
+    'Morning window, 09:00 to 11:00.',
+    '09:00:00',
+    '11:00:00',
+    1,
+    TRUE
+),
+(
+    'W_1100_1300',
+    '11:00 - 13:00',
+    'Late morning window, 11:00 to 13:00.',
+    '11:00:00',
+    '13:00:00',
+    2,
+    TRUE
+),
+(
+    'W_1300_1500',
+    '13:00 - 15:00',
+    'Early afternoon window, 13:00 to 15:00.',
+    '13:00:00',
+    '15:00:00',
+    3,
+    TRUE
+),
+(
+    'W_1500_1700',
+    '15:00 - 17:00',
+    'Afternoon window, 15:00 to 17:00.',
+    '15:00:00',
+    '17:00:00',
+    4,
+    TRUE
+),
+(
+    'W_1700_1900',
+    '17:00 - 19:00',
+    'Early evening window, 17:00 to 19:00.',
+    '17:00:00',
+    '19:00:00',
+    5,
+    TRUE
+),
+(
+    'W_1900_2100',
+    '19:00 - 21:00',
+    'Evening window, 19:00 to 21:00.',
+    '19:00:00',
+    '21:00:00',
+    6,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    start_time = new.start_time,
+    end_time = new.end_time,
+    display_order = new.display_order;
 
 
 -- =============================================================
