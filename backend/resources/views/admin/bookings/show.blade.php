@@ -131,6 +131,125 @@
             </div>
         </div>
 
+        <div data-completion-report-card style="display: none;" class="rounded-2xl border border-blue-200 bg-blue-50/40 p-6">
+            <h3 class="text-sm font-semibold text-slate-900">Service Completion Report</h3>
+            <p class="mt-1 text-sm leading-6 text-slate-600">
+                Create a professional completion report for this customer. Before/after photos are
+                optional and are used only to generate this report - they are not permanently stored
+                by BLUE.
+            </p>
+
+            <div data-completion-report-error class="mt-4 hidden rounded-xl border border-red-200
+                        bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+
+            <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                        Before photos (optional, up to 8)
+                    </label>
+                    <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        data-completion-report-before-input
+                        class="hidden">
+                    <button
+                        type="button"
+                        data-completion-report-before-open
+                        class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs
+                               font-semibold text-slate-700 hover:bg-slate-50">
+                        Add photos
+                    </button>
+                    <p data-completion-report-before-summary class="mt-1.5 text-xs text-slate-500">
+                        No photos selected.
+                    </p>
+                </div>
+                <div>
+                    <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                        After photos (optional, up to 8)
+                    </label>
+                    <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        data-completion-report-after-input
+                        class="hidden">
+                    <button
+                        type="button"
+                        data-completion-report-after-open
+                        class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs
+                               font-semibold text-slate-700 hover:bg-slate-50">
+                        Add photos
+                    </button>
+                    <p data-completion-report-after-summary class="mt-1.5 text-xs text-slate-500">
+                        No photos selected.
+                    </p>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">
+                    Completion note (optional)
+                </label>
+                <textarea
+                    data-completion-report-note
+                    rows="3"
+                    maxlength="2000"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+                           text-sm text-slate-900 outline-none focus:border-blue-500
+                           focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                    type="button"
+                    data-completion-report-generate
+                    class="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white
+                           transition hover:bg-blue-800 disabled:cursor-not-allowed
+                           disabled:opacity-60">
+                    Generate Report
+                </button>
+                <span data-completion-report-status class="text-xs text-slate-500"></span>
+            </div>
+
+            <div data-completion-report-actions style="display: none;" class="mt-4 flex flex-wrap
+                        gap-3 border-t border-blue-200 pt-4">
+                <button
+                    type="button"
+                    data-completion-report-preview
+                    class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs
+                           font-semibold text-slate-700 hover:bg-slate-50">
+                    Preview PDF
+                </button>
+                <button
+                    type="button"
+                    data-completion-report-share
+                    style="display: none;"
+                    class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs
+                           font-semibold text-slate-700 hover:bg-slate-50">
+                    Share Report
+                </button>
+                <button
+                    type="button"
+                    data-completion-report-download
+                    class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs
+                           font-semibold text-slate-700 hover:bg-slate-50">
+                    Download PDF
+                </button>
+                <a
+                    href="#"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-completion-report-whatsapp
+                    style="display: none;"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-emerald-200
+                           bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700
+                           hover:bg-emerald-100">
+                    Open Customer WhatsApp
+                </a>
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
             <div class="rounded-2xl border border-slate-200 bg-white p-6">

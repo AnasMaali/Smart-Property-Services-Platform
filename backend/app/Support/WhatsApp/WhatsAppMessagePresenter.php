@@ -133,6 +133,36 @@ final class WhatsAppMessagePresenter
     }
 
     /**
+     * Service Completion Report handoff (BLUE V1 Service Completion Report) -
+     * the Admin has already generated the PDF and downloaded/shared it
+     * through the device's native share sheet or a manual attach; this
+     * message text never claims the report was sent or received, and never
+     * carries financial figures - the customer sees those inside the
+     * attached PDF itself, not in a WhatsApp message an Admin could
+     * forward without the attachment.
+     *
+     * @param  array{customer_name: string, booking_number: string, has_photos: bool}  $fields
+     */
+    public static function completionReportReady(array $fields): string
+    {
+        $photoLine = $fields['has_photos']
+            ? 'Your Service Completion Report is ready and includes the service details and before/after photos.'
+            : 'Your Service Completion Report is ready and includes the service details.';
+
+        return implode("\n", [
+            "Hello {$fields['customer_name']},",
+            '',
+            "Your BLUE service for booking {$fields['booking_number']} has been completed.",
+            '',
+            $photoLine,
+            '',
+            'Please find the report attached.',
+            '',
+            'Thank you for choosing BLUE.',
+        ]);
+    }
+
+    /**
      * @param  array<string, string|null>  $fields
      */
     private static function customerMessage(array $fields, string $intro, bool $includeThanks): string

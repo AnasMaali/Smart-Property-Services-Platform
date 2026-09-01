@@ -47,3 +47,44 @@ export async function downloadReportFile(path, fallbackFilename) {
     link.remove();
     URL.revokeObjectURL(objectUrl);
 }
+
+/**
+ * Sibling of downloadReportFile() above for the one case a report is a POST
+ * with a request body (BLUE V1 Service Completion Report - optional Before/
+ * After photos and a completion note as multipart form data) rather than a
+ * simple GET: returns the Blob and response headers to the caller instead
+ * of immediately triggering a browser download, since that page keeps the
+ * generated PDF in memory for Preview/Share/Download/WhatsApp rather than
+ * downloading it right away - see resources/js/admin/bookings/show.js.
+ *
+ * @returns {Promise<{blob: Blob, filename: string, headers: Headers}>}
+ */
+export async function postForBlob(path, formData, fallbackFilename) {
+    const token = getAccessToken();
+
+    const response = await fetch(path, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+    });
+
+    if (!response.ok) {
+        let message = 'Unable to generate the report. Please try again.';
+
+        try {
+            const payload = await response.json();
+            message = payload.message || message;
+        } catch {
+            // Response body was not JSON - keep the default message.
+        }
+
+        throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : fallbackFilename;
+
+    return { blob, filename, headers: response.headers };
+}

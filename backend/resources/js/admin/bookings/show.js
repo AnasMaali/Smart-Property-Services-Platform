@@ -21,6 +21,7 @@ import { request, ApiError } from '../lib/api-client.js';
 import { adminAuthReady } from '../auth/restore.js';
 import { statusBadgeClasses, statusLabel, formatDateTime, formatMoney } from '../lib/format.js';
 import { attachTechnicianActions, openConfirmAction } from '../technicians/booking-item-actions.js';
+import { postForBlob } from '../lib/download.js';
 
 function formatDateOnly(iso) {
     if (!iso) {
@@ -103,6 +104,7 @@ if (page) {
     const collectOnSitePaymentButton = page.querySelector('[data-collect-on-site-payment-open]');
     const rescheduleButton = page.querySelector('[data-reschedule-booking-open]');
     const rescheduleModal = document.querySelector('[data-reschedule-booking-modal]');
+    const completionReportCard = page.querySelector('[data-completion-report-card]');
 
     let currentBooking = null;
 
@@ -690,6 +692,10 @@ if (page) {
             rescheduleButton.style.display = isNonTerminal && booking.status !== 'IN_PROGRESS' ? 'inline-flex' : 'none';
         }
 
+        if (completionReportCard) {
+            completionReportCard.style.display = booking.status === 'COMPLETED' ? 'block' : 'none';
+        }
+
         setText('items_count', String(booking.items.length));
         setText('total', formatMoney(booking.total, booking.currency));
 
@@ -1045,6 +1051,165 @@ if (page) {
 
     if (rescheduleButton) {
         rescheduleButton.addEventListener('click', openRescheduleModal);
+    }
+
+    // -----------------------------------------------------------------
+    // Service Completion Report - generates a customer-facing PDF for a
+    // COMPLETED Booking (POST /v1/admin/bookings/{booking}/completion-report,
+    // App\Actions\Admin\Booking\GenerateAdminBookingCompletionReportAction).
+    // Before/After photos never leave this page as anything other than a
+    // multipart upload for the duration of this one request - nothing here
+    // stores them, and the server itself never persists them either (see
+    // that Action's own docblock). The generated PDF Blob/File is kept only
+    // in this page's memory (never re-uploaded to BLUE); Preview/Download/
+    // Share all read from that same in-memory File, and changing any input
+    // afterward discards it, forcing a fresh Generate before Share/Preview/
+    // Download can be used again - a stale report must never be handed to a
+    // customer as if it reflected the current form state.
+    // -----------------------------------------------------------------
+
+    if (completionReportCard) {
+        const beforeInput = completionReportCard.querySelector('[data-completion-report-before-input]');
+        const beforeOpenButton = completionReportCard.querySelector('[data-completion-report-before-open]');
+        const beforeSummary = completionReportCard.querySelector('[data-completion-report-before-summary]');
+        const afterInput = completionReportCard.querySelector('[data-completion-report-after-input]');
+        const afterOpenButton = completionReportCard.querySelector('[data-completion-report-after-open]');
+        const afterSummary = completionReportCard.querySelector('[data-completion-report-after-summary]');
+        const noteField = completionReportCard.querySelector('[data-completion-report-note]');
+        const generateButton = completionReportCard.querySelector('[data-completion-report-generate]');
+        const statusEl = completionReportCard.querySelector('[data-completion-report-status]');
+        const errorEl = completionReportCard.querySelector('[data-completion-report-error]');
+        const actionsRow = completionReportCard.querySelector('[data-completion-report-actions]');
+        const previewButton = completionReportCard.querySelector('[data-completion-report-preview]');
+        const shareButton = completionReportCard.querySelector('[data-completion-report-share]');
+        const downloadButton = completionReportCard.querySelector('[data-completion-report-download]');
+        const whatsappLink = completionReportCard.querySelector('[data-completion-report-whatsapp]');
+
+        let generatedFile = null;
+        let generatedObjectUrl = null;
+
+        function summarizeFiles(files) {
+            if (files.length === 0) {
+                return 'No photos selected.';
+            }
+
+            const names = files.map((file) => file.name).join(', ');
+
+            return `${files.length} photo${files.length === 1 ? '' : 's'} selected: ${names}`;
+        }
+
+        function invalidateGeneratedReport() {
+            if (generatedObjectUrl) {
+                URL.revokeObjectURL(generatedObjectUrl);
+            }
+
+            generatedFile = null;
+            generatedObjectUrl = null;
+            actionsRow.style.display = 'none';
+            whatsappLink.style.display = 'none';
+            whatsappLink.removeAttribute('href');
+        }
+
+        function bindPhotoPicker(openButton, input, summaryEl) {
+            openButton.addEventListener('click', () => input.click());
+            input.addEventListener('change', () => {
+                summaryEl.textContent = summarizeFiles(Array.from(input.files));
+                invalidateGeneratedReport();
+            });
+        }
+
+        bindPhotoPicker(beforeOpenButton, beforeInput, beforeSummary);
+        bindPhotoPicker(afterOpenButton, afterInput, afterSummary);
+        noteField.addEventListener('input', invalidateGeneratedReport);
+
+        generateButton.addEventListener('click', async () => {
+            hideModalError(errorEl);
+            generateButton.disabled = true;
+            statusEl.textContent = 'Generating report…';
+            invalidateGeneratedReport();
+
+            const formData = new FormData();
+
+            if (noteField.value.trim() !== '') {
+                formData.set('completion_note', noteField.value.trim());
+            }
+
+            Array.from(beforeInput.files).forEach((file) => formData.append('before_photos[]', file));
+            Array.from(afterInput.files).forEach((file) => formData.append('after_photos[]', file));
+
+            try {
+                const { blob, filename, headers } = await postForBlob(
+                    `/api/v1/admin/bookings/${encodeURIComponent(bookingUuid)}/completion-report`,
+                    formData,
+                    `BLUE-Service-Report-${currentBooking?.booking_number ?? bookingUuid}.pdf`,
+                );
+
+                generatedFile = new File([blob], filename, { type: 'application/pdf' });
+                generatedObjectUrl = URL.createObjectURL(blob);
+
+                const whatsappUrl = headers.get('X-Report-Whatsapp-Url');
+
+                if (whatsappUrl) {
+                    whatsappLink.href = whatsappUrl;
+                    whatsappLink.style.display = 'inline-flex';
+                } else {
+                    whatsappLink.style.display = 'none';
+                    whatsappLink.removeAttribute('href');
+                }
+
+                shareButton.style.display = (
+                    typeof navigator.canShare === 'function' && navigator.canShare({ files: [generatedFile] })
+                ) ? 'inline-flex' : 'none';
+
+                actionsRow.style.display = 'flex';
+                statusEl.textContent = 'Report generated.';
+            } catch (error) {
+                showModalError(errorEl, modalErrorMessage(error, 'Unable to generate the Service Completion Report.'));
+                statusEl.textContent = '';
+            } finally {
+                generateButton.disabled = false;
+            }
+        });
+
+        previewButton.addEventListener('click', () => {
+            if (generatedObjectUrl) {
+                window.open(generatedObjectUrl, '_blank', 'noopener,noreferrer');
+            }
+        });
+
+        downloadButton.addEventListener('click', () => {
+            if (!generatedObjectUrl || !generatedFile) {
+                return;
+            }
+
+            const link = document.createElement('a');
+            link.href = generatedObjectUrl;
+            link.download = generatedFile.name;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        });
+
+        // A direct user click on THIS button is what triggers navigator.share()
+        // - the Web Share API requires user activation, and the PDF is never
+        // shared automatically right after Generate completes.
+        shareButton.addEventListener('click', async () => {
+            if (!generatedFile) {
+                return;
+            }
+
+            try {
+                await navigator.share({
+                    files: [generatedFile],
+                    title: 'BLUE Service Completion Report',
+                    text: `BLUE Service Completion Report — Booking ${currentBooking?.booking_number ?? ''}`,
+                });
+            } catch {
+                // AbortError (the Admin dismissed the native share sheet) or any
+                // other share failure - never surfaced as an error banner, the
+                // PDF is still available via Preview/Download either way.
+            }
+        });
     }
 
     adminAuthReady().then((ready) => {

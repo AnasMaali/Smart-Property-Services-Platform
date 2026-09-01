@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Admin\Booking\CancelAdminRepairQuoteDraftControl
 use App\Http\Controllers\Api\V1\Admin\Booking\CollectAdminOnSitePaymentController;
 use App\Http\Controllers\Api\V1\Admin\Booking\CreateAdminRepairQuoteController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ForceCompleteAdminBookingController;
+use App\Http\Controllers\Api\V1\Admin\Booking\GenerateAdminBookingCompletionReportController;
 use App\Http\Controllers\Api\V1\Admin\Booking\GetAdminBookingController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Admin\Booking\ListAdminBookingsController;
@@ -387,6 +388,17 @@ Route::middleware('auth.admin')->group(function () {
     Route::get('/v1/admin/bookings', ListAdminBookingsController::class)
         ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
     Route::get('/v1/admin/bookings/{booking}', GetAdminBookingController::class)
+        ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
+    // BLUE V1 Service Completion Report - a read/export workflow, not a
+    // Booking mutation (the only write is an Admin audit row) - so it
+    // reuses `bookings.view`, the same capability that already gates the
+    // Booking detail read above, rather than `bookings.manage`. No
+    // admin.stepup: generating a customer-facing PDF changes no Booking/
+    // payment/quote state. See App\Actions\Admin\Booking\
+    // GenerateAdminBookingCompletionReportAction's docblock for the COMPLETED-
+    // only eligibility rule enforced server-side (never only a hidden
+    // button).
+    Route::post('/v1/admin/bookings/{booking}/completion-report', GenerateAdminBookingCompletionReportController::class)
         ->middleware(AdminCapability::BOOKINGS_VIEW->middleware());
     // BLUE V1 Phase B15 - Edit Booking: operational visit/location fields
     // only (street/address/building/floor/unit/landmark/notes/contact
