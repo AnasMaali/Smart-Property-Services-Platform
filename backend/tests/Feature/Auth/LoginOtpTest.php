@@ -761,24 +761,16 @@ class LoginOtpTest extends TestCase
             ->assertExactJson(['success' => false, 'message' => self::GENERIC_VERIFY_MESSAGE, 'data' => null]);
     }
 
-    // 24. Login OTP cannot verify another OTP purpose (password-reset verify endpoint)
-    public function test_login_otp_cannot_be_used_for_password_reset_verification(): void
+    // 24. Legacy password-reset verify route must stay removed.
+    public function test_password_reset_verify_route_no_longer_exists(): void
     {
         $customer = $this->createEligibleCustomer();
         $this->createLoginOtp($customer['user_uuid'], $customer['phone_number'], '654321');
 
-        $response = $this->postJson('/api/v1/auth/verify-password-reset-otp', [
+        $this->postJson('/api/v1/auth/verify-password-reset-otp', [
             'phone_number' => $customer['phone_number'],
             'otp_code' => '654321',
-        ]);
-
-        $response->assertStatus(422)->assertJson(['success' => false]);
-
-        $loginOtp = DB::table('otp_verifications')
-            ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
-            ->where('purpose_id', $this->purposeId('LOGIN'))
-            ->first();
-        $this->assertSame($this->otpStatusId('PENDING'), (int) $loginOtp->status_id);
+        ])->assertStatus(404);
     }
 
     // 25. account deactivated between OTP request and verification fails safely

@@ -5,12 +5,16 @@ namespace App\Actions\ServiceCatalog;
 use App\Support\Pricing\DefaultCurrency;
 use App\Support\Pricing\PricingEngine;
 use App\Support\Pricing\PricingStatus;
+use App\Support\Pricing\ServiceCapabilities;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 
 class ListCategoryServicesAction
 {
-    public function __construct(private readonly PricingEngine $pricingEngine = new PricingEngine) {}
+    public function __construct(
+        private readonly PricingEngine $pricingEngine = new PricingEngine,
+        private readonly ServiceCapabilities $capabilities = new ServiceCapabilities,
+    ) {}
 
     /**
      * Active services inside one active category, ordered by display_order,
@@ -59,6 +63,8 @@ class ListCategoryServicesAction
             ->get(['service_id', 'storage_key', 'mime_type', 'alt_text', 'caption', 'width_pixels', 'height_pixels'])
             ->keyBy(fn ($row) => bin2hex($row->service_id));
 
+        $capabilitiesByServiceId = $this->capabilities->codesByServiceId($serviceIds);
+
         $currencyCode = DefaultCurrency::code();
         $currency = DB::table('currencies')->where('code', $currencyCode)->first(['code', 'symbol', 'minor_unit']);
 
@@ -66,7 +72,7 @@ class ListCategoryServicesAction
         $pricingPreviewsByServiceUuid = $this->pricingEngine->previewMany($serviceUuids, $currencyCode);
 
         $servicePayloads = $services
-            ->map(function ($service) use ($primaryImagesByServiceId, $pricingPreviewsByServiceUuid, $currency) {
+            ->map(function ($service) use ($primaryImagesByServiceId, $pricingPreviewsByServiceUuid, $currency, $capabilitiesByServiceId) {
                 $key = bin2hex($service->id);
                 $primaryImage = $primaryImagesByServiceId->get($key);
                 $pricingPreview = $pricingPreviewsByServiceUuid[UuidBinary::toString($service->id)];
@@ -77,6 +83,7 @@ class ListCategoryServicesAction
                     'slug' => $service->slug,
                     'name' => $service->name,
                     'short_description' => $service->short_description,
+                    'capabilities' => $capabilitiesByServiceId[$key] ?? [],
                     'primary_image' => $primaryImage === null ? null : [
                         'storage_key' => $primaryImage->storage_key,
                         'mime_type' => $primaryImage->mime_type,

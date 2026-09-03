@@ -458,6 +458,12 @@ VALUES
     'Login',
     'Used to authenticate a customer via passwordless phone + OTP login.',
     TRUE
+),
+(
+    'ACCOUNT_DELETION',
+    'Account Deletion',
+    'Used to confirm account deletion via OTP before erasing customer data.',
+    TRUE
 ) AS new
 ON DUPLICATE KEY UPDATE
     name = new.name,
@@ -1536,6 +1542,77 @@ ON DUPLICATE KEY UPDATE
 
 
 -- =============================================================
+-- 22A. BOOKING ITEM REPAIR QUOTE STATUSES
+-- Lookup for booking_item_repair_quotes.status_id (BLUE V1 Phase 29).
+-- Copied from the production catalog; not invented.
+-- =============================================================
+
+INSERT INTO booking_item_repair_quote_statuses (
+    code,
+    name,
+    description,
+    is_terminal,
+    display_order,
+    is_active
+)
+VALUES
+(
+    'DRAFT',
+    'Draft',
+    'The quote is being prepared by an Admin and is not yet visible to the customer. Amounts may still be edited.',
+    FALSE,
+    1,
+    TRUE
+),
+(
+    'SENT',
+    'Sent',
+    'The quote has been sent to the customer. Its amounts are now immutable - a correction requires a new revision.',
+    FALSE,
+    2,
+    TRUE
+),
+(
+    'ACCEPTED',
+    'Accepted',
+    'The customer accepted the quote. The remaining balance (if any) is now payable.',
+    FALSE,
+    3,
+    TRUE
+),
+(
+    'DECLINED',
+    'Declined',
+    'The customer declined the quote.',
+    TRUE,
+    4,
+    TRUE
+),
+(
+    'EXPIRED',
+    'Expired',
+    'The quote was not acted on before it expired.',
+    TRUE,
+    5,
+    TRUE
+),
+(
+    'CANCELLED',
+    'Cancelled',
+    'The quote was cancelled by an Admin (as a draft withdrawal, or because a revision superseded it).',
+    TRUE,
+    6,
+    TRUE
+) AS new
+ON DUPLICATE KEY UPDATE
+    name = new.name,
+    description = new.description,
+    is_terminal = new.is_terminal,
+    display_order = new.display_order,
+    is_active = new.is_active;
+
+
+-- =============================================================
 -- 23. PAYMENT STATUSES
 -- =============================================================
 
@@ -2181,6 +2258,10 @@ ON DUPLICATE KEY UPDATE
     name = new.name,
     description = new.description,
     is_active = new.is_active;
+
+-- Per-service SUBSCRIPTION rows live in service_capabilities and are
+-- applied by database/phase20_subscription_capabilities_migration.sql
+-- once catalog services exist (this seed file does not insert services).
 
 
 -- =============================================================

@@ -38,11 +38,10 @@ function errorMessage(error, fallback) {
 }
 
 // -----------------------------------------------------------------
-// Service catalog (for the Approve form's service picker) - reuses the
-// existing PUBLIC GET /v1/service-categories(/{category}/services)
-// endpoints already used by the customer app. Fetched once and cached for
-// the lifetime of the page; never invents a "list contract-eligible
-// services" endpoint that does not exist.
+// Service catalog (for the Approve form's service picker) - uses the
+// public GET /v1/services?capability=SUBSCRIPTION filter so only
+// contract-eligible services appear (server still re-checks on approve).
+// Fetched once and cached for the lifetime of the page.
 // -----------------------------------------------------------------
 
 let catalogPromise = null;
@@ -50,23 +49,14 @@ let catalogPromise = null;
 function loadServiceCatalog() {
     if (!catalogPromise) {
         catalogPromise = (async () => {
-            const categoriesResponse = await request('/api/v1/service-categories');
-            const categories = categoriesResponse.data.service_categories || [];
+            const response = await request('/api/v1/services?capability=SUBSCRIPTION');
+            const services = response.data.services || [];
 
-            const perCategory = await Promise.all(
-                categories.map((category) => request(`/api/v1/service-categories/${category.id}/services`)),
-            );
-
-            return perCategory.flatMap((response, index) => {
-                const category = categories[index];
-                const services = response.data.services || [];
-
-                return services.map((service) => ({
-                    uuid: service.uuid,
-                    name: service.name,
-                    categoryName: category.name,
-                }));
-            });
+            return services.map((service) => ({
+                uuid: service.uuid,
+                name: service.name,
+                categoryName: service.category?.name || 'Catalog',
+            }));
         })();
     }
 

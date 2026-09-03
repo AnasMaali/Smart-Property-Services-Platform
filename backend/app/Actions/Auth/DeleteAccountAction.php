@@ -2,6 +2,7 @@
 
 namespace App\Actions\Auth;
 
+use App\Models\OtpVerification;
 use App\Models\User;
 use App\Support\Auth\AccountDeletionEligibilityChecker;
 use App\Support\Auth\AccountDeletionRequestStore;
@@ -31,7 +32,7 @@ use RuntimeException;
  * not merely be told to come back later with no durable record of their
  * request. The three possible outcomes:
  *
- *   - wrong password / non-ACTIVE account -> 422, nothing written.
+ *   - wrong OTP / non-ACTIVE account -> 422, nothing written.
  *   - active ADMIN/SUPER_ADMIN role -> 409, nothing written. A `users` row
  *     can legitimately be both a Customer and a company Admin at once
  *     (see AuthenticateAdmin), and the erasure lifecycle's tombstoning is
@@ -90,7 +91,7 @@ class DeleteAccountAction
     ) {}
 
     /**
-     * @param  array{current_password: string}  $data
+     * @param  array{otp_code: string}  $data
      * @return array{success: bool, status: int, message: string, data: array<string, mixed>|null}
      */
     public function handle(string $userUuid, array $data): array
@@ -106,8 +107,8 @@ class DeleteAccountAction
                 return $this->failure(422, self::GENERIC_INVALID_MESSAGE);
             }
 
-            if (! Hash::check($data['current_password'], $user->password_hash)) {
-                return $this->failure(422, 'The current password you entered is incorrect.');
+            if (! $this->verifyAccountDeletionOtp($user, $data['otp_code'])) {
+                return $this->failure(422, 'Invalid or expired verification code.');
             }
 
             if ($this->checker->hasActiveAdminRole($userIdBinary)) {
@@ -160,6 +161,62 @@ class DeleteAccountAction
     private function failure(int $status, string $message): array
     {
         return ['success' => false, 'status' => $status, 'message' => $message, 'data' => null];
+    }
+
+    private function verifyAccountDeletionOtp(User $user, string $otpCode): bool
+    {
+        $purposeId = $this->lookupId('otp_verification_purposes', 'ACCOUNT_DELETION');
+        $pendingOtpStatusId = $this->lookupId('otp_verification_statuses', 'PENDING');
+        $attemptsExceededStatusId = $this->lookupId('otp_verification_statuses', 'ATTEMPTS_EXCEEDED');
+        $verifiedStatusId = $this->lookupId('otp_verification_statuses', 'VERIFIED');
+        $expiredStatusId = $this->lookupId('otp_verification_statuses', 'EXPIRED');
+
+        $otp = OtpVerification::where('user_id', UuidBinary::toBinary($user->id))
+            ->where('purpose_id', $purposeId)
+            ->orderByDesc('created_at')
+            ->lockForUpdate()
+            ->first();
+
+        if ($otp === null || $otp->status_id !== $pendingOtpStatusId) {
+            return false;
+        }
+
+        $now = now();
+
+        if ($now->greaterThanOrEqualTo($otp->expires_at)) {
+            $otp->status_id = $expiredStatusId;
+            $otp->save();
+
+            return false;
+        }
+
+        if ($otp->failed_attempt_count >= $otp->max_attempts) {
+            if ($otp->status_id !== $attemptsExceededStatusId) {
+                $otp->status_id = $attemptsExceededStatusId;
+                $otp->save();
+            }
+
+            return false;
+        }
+
+        if (! Hash::check($otpCode, $otp->code_hash)) {
+            $otp->failed_attempt_count++;
+            $otp->last_attempt_at = $now;
+
+            if ($otp->failed_attempt_count >= $otp->max_attempts) {
+                $otp->status_id = $attemptsExceededStatusId;
+            }
+
+            $otp->save();
+
+            return false;
+        }
+
+        $otp->status_id = $verifiedStatusId;
+        $otp->verified_at = $now;
+        $otp->save();
+
+        return true;
     }
 
     private function lookupId(string $table, string $code): int

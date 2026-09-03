@@ -36,4 +36,34 @@ final class ServiceCapabilities
             ->pluck('service_capability_types.code')
             ->all();
     }
+
+    /**
+     * Batch capability lookup for catalog list payloads. Keyed by
+     * bin2hex(service_id) so callers can join without re-encoding UUIDs.
+     *
+     * @param  array<int, string>  $serviceIdsBinary
+     * @return array<string, list<string>>
+     */
+    public function codesByServiceId(array $serviceIdsBinary): array
+    {
+        if ($serviceIdsBinary === []) {
+            return [];
+        }
+
+        $rows = DB::table('service_capabilities')
+            ->join('service_capability_types', 'service_capability_types.id', '=', 'service_capabilities.capability_type_id')
+            ->whereIn('service_capabilities.service_id', $serviceIdsBinary)
+            ->where('service_capability_types.is_active', 1)
+            ->orderBy('service_capability_types.code')
+            ->get(['service_capabilities.service_id', 'service_capability_types.code']);
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $key = bin2hex($row->service_id);
+            $grouped[$key][] = $row->code;
+        }
+
+        return $grouped;
+    }
 }

@@ -55,6 +55,9 @@ class BookingReadApiTest extends TestCase
         $response->assertStatus(200);
         $this->assertSame(UuidBinary::toString($booking->id), $response->json('data.booking.uuid'));
         $this->assertSame('PAID', $response->json('data.booking.status'));
+        $this->assertFalse($response->json('data.booking.can_rate'));
+        $this->assertNull($response->json('data.booking.rating'));
+        $this->assertNotEmpty($response->json('data.booking.items.0.service.slug'));
     }
 
     public function test_list_bookings_returns_only_the_authenticated_customers_bookings(): void

@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
+use Tests\Support\DeletesCustomerAccountsForTests;
 use Tests\TestCase;
 
 /**
@@ -25,6 +26,7 @@ class PendingAccountDeletionGuardTest extends TestCase
 {
     use CreatesContractFixtures;
     use DatabaseTransactions;
+    use DeletesCustomerAccountsForTests;
 
     private const FIXTURE_PASSWORD = 'CartTestPassw0rd';
 
@@ -32,13 +34,6 @@ class PendingAccountDeletionGuardTest extends TestCase
     {
         parent::setUp();
         $this->setUpCartFixtures();
-    }
-
-    private function deleteAccount(string $accessToken)
-    {
-        return $this->deleteJson('/api/v1/auth/account', [
-            'current_password' => self::FIXTURE_PASSWORD,
-        ], ['Authorization' => 'Bearer '.$accessToken]);
     }
 
     /**

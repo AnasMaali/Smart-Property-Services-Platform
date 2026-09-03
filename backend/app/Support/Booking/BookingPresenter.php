@@ -2,6 +2,7 @@
 
 namespace App\Support\Booking;
 
+use App\Support\Booking\BookingItemSelections;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,11 +17,10 @@ use Illuminate\Support\Facades\DB;
  *
  * Every monetary/descriptive value comes from `booking_items` /
  * `booking_locations` - the rows CreateBookingFromSuccessfulPaymentAction
- * wrote once, verbatim, from the frozen `checkout_snapshot`. Nothing here
- * re-reads the live catalog, live pricing, or the customer's current
- * profile/cart - a later service price/name change or profile address
- * edit can never change what this presenter returns for an existing
- * Booking.
+ * wrote once, verbatim, from the frozen `checkout_snapshot`. Service
+ * `code`/`name` stay historical snapshots. The live catalog is read only
+ * for `slug` (Flutter "book again" navigation) and the `ratings` row
+ * (`can_rate` / `rating`) - never to reprice or rewrite location/options.
  */
 final class BookingPresenter
 {
@@ -64,6 +64,15 @@ final class BookingPresenter
             $total = bcadd($total, (string) $item->line_total_amount, 6);
         }
 
+        $slugsByServiceId = $items->isEmpty()
+            ? collect()
+            : DB::table('services')
+                ->whereIn('id', $items->pluck('service_id')->all())
+                ->get(['id', 'slug'])
+                ->keyBy(fn (object $row): string => bin2hex($row->id));
+
+        $rating = DB::table('ratings')->where('booking_id', $booking->id)->first(['rating_value', 'comment', 'created_at']);
+
         return [
             'uuid' => UuidBinary::toString($booking->id),
             'booking_number' => $booking->booking_number,
@@ -81,12 +90,22 @@ final class BookingPresenter
             'total' => $total,
             'location' => $location === null ? null : self::locationPayload($location),
             'appointment' => $slot === null ? null : self::appointmentPayload($slot),
-            'items' => $items->map(self::itemPayload(...))->all(),
+            'items' => $items->map(function (object $item) use ($slugsByServiceId): array {
+                $slug = $slugsByServiceId->get(bin2hex($item->service_id))?->slug;
+
+                return self::itemPayload($item, is_string($slug) ? $slug : '');
+            })->all(),
             'created_at' => Carbon::parse($booking->created_at)->toIso8601String(),
             'status_changed_at' => Carbon::parse($booking->status_changed_at)->toIso8601String(),
             'completed_at' => $booking->completed_at === null ? null : Carbon::parse($booking->completed_at)->toIso8601String(),
             'cancelled_at' => $booking->cancelled_at === null ? null : Carbon::parse($booking->cancelled_at)->toIso8601String(),
             'refund_due' => $statusCode === 'CANCELLED' ? self::refundDuePayload($booking) : null,
+            'can_rate' => $statusCode === 'COMPLETED' && $rating === null,
+            'rating' => $rating === null ? null : [
+                'rating_value' => (int) $rating->rating_value,
+                'comment' => $rating->comment,
+                'created_at' => Carbon::parse($rating->created_at)->toIso8601String(),
+            ],
         ];
     }
 
@@ -187,19 +206,21 @@ final class BookingPresenter
     /**
      * @return array<string, mixed>
      */
-    private static function itemPayload(object $item): array
+    private static function itemPayload(object $item, string $serviceSlug): array
     {
         return [
             'uuid' => UuidBinary::toString($item->id),
             'service' => [
                 'uuid' => UuidBinary::toString($item->service_id),
                 'code' => $item->service_code_snapshot,
+                'slug' => $serviceSlug,
                 'name' => $item->service_name_snapshot,
             ],
             'quantity' => (int) $item->quantity,
             'status' => $item->status_code,
             'completed_at' => $item->completed_at === null ? null : Carbon::parse($item->completed_at)->toIso8601String(),
             'cancelled_at' => $item->cancelled_at === null ? null : Carbon::parse($item->cancelled_at)->toIso8601String(),
+            'options' => BookingItemSelections::loadForPresentation($item->id),
             'pricing' => [
                 'pricing_scheme_version_uuid' => UuidBinary::toString($item->pricing_scheme_version_id),
                 'base_amount' => $item->base_amount_snapshot,

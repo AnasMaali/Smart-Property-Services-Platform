@@ -5,9 +5,7 @@ plugins {
 }
 
 android {
-    // PENDING PRODUCT DECISION: "dev.blue.placeholder" is F1 scaffolding
-    // only, not an official identifier - see mobile/README.md.
-    namespace = "dev.blue.placeholder.blue"
+    namespace = "com.blue.blue_customer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -18,17 +16,11 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        // PENDING PRODUCT DECISION: see mobile/README.md - do not use this
-        // placeholder value for Play Console/Firebase/push provisioning.
-        applicationId = "dev.blue.placeholder.blue"
+        applicationId = "com.blue.blue_customer"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
-        // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
-        // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
-        // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

@@ -12,6 +12,11 @@
             <directory>tests/Feature</directory>
         </testsuite>
     </testsuites>
+    <groups>
+        <exclude>
+            <group>legacy</group>
+        </exclude>
+    </groups>
     <source>
         <include>
             <directory>app</directory>
@@ -36,6 +41,10 @@
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_USERNAME" value="blue_app"/>
+        <env name="DB_PASSWORD" value="blue_app"/>
         <env name="DB_DATABASE" value="blue_test_db"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>

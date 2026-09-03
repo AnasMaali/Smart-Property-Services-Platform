@@ -3,13 +3,10 @@
 namespace App\Http\Requests\Auth;
 
 use App\Http\Requests\ApiFormRequest;
-use App\Http\Requests\Auth\Concerns\HasPasswordPolicy;
 use Illuminate\Validation\Rule;
 
 class RegisterCustomerRequest extends ApiFormRequest
 {
-    use HasPasswordPolicy;
-
     public function authorize(): bool
     {
         return true;
@@ -45,8 +42,6 @@ class RegisterCustomerRequest extends ApiFormRequest
                 'max:254',
                 'unique:users,email',
             ],
-
-            'password' => ['required', 'string', $this->passwordRule()],
 
             'city_id' => [
                 'required',

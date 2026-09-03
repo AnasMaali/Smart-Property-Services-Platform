@@ -110,6 +110,10 @@
                 <label class="mb-1.5 block text-xs font-medium text-slate-600">Name</label>
                 <input type="text" name="name" required minlength="2" maxlength="120" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
             </div>
+            <div>
+                <label class="mb-1.5 block text-xs font-medium text-slate-600">Description (Optional)</label>
+                <textarea name="description" maxlength="500" rows="2" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
             <div data-window-code-field>
                 <label class="mb-1.5 block text-xs font-medium text-slate-600">Code</label>
                 <input type="text" name="code" minlength="2" maxlength="60" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
@@ -155,7 +159,7 @@
             </div>
             <div class="col-span-2">
                 <label class="mb-1.5 block text-xs font-medium text-slate-600">Internal Note</label>
-                <input type="text" name="internal_note" maxlength="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                <input type="text" name="internal_note" minlength="2" maxlength="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
             </div>
         </form>
 

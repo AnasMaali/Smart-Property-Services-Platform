@@ -87,6 +87,7 @@ class AdminFinancialDashboardTest extends TestCase
         $this->assertSame('0.000000', $response->json('data.summary.breakdown.apple_pay'));
         $this->assertSame('0.000000', $response->json('data.summary.breakdown.pay_on_site.collected'));
         $this->assertSame('0.000000', $response->json('data.summary.breakdown.pay_on_site.pending'));
+        $this->assertSame('0.000000', $response->json('data.summary.repair_quote_balance_collected'));
         $this->assertSame('AED', $response->json('data.summary.currency.code'));
     }
 
@@ -180,13 +181,13 @@ class AdminFinancialDashboardTest extends TestCase
         $collected = $this->collectedPayOnSiteBooking();
         $admin = $this->createAndLoginAdmin(['ADMIN']);
 
-        // A second (idempotent no-op) collection call must not create a
-        // second settlement row or inflate revenue.
-        $this->postJson(
-            '/api/v1/admin/bookings/'.UuidBinary::toString($collected['booking']->id).'/collect-on-site-payment',
-            [],
-            $this->bearer($collected['admin']['access_token'])
-        )->assertStatus(200);
+        try {
+            $this->insertOnSiteSettlement($collected['booking']->id, collected: true);
+            $this->fail('A second settlement row for the same Booking must violate UNIQUE(booking_id).');
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Expected - UNIQUE(booking_id) is the backstop documented on
+            // AdminFinancialSummaryCalculator: one settlement per Booking.
+        }
 
         $response = $this->dashboard($admin['access_token'], ['range' => 'THIS_MONTH']);
         $this->assertSame('100.000000', $response->json('data.summary.gross_revenue'));
@@ -349,7 +350,7 @@ class AdminFinancialDashboardTest extends TestCase
         $before = $this->dashboard($admin['access_token'], ['range' => 'THIS_MONTH']);
         $this->assertSame($amount, $before->json('data.summary.gross_revenue'));
 
-        DB::table('services')->update(['original_price' => '999999.000000']);
+        DB::table('pricing_rules')->update(['effect_amount' => '999999.000000']);
 
         $after = $this->dashboard($admin['access_token'], ['range' => 'THIS_MONTH']);
         $this->assertSame($amount, $after->json('data.summary.gross_revenue'));

@@ -579,6 +579,106 @@ LOCK TABLES `booking_item_option_selections` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `booking_item_repair_quote_statuses`
+--
+
+DROP TABLE IF EXISTS `booking_item_repair_quote_statuses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_item_repair_quote_statuses` (
+  `id` tinyint unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `description` varchar(300) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `is_terminal` tinyint(1) NOT NULL DEFAULT '0',
+  `display_order` smallint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_item_repair_quote_statuses_code` (`code`),
+  KEY `idx_booking_item_repair_quote_statuses_active_order` (`is_active`,`display_order`),
+  CONSTRAINT `chk_biqs_active` CHECK ((`is_active` in (0,1))),
+  CONSTRAINT `chk_biqs_code` CHECK ((char_length(trim(`code`)) between 2 and 50)),
+  CONSTRAINT `chk_biqs_description` CHECK (((`description` is null) or (char_length(trim(`description`)) between 2 and 300))),
+  CONSTRAINT `chk_biqs_name` CHECK ((char_length(trim(`name`)) between 2 and 120)),
+  CONSTRAINT `chk_biqs_terminal` CHECK ((`is_terminal` in (0,1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_item_repair_quote_statuses`
+--
+
+LOCK TABLES `booking_item_repair_quote_statuses` WRITE;
+/*!40000 ALTER TABLE `booking_item_repair_quote_statuses` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_item_repair_quote_statuses` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `booking_item_repair_quotes`
+--
+
+DROP TABLE IF EXISTS `booking_item_repair_quotes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_item_repair_quotes` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `booking_id` binary(16) NOT NULL,
+  `booking_item_id` binary(16) NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `quoted_amount` decimal(19,6) NOT NULL,
+  `credit_amount` decimal(19,6) NOT NULL,
+  `balance_due_amount` decimal(19,6) NOT NULL,
+  `supersedes_quote_id` binary(16) DEFAULT NULL,
+  `created_by_admin_user_id` binary(16) NOT NULL,
+  `sent_at` datetime(6) DEFAULT NULL,
+  `accepted_at` datetime(6) DEFAULT NULL,
+  `declined_at` datetime(6) DEFAULT NULL,
+  `expired_at` datetime(6) DEFAULT NULL,
+  `cancelled_at` datetime(6) DEFAULT NULL,
+  `closed_at` datetime(6) DEFAULT NULL,
+  `active_booking_item_marker` binary(16) GENERATED ALWAYS AS ((case when (`closed_at` is null) then `booking_item_id` else NULL end)) STORED,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_biq_supersedes` (`supersedes_quote_id`),
+  UNIQUE KEY `uq_biq_active_booking_item` (`active_booking_item_marker`),
+  KEY `idx_biq_booking_item` (`booking_item_id`,`created_at`),
+  KEY `idx_biq_booking` (`booking_id`),
+  KEY `idx_biq_status` (`status_id`),
+  KEY `idx_biq_created_by` (`created_by_admin_user_id`),
+  KEY `fk_biq_currency` (`currency_id`),
+  CONSTRAINT `fk_biq_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_biq_booking_item` FOREIGN KEY (`booking_item_id`) REFERENCES `booking_items` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_biq_created_by` FOREIGN KEY (`created_by_admin_user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_biq_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_biq_status` FOREIGN KEY (`status_id`) REFERENCES `booking_item_repair_quote_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_biq_supersedes` FOREIGN KEY (`supersedes_quote_id`) REFERENCES `booking_item_repair_quotes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_biq_accepted_declined_mutually_exclusive` CHECK (((`accepted_at` is null) or (`declined_at` is null))),
+  CONSTRAINT `chk_biq_accepted_requires_sent` CHECK (((`accepted_at` is null) or (`sent_at` is not null))),
+  CONSTRAINT `chk_biq_balance_due_amount` CHECK ((`balance_due_amount` >= 0)),
+  CONSTRAINT `chk_biq_balance_due_equation` CHECK ((`balance_due_amount` = (`quoted_amount` - `credit_amount`))),
+  CONSTRAINT `chk_biq_closed_at` CHECK (((`closed_at` is null) or (`closed_at` >= `created_at`))),
+  CONSTRAINT `chk_biq_credit_amount` CHECK ((`credit_amount` >= 0)),
+  CONSTRAINT `chk_biq_credit_not_above_quoted` CHECK ((`credit_amount` <= `quoted_amount`)),
+  CONSTRAINT `chk_biq_declined_requires_sent` CHECK (((`declined_at` is null) or (`sent_at` is not null))),
+  CONSTRAINT `chk_biq_quoted_amount` CHECK ((`quoted_amount` >= 0)),
+  CONSTRAINT `chk_biq_sent_requires_no_earlier` CHECK (((`sent_at` is null) or (`sent_at` >= `created_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_item_repair_quotes`
+--
+
+LOCK TABLES `booking_item_repair_quotes` WRITE;
+/*!40000 ALTER TABLE `booking_item_repair_quotes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_item_repair_quotes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `booking_item_status_history`
 --
 
@@ -770,6 +870,43 @@ CREATE TABLE `booking_locations` (
 LOCK TABLES `booking_locations` WRITE;
 /*!40000 ALTER TABLE `booking_locations` DISABLE KEYS */;
 /*!40000 ALTER TABLE `booking_locations` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `booking_on_site_settlements`
+--
+
+DROP TABLE IF EXISTS `booking_on_site_settlements`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `booking_on_site_settlements` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `booking_id` binary(16) NOT NULL,
+  `amount_due` decimal(19,6) NOT NULL,
+  `amount_collected` decimal(19,6) DEFAULT NULL,
+  `collected_at` datetime(6) DEFAULT NULL,
+  `refund_status` varchar(40) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_on_site_settlements_booking` (`booking_id`),
+  KEY `idx_booking_on_site_settlements_collected_at` (`collected_at`),
+  CONSTRAINT `fk_booking_on_site_settlements_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_booking_on_site_settlements_amount_due` CHECK ((`amount_due` >= 0)),
+  CONSTRAINT `chk_booking_on_site_settlements_amount_collected` CHECK (((`amount_collected` is null) or (`amount_collected` >= 0))),
+  CONSTRAINT `chk_booking_on_site_settlements_collection_pair` CHECK ((((`collected_at` is null) and (`amount_collected` is null)) or ((`collected_at` is not null) and (`amount_collected` is not null)))),
+  CONSTRAINT `chk_booking_on_site_settlements_refund_status` CHECK (((`refund_status` is null) or (`refund_status` = _utf8mb4'MANUAL_REFUND_REQUIRED'))),
+  CONSTRAINT `chk_booking_on_site_settlements_refund_requires_collection` CHECK (((`refund_status` is null) or (`collected_at` is not null)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `booking_on_site_settlements`
+--
+
+LOCK TABLES `booking_on_site_settlements` WRITE;
+/*!40000 ALTER TABLE `booking_on_site_settlements` DISABLE KEYS */;
+/*!40000 ALTER TABLE `booking_on_site_settlements` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -2286,6 +2423,110 @@ CREATE TABLE `ratings` (
 LOCK TABLES `ratings` WRITE;
 /*!40000 ALTER TABLE `ratings` DISABLE KEYS */;
 /*!40000 ALTER TABLE `ratings` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `repair_quote_credits`
+--
+
+DROP TABLE IF EXISTS `repair_quote_credits`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `repair_quote_credits` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `quote_id` binary(16) NOT NULL,
+  `source_booking_id` binary(16) NOT NULL,
+  `source_booking_item_id` binary(16) NOT NULL,
+  `source_payment_attempt_id` binary(16) NOT NULL,
+  `amount` decimal(19,6) NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_repair_quote_credits_quote` (`quote_id`),
+  KEY `idx_repair_quote_credits_source_item` (`source_booking_item_id`),
+  KEY `idx_repair_quote_credits_source_payment` (`source_payment_attempt_id`),
+  KEY `fk_repair_quote_credits_source_booking` (`source_booking_id`),
+  CONSTRAINT `fk_repair_quote_credits_quote` FOREIGN KEY (`quote_id`) REFERENCES `booking_item_repair_quotes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_repair_quote_credits_source_booking` FOREIGN KEY (`source_booking_id`) REFERENCES `bookings` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_repair_quote_credits_source_item` FOREIGN KEY (`source_booking_item_id`) REFERENCES `booking_items` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_repair_quote_credits_source_payment` FOREIGN KEY (`source_payment_attempt_id`) REFERENCES `payment_attempts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_repair_quote_credits_amount` CHECK ((`amount` >= 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `repair_quote_credits`
+--
+
+LOCK TABLES `repair_quote_credits` WRITE;
+/*!40000 ALTER TABLE `repair_quote_credits` DISABLE KEYS */;
+/*!40000 ALTER TABLE `repair_quote_credits` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `repair_quote_payment_attempts`
+--
+
+DROP TABLE IF EXISTS `repair_quote_payment_attempts`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `repair_quote_payment_attempts` (
+  `id` binary(16) NOT NULL DEFAULT (uuid_to_bin(uuid(),1)),
+  `quote_id` binary(16) NOT NULL,
+  `status_id` tinyint unsigned NOT NULL,
+  `currency_id` smallint unsigned NOT NULL,
+  `reference` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `idempotency_key` binary(32) NOT NULL,
+  `provider_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_session_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `provider_transaction_reference` varchar(191) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `requested_amount` decimal(19,6) NOT NULL,
+  `confirmed_amount` decimal(19,6) DEFAULT NULL,
+  `payment_method_code` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `provider_status_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `failure_code` varchar(100) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `failure_message` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `requires_reconciliation` tinyint(1) NOT NULL DEFAULT '0',
+  `reconciliation_reason_code` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `successful_at` datetime(6) DEFAULT NULL,
+  `finalized_at` datetime(6) DEFAULT NULL,
+  `open_quote_marker` binary(16) GENERATED ALWAYS AS ((case when (`finalized_at` is null) then `quote_id` else NULL end)) STORED,
+  `status_changed_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_rqpa_reference` (`reference`),
+  UNIQUE KEY `uq_rqpa_idempotency_key` (`idempotency_key`),
+  UNIQUE KEY `uq_rqpa_provider_session` (`provider_code`,`provider_session_reference`),
+  UNIQUE KEY `uq_rqpa_provider_transaction` (`provider_code`,`provider_transaction_reference`),
+  UNIQUE KEY `uq_rqpa_open_quote` (`open_quote_marker`),
+  KEY `idx_rqpa_quote` (`quote_id`,`created_at`),
+  KEY `idx_rqpa_status` (`status_id`),
+  KEY `idx_rqpa_currency` (`currency_id`),
+  CONSTRAINT `fk_rqpa_currency` FOREIGN KEY (`currency_id`) REFERENCES `currencies` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_rqpa_quote` FOREIGN KEY (`quote_id`) REFERENCES `booking_item_repair_quotes` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_rqpa_status` FOREIGN KEY (`status_id`) REFERENCES `payment_statuses` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `chk_rqpa_confirmed_amount` CHECK (((`confirmed_amount` is null) or (`confirmed_amount` >= 0))),
+  CONSTRAINT `chk_rqpa_failure_code` CHECK (((`failure_code` is null) or (char_length(trim(`failure_code`)) between 1 and 100))),
+  CONSTRAINT `chk_rqpa_failure_message` CHECK (((`failure_message` is null) or (char_length(trim(`failure_message`)) between 2 and 500))),
+  CONSTRAINT `chk_rqpa_payment_method_code` CHECK (((`payment_method_code` is null) or (`payment_method_code` in (_utf8mb4'CARD',_utf8mb4'APPLE_PAY')))),
+  CONSTRAINT `chk_rqpa_provider_code` CHECK ((char_length(trim(`provider_code`)) between 2 and 50)),
+  CONSTRAINT `chk_rqpa_reconciliation_reason` CHECK (((`reconciliation_reason_code` is null) or (`reconciliation_reason_code` in (_utf8mb4'AMOUNT_MISMATCH',_utf8mb4'CURRENCY_MISMATCH',_utf8mb4'UNEXPECTED_PROVIDER_STATE')))),
+  CONSTRAINT `chk_rqpa_reconciliation_requires_flag` CHECK (((`reconciliation_reason_code` is null) or (`requires_reconciliation` = 1))),
+  CONSTRAINT `chk_rqpa_reference` CHECK ((char_length(trim(`reference`)) between 8 and 64)),
+  CONSTRAINT `chk_rqpa_requested_amount` CHECK ((`requested_amount` > 0)),
+  CONSTRAINT `chk_rqpa_requires_reconciliation` CHECK ((`requires_reconciliation` in (0,1))),
+  CONSTRAINT `chk_rqpa_status_changed` CHECK ((`status_changed_at` >= `created_at`)),
+  CONSTRAINT `chk_rqpa_successful_at` CHECK (((`successful_at` is null) or ((`successful_at` >= `created_at`) and (`confirmed_amount` is not null) and (`finalized_at` is not null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `repair_quote_payment_attempts`
+--
+
+LOCK TABLES `repair_quote_payment_attempts` WRITE;
+/*!40000 ALTER TABLE `repair_quote_payment_attempts` DISABLE KEYS */;
+/*!40000 ALTER TABLE `repair_quote_payment_attempts` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

@@ -58,4 +58,37 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*'),
         );
+
+        // QueryException::getMessage() interpolates SQL bindings. BLUE
+        // uses binary(16) UUIDs, so a failed query's message contains raw
+        // bytes that are not valid UTF-8. Laravel's debug JSON renderer
+        // then throws InvalidArgumentException ("Malformed UTF-8") and
+        // hides the real SQLSTATE. Sanitize only that message so the
+        // original error remains readable; do not substitute on success
+        // payloads.
+        $exceptions->render(function (\Illuminate\Database\QueryException $e, Request $request) {
+            if (! $request->is('api/*')) {
+                return null;
+            }
+
+            $message = $e->getMessage();
+
+            if (mb_check_encoding($message, 'UTF-8')) {
+                return null;
+            }
+
+            $safeMessage = preg_replace('/[^\x09\x0A\x0D\x20-\x7E]/', '?', $message) ?? 'Server Error';
+
+            return response()->json(
+                config('app.debug')
+                    ? [
+                        'message' => $safeMessage,
+                        'exception' => $e::class,
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]
+                    : ['message' => 'Server Error'],
+                500
+            );
+        });
     })->create();

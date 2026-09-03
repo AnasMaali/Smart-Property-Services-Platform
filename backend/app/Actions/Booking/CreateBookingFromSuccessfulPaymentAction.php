@@ -4,6 +4,7 @@ namespace App\Actions\Booking;
 
 use App\Support\Booking\BookingConversionOutcome;
 use App\Support\Booking\BookingConversionResult;
+use App\Support\Booking\BookingItemSelections;
 use App\Support\Booking\BookingItemStatuses;
 use App\Support\Booking\BookingNumberGenerator;
 use App\Support\Booking\BookingSources;
@@ -346,8 +347,10 @@ class CreateBookingFromSuccessfulPaymentAction
         ]);
 
         foreach ($items as $item) {
+            $bookingItemIdBinary = UuidBinary::toBinary(UuidBinary::generate());
+
             DB::table('booking_items')->insert([
-                'id' => UuidBinary::toBinary(UuidBinary::generate()),
+                'id' => $bookingItemIdBinary,
                 'booking_id' => $bookingIdBinary,
                 'source_cart_item_id' => $item['source_cart_item_id'],
                 'service_id' => $item['service_id'],
@@ -366,6 +369,8 @@ class CreateBookingFromSuccessfulPaymentAction
                 'created_at' => $timestamp,
                 'updated_at' => $timestamp,
             ]);
+
+            BookingItemSelections::copyFromCartItem($bookingItemIdBinary, $item['source_cart_item_id']);
         }
 
         DB::table('carts')->where('id', $attempt->cart_id)->where('status_id', CartStatuses::id('CHECKOUT'))->update([

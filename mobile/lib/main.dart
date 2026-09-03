@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import 'app/app.dart';
-import 'app/bootstrap.dart';
-import 'core/config/app_config_provider.dart';
+import 'app/app_scope.dart';
 
-void main() {
-  final config = bootstrap();
-
-  runApp(
-    ProviderScope(
-      overrides: [appConfigProvider.overrideWithValue(config)],
-      child: const BlueApp(),
-    ),
-  );
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  final dependencies = await AppDependencies.create();
+  await dependencies.auth.restore();
+  runApp(BlueApp(dependencies: dependencies));
 }

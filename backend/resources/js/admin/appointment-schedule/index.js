@@ -53,6 +53,7 @@ if (page) {
 
     let editingWindowId = null;
     let currentSlotUuid = null;
+    let currentOccupiedCapacity = 0;
 
     function modalErrorMessage(error, fallback) {
         return error instanceof ApiError ? error.message : fallback;
@@ -311,6 +312,7 @@ if (page) {
 
         if (window) {
             windowForm.elements.name.value = window.name;
+            windowForm.elements.description.value = window.description || '';
             windowForm.elements.start_time.value = window.start_time;
             windowForm.elements.end_time.value = window.end_time;
             windowForm.elements.display_order.value = window.display_order;
@@ -330,7 +332,7 @@ if (page) {
         const formData = new FormData(windowForm);
         const payload = {
             name: formData.get('name'),
-            description: null,
+            description: formData.get('description')?.trim() || null,
             start_time: formData.get('start_time'),
             end_time: formData.get('end_time'),
             display_order: Number(formData.get('display_order')) || 0,
@@ -398,6 +400,8 @@ if (page) {
         slotCapacityForm.elements.booking_capacity.value = slot.booking_capacity;
         slotCapacityForm.elements.internal_note.value = slot.internal_note || '';
 
+        currentOccupiedCapacity = slot.occupied_capacity || 0;
+
         slotCloseToggle.textContent = slot.is_active ? 'Close Slot' : 'Reopen Slot';
         slotCloseToggle.dataset.active = slot.is_active ? '1' : '0';
 
@@ -437,13 +441,35 @@ if (page) {
         slotCapacitySubmit.disabled = true;
 
         const formData = new FormData(slotCapacityForm);
+        const internalNoteRaw = formData.get('internal_note') || '';
+        const internalNoteTrimmed = internalNoteRaw.trim();
+
+        if (internalNoteTrimmed !== '') {
+            if (internalNoteTrimmed.length < 2) {
+                showError(slotError, 'Internal note must be at least 2 characters if provided.');
+                slotCapacitySubmit.disabled = false;
+                return;
+            }
+            if (internalNoteTrimmed.length > 500) {
+                showError(slotError, 'Internal note must not exceed 500 characters.');
+                slotCapacitySubmit.disabled = false;
+                return;
+            }
+        }
+
+        const requestedCapacity = Number(formData.get('booking_capacity'));
+        if (requestedCapacity < currentOccupiedCapacity) {
+            showError(slotError, `Capacity cannot be reduced below the current bookings/holds (${currentOccupiedCapacity}).`);
+            slotCapacitySubmit.disabled = false;
+            return;
+        }
 
         try {
             await request(`/api/v1/admin/appointment-schedule/${currentSlotUuid}`, {
                 method: 'PATCH',
                 body: {
                     booking_capacity: Number(formData.get('booking_capacity')),
-                    internal_note: formData.get('internal_note') || null,
+                    internal_note: internalNoteTrimmed === '' ? null : internalNoteTrimmed,
                 },
             });
 

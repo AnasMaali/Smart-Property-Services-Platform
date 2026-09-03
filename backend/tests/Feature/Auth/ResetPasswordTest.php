@@ -9,6 +9,14 @@ use Illuminate\Support\Facades\Hash;
 use Tests\Support\AuthenticatesCustomersForTests;
 use Tests\TestCase;
 
+/**
+ * Legacy customer password auth tests.
+ *
+ * Customer password routes were removed in favour of OTP-only auth.
+ * Run explicitly with: php artisan test --group=legacy
+ *
+ * @group legacy
+ */
 class ResetPasswordTest extends TestCase
 {
     use DatabaseTransactions;

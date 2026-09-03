@@ -47,7 +47,6 @@ class RegisterCustomerTest extends TestCase
             'full_name' => 'Sara Al Mansoori',
             'phone_number' => '+9715012345'.str_pad((string) $sequence, 2, '0', STR_PAD_LEFT),
             'email' => "sara.mansoori{$sequence}@example.com",
-            'password' => 'Passw0rd123',
             'city_id' => $this->dubaiCityId,
             'area_id' => $this->dubaiAreaId,
             'property_relationship_type_id' => $this->propertyOwnerTypeId,
@@ -256,34 +255,7 @@ class RegisterCustomerTest extends TestCase
             ->assertJsonValidationErrors(['service_interests.0']);
     }
 
-    public function test_password_must_be_at_least_8_characters(): void
-    {
-        $payload = $this->validPayload(['password' => 'Ab1234']);
-
-        $this->postJson('/api/v1/auth/register', $payload)
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['password']);
-    }
-
-    public function test_password_must_contain_a_letter(): void
-    {
-        $payload = $this->validPayload(['password' => '12345678']);
-
-        $this->postJson('/api/v1/auth/register', $payload)
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['password']);
-    }
-
-    public function test_password_must_contain_a_number(): void
-    {
-        $payload = $this->validPayload(['password' => 'Password']);
-
-        $this->postJson('/api/v1/auth/register', $payload)
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['password']);
-    }
-
-    public function test_password_is_stored_only_as_a_secure_hash(): void
+    public function test_registration_does_not_require_password(): void
     {
         $payload = $this->validPayload();
 
@@ -291,8 +263,8 @@ class RegisterCustomerTest extends TestCase
 
         $storedHash = DB::table('users')->where('email', $payload['email'])->value('password_hash');
 
-        $this->assertNotSame($payload['password'], $storedHash);
-        $this->assertTrue(Hash::check($payload['password'], $storedHash));
+        $this->assertNotNull($storedHash);
+        $this->assertFalse(Hash::check('Passw0rd123', $storedHash));
     }
 
     public function test_new_account_has_pending_verification_status_and_customer_role(): void

@@ -244,6 +244,16 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('auth-account-deletion-otp-issue', function (Request $request) use ($authenticatedIdentityKey, $ipKey): array {
+            return [
+                Limit::perMinute(5)
+                    ->by('auth-account-deletion-otp-issue-identity:'.$authenticatedIdentityKey($request)),
+
+                Limit::perMinute(20)
+                    ->by('auth-account-deletion-otp-issue-ip:'.$ipKey($request)),
+            ];
+        });
+
         // BLUE V1 Phase A2.5 - Step-Up request (challenge issuance)
         // flooding protection. Keyed on the authenticated Admin's own
         // identity (auth.admin already ran and attached auth_user before

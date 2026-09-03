@@ -10,6 +10,7 @@ use App\Support\Otp\OtpDeliveryChannel;
 use App\Support\Uuid\UuidBinary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 class RegisterCustomerAction
@@ -25,7 +26,6 @@ class RegisterCustomerAction
      *     full_name: string,
      *     phone_number: string,
      *     email: string,
-     *     password: string,
      *     city_id: int,
      *     area_id: int,
      *     property_relationship_type_id: int,
@@ -56,7 +56,9 @@ class RegisterCustomerAction
                 'id' => $userUuid,
                 'phone_number' => $data['phone_number'],
                 'email' => $data['email'],
-                'password_hash' => Hash::make($data['password']),
+                // OTP-only customers never authenticate with a password.
+                // Store an unusable hash so the column constraint is satisfied.
+                'password_hash' => Hash::make(Str::random(64)),
                 'account_status_id' => $accountStatusId,
                 'phone_verified_at' => null,
             ]);

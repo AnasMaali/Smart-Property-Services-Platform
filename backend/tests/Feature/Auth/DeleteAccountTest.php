@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
+use Tests\Support\DeletesCustomerAccountsForTests;
 use Tests\TestCase;
 
 /**
@@ -24,6 +25,7 @@ class DeleteAccountTest extends TestCase
 {
     use CreatesContractFixtures;
     use DatabaseTransactions;
+    use DeletesCustomerAccountsForTests;
 
     // Every customer this fixture chain creates (createCartCustomer(), the
     // base of every higher-level builder used here) is given this exact
@@ -36,13 +38,6 @@ class DeleteAccountTest extends TestCase
     {
         parent::setUp();
         $this->setUpCartFixtures();
-    }
-
-    private function deleteAccount(string $accessToken, ?string $password = self::FIXTURE_PASSWORD)
-    {
-        return $this->deleteJson('/api/v1/auth/account', [
-            'current_password' => $password,
-        ], ['Authorization' => 'Bearer '.$accessToken]);
     }
 
     private function userRow(string $userUuid): ?object
@@ -61,7 +56,7 @@ class DeleteAccountTest extends TestCase
 
     public function test_unauthenticated_caller_cannot_delete_account(): void
     {
-        $this->deleteJson('/api/v1/auth/account', ['current_password' => 'whatever'])
+        $this->deleteJson('/api/v1/auth/account', ['otp_code' => '123456'])
             ->assertStatus(401);
     }
 
@@ -69,14 +64,16 @@ class DeleteAccountTest extends TestCase
     {
         $admin = $this->createAndLoginAdmin();
 
-        $this->deleteAccount($admin['access_token'])->assertStatus(401);
+        $this->deleteJson('/api/v1/auth/account', ['otp_code' => '123456'], [
+            'Authorization' => 'Bearer '.$admin['access_token'],
+        ])->assertStatus(401);
     }
 
-    public function test_wrong_current_password_is_rejected_and_account_untouched(): void
+    public function test_wrong_otp_code_is_rejected_and_account_untouched(): void
     {
         $customer = $this->createAuthenticatedCartCustomer();
 
-        $this->deleteAccount($customer['access_token'], 'DefinitelyWrongPassw0rd')
+        $this->deleteAccount($customer['access_token'], '000000', '123456')
             ->assertStatus(422)
             ->assertJson(['success' => false, 'data' => null]);
 
@@ -86,10 +83,10 @@ class DeleteAccountTest extends TestCase
 
         $this->assertSame(0, DB::table('customer_account_deletion_requests')
             ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
-            ->count(), 'A wrong password must never create a deletion request.');
+            ->count(), 'A wrong OTP must never create a deletion request.');
     }
 
-    public function test_eligible_customer_with_correct_password_succeeds(): void
+    public function test_eligible_customer_with_valid_otp_succeeds(): void
     {
         $customer = $this->createAuthenticatedCartCustomer();
 
@@ -186,21 +183,26 @@ class DeleteAccountTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_forgot_password_cannot_resurrect_a_deleted_account(): void
+    public function test_account_deletion_otp_is_not_issued_for_deleted_accounts(): void
     {
         $customer = $this->createCartCustomer();
         $session = $this->loginCartCustomer($customer);
         $this->deleteAccount($session['access_token'])->assertStatus(200);
 
-        // Non-enumerating generic response either way - but no OTP is
-        // created for the (now tombstoned) user, since no user row is
-        // found by the original phone number any more.
-        $this->postJson('/api/v1/auth/forgot-password', ['phone_number' => $customer['phone_number']])
-            ->assertStatus(200);
+        $this->postJson('/api/v1/auth/login/request-otp', [
+            'phone_number' => $customer['phone_number'],
+        ])->assertStatus(200);
 
         $otpCount = DB::table('otp_verifications')
             ->where('user_id', UuidBinary::toBinary($customer['user_uuid']))
-            ->where('purpose_id', DB::table('otp_verification_purposes')->where('code', 'PASSWORD_RESET')->value('id'))
+            ->where(
+                'purpose_id',
+                DB::table('otp_verification_purposes')->where('code', 'ACCOUNT_DELETION')->value('id')
+            )
+            ->where(
+                'status_id',
+                DB::table('otp_verification_statuses')->where('code', 'PENDING')->value('id')
+            )
             ->count();
 
         $this->assertSame(0, $otpCount);
@@ -735,7 +737,8 @@ class DeleteAccountTest extends TestCase
         $threw = false;
 
         try {
-            app(DeleteAccountAction::class)->handle($customer['user_uuid'], ['current_password' => self::FIXTURE_PASSWORD]);
+            $this->seedAccountDeletionOtp($customer['access_token']);
+            app(DeleteAccountAction::class)->handle($customer['user_uuid'], ['otp_code' => '123456']);
         } catch (RuntimeException) {
             $threw = true;
         } finally {

@@ -71,9 +71,9 @@ use App\Http\Controllers\Api\V1\Admin\Technician\ListAdminTechniciansController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ListTechnicianCandidatesController;
 use App\Http\Controllers\Api\V1\Admin\Technician\ReassignTechnicianController;
 use App\Http\Controllers\Api\V1\Admin\Technician\StartWorkController;
-use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
+use App\Http\Controllers\Api\V1\Auth\RequestAccountDeletionOtpController;
+use App\Http\Controllers\Api\V1\Auth\ResendAccountDeletionOtpController;
 use App\Http\Controllers\Api\V1\Auth\DeleteAccountController;
-use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\GetAccountDeletionStatusController;
 use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
@@ -84,12 +84,11 @@ use App\Http\Controllers\Api\V1\Auth\RequestPhoneNumberChangeController;
 use App\Http\Controllers\Api\V1\Auth\ResendLoginOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResendOtpController;
 use App\Http\Controllers\Api\V1\Auth\ResendPhoneNumberChangeOtpController;
-use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyLoginOtpController;
-use App\Http\Controllers\Api\V1\Auth\VerifyPasswordResetOtpController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneController;
 use App\Http\Controllers\Api\V1\Auth\VerifyPhoneNumberChangeOtpController;
 use App\Http\Controllers\Api\V1\Booking\CancelBookingController;
+use App\Http\Controllers\Api\V1\Booking\CreateBookingRatingController;
 use App\Http\Controllers\Api\V1\Booking\GetBookingController;
 use App\Http\Controllers\Api\V1\Booking\ListBookingsController;
 use App\Http\Controllers\Api\V1\Booking\PreviewBookingCancellationController;
@@ -99,6 +98,7 @@ use App\Http\Controllers\Api\V1\Cart\GetCartController;
 use App\Http\Controllers\Api\V1\Cart\RemoveCartItemController;
 use App\Http\Controllers\Api\V1\Cart\UpdateCartItemController;
 use App\Http\Controllers\Api\V1\Checkout\CreateAppointmentHoldController;
+use App\Http\Controllers\Api\V1\Appointment\ListBookableAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Checkout\GetAppointmentSlotsController;
 use App\Http\Controllers\Api\V1\Checkout\GetCheckoutController;
 use App\Http\Controllers\Api\V1\Checkout\ReleaseAppointmentHoldController;
@@ -124,6 +124,12 @@ use App\Http\Controllers\Api\V1\ReferenceData\ReferenceDataController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\GetServiceDetailsController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListCategoryServicesController;
 use App\Http\Controllers\Api\V1\ServiceCatalog\ListServiceCategoriesController;
+use App\Http\Controllers\Api\V1\ServiceCatalog\ListServicesController;
+use App\Http\Controllers\Api\V1\ServiceCatalog\PreviewServicePricingController;
+use App\Http\Controllers\Api\V1\Support\CreateCustomerSupportRequestController;
+use App\Http\Controllers\Api\V1\Support\GetCustomerSupportRequestController;
+use App\Http\Controllers\Api\V1\Support\ListCustomerSupportRequestsController;
+use App\Http\Controllers\Api\V1\Support\SendCustomerSupportMessageController;
 use App\Support\Admin\AdminCapability;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -145,12 +151,10 @@ Route::post('/v1/auth/login/resend-otp', ResendLoginOtpController::class)->middl
 Route::post('/v1/auth/refresh', RefreshController::class)->middleware('throttle:auth-refresh');
 Route::post('/v1/auth/logout', LogoutController::class);
 Route::post('/v1/auth/logout-all', LogoutAllController::class);
-Route::post('/v1/auth/forgot-password', ForgotPasswordController::class)->middleware('throttle:auth-otp-issue');
-Route::post('/v1/auth/verify-password-reset-otp', VerifyPasswordResetOtpController::class)->middleware('throttle:auth-otp-verify');
-Route::post('/v1/auth/reset-password', ResetPasswordController::class)->middleware('throttle:auth-reset');
 
 Route::middleware('auth.customer')->group(function () {
-    Route::post('/v1/auth/change-password', ChangePasswordController::class);
+    Route::post('/v1/auth/account/request-otp', RequestAccountDeletionOtpController::class)->middleware('throttle:auth-account-deletion-otp-issue');
+    Route::post('/v1/auth/account/resend-otp', ResendAccountDeletionOtpController::class)->middleware('throttle:auth-account-deletion-otp-issue');
     Route::delete('/v1/auth/account', DeleteAccountController::class)->middleware('throttle:auth-account-delete');
     Route::get('/v1/auth/account-deletion', GetAccountDeletionStatusController::class);
     Route::post('/v1/auth/change-phone-number', RequestPhoneNumberChangeController::class)->middleware('throttle:auth-phone-change-issue');
@@ -172,6 +176,10 @@ Route::middleware('auth.customer')->group(function () {
     Route::post('/v1/checkout/appointment-hold', CreateAppointmentHoldController::class);
     Route::delete('/v1/checkout/appointment-hold', ReleaseAppointmentHoldController::class);
 
+    // Cart-free bookable slots for Contract visit booking (and any other
+    // customer flow that needs availability without an ACTIVE cart).
+    Route::get('/v1/appointment-slots', ListBookableAppointmentSlotsController::class);
+
     Route::post('/v1/payments', CreatePaymentController::class);
     Route::get('/v1/payments/{payment}', GetPaymentController::class);
 
@@ -182,6 +190,12 @@ Route::middleware('auth.customer')->group(function () {
     // App\Actions\Booking\PreviewBookingCancellationAction.
     Route::get('/v1/bookings/{booking}/cancellation-preview', PreviewBookingCancellationController::class);
     Route::post('/v1/bookings/{booking}/cancel', CancelBookingController::class);
+    Route::post('/v1/bookings/{booking}/rating', CreateBookingRatingController::class);
+
+    Route::get('/v1/support-requests', ListCustomerSupportRequestsController::class);
+    Route::post('/v1/support-requests', CreateCustomerSupportRequestController::class);
+    Route::get('/v1/support-requests/{supportRequest}', GetCustomerSupportRequestController::class);
+    Route::post('/v1/support-requests/{supportRequest}/messages', SendCustomerSupportMessageController::class);
 
     // BLUE V1 Phase 10A - Customer Properties.
     Route::get('/v1/properties', ListPropertiesController::class);
@@ -534,7 +548,9 @@ Route::middleware('auth.admin')->group(function () {
 Route::get('/v1/reference-data/registration', ReferenceDataController::class);
 
 Route::get('/v1/service-categories', ListServiceCategoriesController::class);
+Route::get('/v1/services', ListServicesController::class);
 Route::get('/v1/service-categories/{category}/services', ListCategoryServicesController::class);
+Route::post('/v1/services/{service}/pricing-preview', PreviewServicePricingController::class);
 Route::get('/v1/services/{service}', GetServiceDetailsController::class);
 
 Route::get('/v1/health', function () {

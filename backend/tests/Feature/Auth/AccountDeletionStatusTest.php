@@ -4,6 +4,7 @@ namespace Tests\Feature\Auth;
 
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\Feature\Contract\Concerns\CreatesContractFixtures;
+use Tests\Support\DeletesCustomerAccountsForTests;
 use Tests\TestCase;
 
 /**
@@ -16,6 +17,7 @@ class AccountDeletionStatusTest extends TestCase
 {
     use CreatesContractFixtures;
     use DatabaseTransactions;
+    use DeletesCustomerAccountsForTests;
 
     private const FIXTURE_PASSWORD = 'CartTestPassw0rd';
 
@@ -28,13 +30,6 @@ class AccountDeletionStatusTest extends TestCase
     private function deletionStatus(string $accessToken)
     {
         return $this->getJson('/api/v1/auth/account-deletion', ['Authorization' => 'Bearer '.$accessToken]);
-    }
-
-    private function deleteAccount(string $accessToken)
-    {
-        return $this->deleteJson('/api/v1/auth/account', [
-            'current_password' => self::FIXTURE_PASSWORD,
-        ], ['Authorization' => 'Bearer '.$accessToken]);
     }
 
     public function test_unauthenticated_caller_cannot_read_deletion_status(): void

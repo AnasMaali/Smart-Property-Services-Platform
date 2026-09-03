@@ -218,42 +218,36 @@ class OtpDeliveryIntegrationTest extends TestCase
         ])->assertStatus(200)->assertJson(['success' => true]);
     }
 
-    // 3. Forgot Password: the public response is the identical
-    // non-enumerating message either way, but a real PASSWORD_RESET OTP is
-    // still delivered locally and still verifies, unmodified.
-    public function test_forgot_password_delivers_otp_via_local_log_despite_uniform_public_response(): void
+    // 3. Account deletion OTP: authenticated customers receive a real
+    // ACCOUNT_DELETION OTP via local log when they request account deletion.
+    public function test_account_deletion_otp_delivers_via_local_log(): void
     {
         $this->disableLocalLogDelivery();
         $payload = $this->registerPayload();
         $registerResponse = $this->postJson('/api/v1/auth/register', $payload)->assertStatus(201);
         $otpUuid = $registerResponse->json('data.otp_verification_uuid');
 
-        // Verify the phone first (registration ran with local delivery
-        // disabled above, so the real code is recovered the same way
-        // ChangePhoneNumberTest's existing helper does: overwrite the
-        // stored hash with a known value) so the account is ACTIVE and
-        // eligible for a password reset.
         $this->postJson('/api/v1/auth/verify-phone', [
             'otp_verification_uuid' => $otpUuid,
             'otp_code' => $this->rawCodeFor($otpUuid),
         ])->assertStatus(200);
 
+        $login = $this->issueCustomerSession($registerResponse->json('data.user_uuid'));
+        $accessToken = $login['access_token'];
+
         $this->enableLocalLogDelivery();
 
-        $captured = $this->captureLoggedOtp(
-            fn () => $this->postJson('/api/v1/auth/forgot-password', ['phone_number' => $payload['phone_number']])
-        );
+        $captured = $this->captureLoggedOtp(fn () => $this->postJson(
+            '/api/v1/auth/account/request-otp',
+            [],
+            ['Authorization' => 'Bearer '.$accessToken]
+        ));
 
         $captured['response']->assertStatus(200)->assertJson([
             'success' => true,
-            'message' => 'If an account exists for this phone number, a password reset code has been sent.',
+            'message' => 'A verification code has been sent to your phone number.',
         ]);
-        $this->assertSame('PASSWORD_RESET', $captured['purpose']);
-
-        $this->postJson('/api/v1/auth/verify-password-reset-otp', [
-            'phone_number' => $payload['phone_number'],
-            'otp_code' => $captured['code'],
-        ])->assertStatus(200)->assertJsonStructure(['data' => ['reset_token', 'reset_token_expires_at']]);
+        $this->assertSame('ACCOUNT_DELETION', $captured['purpose']);
     }
 
     // 4 & 5. Phone number change (request + resend) reuse the same

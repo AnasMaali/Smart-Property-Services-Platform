@@ -11,6 +11,14 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 use Tests\TestCase;
 
+/**
+ * Legacy customer password auth tests.
+ *
+ * Customer password routes were removed in favour of OTP-only auth.
+ * Run explicitly with: php artisan test --group=legacy
+ *
+ * @group legacy
+ */
 class ForgotPasswordTest extends TestCase
 {
     use DatabaseTransactions;

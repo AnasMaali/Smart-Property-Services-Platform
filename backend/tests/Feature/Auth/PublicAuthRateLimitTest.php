@@ -18,9 +18,6 @@ class PublicAuthRateLimitTest extends TestCase
             'api/v1/auth/login/verify-otp' => 'throttle:auth-login-otp-verify',
             'api/v1/auth/login/resend-otp' => 'throttle:auth-login-otp-issue',
             'api/v1/auth/refresh' => 'throttle:auth-refresh',
-            'api/v1/auth/forgot-password' => 'throttle:auth-otp-issue',
-            'api/v1/auth/verify-password-reset-otp' => 'throttle:auth-otp-verify',
-            'api/v1/auth/reset-password' => 'throttle:auth-reset',
             'api/v1/admin/auth/login' => 'throttle:admin-auth-login',
             'api/v1/admin/auth/mfa/enroll' => 'throttle:admin-auth-mfa-enroll',
             'api/v1/admin/auth/mfa/verify' => 'throttle:admin-auth-mfa-verify',
@@ -67,6 +64,26 @@ class PublicAuthRateLimitTest extends TestCase
         ])->assertStatus(404);
     }
 
+    public function test_legacy_customer_password_routes_no_longer_exist(): void
+    {
+        foreach ([
+            'api/v1/auth/forgot-password',
+            'api/v1/auth/verify-password-reset-otp',
+            'api/v1/auth/reset-password',
+            'api/v1/auth/change-password',
+        ] as $uri) {
+            $route = collect(RouteFacade::getRoutes())
+                ->first(function (Route $route) use ($uri): bool {
+                    return $route->uri() === $uri;
+                });
+
+            $this->assertNull(
+                $route,
+                "Legacy customer password route [{$uri}] must not be registered."
+            );
+        }
+    }
+
     // The equivalent defense-in-depth boundary for the authenticated
     // phone-number-change OTP flow - added alongside the public routes
     // above since it proves the same "sensitive OTP-adjacent route has an
@@ -106,23 +123,60 @@ class PublicAuthRateLimitTest extends TestCase
         }
     }
 
+    public function test_authenticated_account_deletion_otp_routes_have_expected_rate_limiters(): void
+    {
+        $expected = [
+            'api/v1/auth/account/request-otp' => 'throttle:auth-account-deletion-otp-issue',
+            'api/v1/auth/account/resend-otp' => 'throttle:auth-account-deletion-otp-issue',
+        ];
+
+        foreach ($expected as $uri => $expectedMiddleware) {
+            $route = collect(RouteFacade::getRoutes())
+                ->first(function (Route $route) use ($uri): bool {
+                    return $route->uri() === $uri
+                        && in_array('POST', $route->methods(), true);
+                });
+
+            $this->assertNotNull(
+                $route,
+                "Expected account-deletion OTP route [{$uri}] was not registered."
+            );
+
+            $this->assertContains(
+                'auth.customer',
+                $route->middleware(),
+                "Account-deletion OTP route [{$uri}] must remain behind auth.customer."
+            );
+
+            $this->assertContains(
+                $expectedMiddleware,
+                $route->middleware(),
+                "Account-deletion OTP route [{$uri}] is missing [{$expectedMiddleware}]."
+            );
+        }
+    }
+
     // Proves the safe-by-default trusted-proxy boundary
     // (bootstrap/app.php's env-driven TRUSTED_PROXIES) actually protects
     // the IP-keyed half of these limiters: with no trusted proxy configured
     // (the test environment's own state, matching an unconfigured
     // production deployment), Laravel must ignore X-Forwarded-For entirely,
     // so a client cannot claim a fresh IP on every request to evade the
-    // per-IP bucket. reset-password's limiter (10/min, IP-only, no
-    // identity dimension) isolates exactly this mechanism.
+    // per-IP bucket. auth/refresh's limiter (60/min, IP-only, no identity
+    // dimension) isolates exactly this mechanism.
     public function test_spoofed_forwarded_for_header_cannot_evade_ip_rate_limiting(): void
     {
-        for ($i = 0; $i < 10; $i++) {
-            $this->postJson('/api/v1/auth/reset-password', [], [
+        for ($i = 0; $i < 60; $i++) {
+            $this->postJson('/api/v1/auth/refresh', [
+                'refresh_token' => 'invalid-token-for-rate-limit-test',
+            ], [
                 'X-Forwarded-For' => '203.0.113.'.$i,
             ]);
         }
 
-        $blocked = $this->postJson('/api/v1/auth/reset-password', [], [
+        $blocked = $this->postJson('/api/v1/auth/refresh', [
+            'refresh_token' => 'invalid-token-for-rate-limit-test',
+        ], [
             'X-Forwarded-For' => '203.0.113.250',
         ]);
 
